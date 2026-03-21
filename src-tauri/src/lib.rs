@@ -6,9 +6,10 @@ pub mod session;
 pub mod telegram;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use config::settings::SettingsState;
+use pty::idle_detector::IdleDetector;
 use pty::manager::PtyManager;
 use session::manager::SessionManager;
 use telegram::manager::{OutputSenderMap, TelegramBridgeManager, TelegramBridgeState};
@@ -21,7 +22,39 @@ pub fn run() {
     let session_mgr = Arc::new(tokio::sync::RwLock::new(SessionManager::new()));
 
     let output_senders: OutputSenderMap = Arc::new(Mutex::new(HashMap::new()));
-    let pty_mgr = Arc::new(Mutex::new(PtyManager::new(output_senders.clone())));
+
+    // Idle detector: emits session_idle / session_busy events
+    // AppHandle is set in setup() via OnceLock; callbacks safely no-op until then.
+    let app_handle_lock: Arc<OnceLock<tauri::AppHandle>> = Arc::new(OnceLock::new());
+    let app_handle_for_idle = Arc::clone(&app_handle_lock);
+    let app_handle_for_busy = Arc::clone(&app_handle_lock);
+    let session_mgr_idle = Arc::clone(&session_mgr);
+    let session_mgr_busy = Arc::clone(&session_mgr);
+    let idle_detector = IdleDetector::new(
+        move |id| {
+            let mgr = Arc::clone(&session_mgr_idle);
+            if let Some(handle) = app_handle_for_idle.get() {
+                let handle = handle.clone();
+                tokio::spawn(async move {
+                    mgr.read().await.mark_idle(id).await;
+                    let _ = tauri::Emitter::emit(&handle, "session_idle", serde_json::json!({ "id": id.to_string() }));
+                });
+            }
+        },
+        move |id| {
+            let mgr = Arc::clone(&session_mgr_busy);
+            if let Some(handle) = app_handle_for_busy.get() {
+                let handle = handle.clone();
+                tokio::spawn(async move {
+                    mgr.read().await.mark_busy(id).await;
+                    let _ = tauri::Emitter::emit(&handle, "session_busy", serde_json::json!({ "id": id.to_string() }));
+                });
+            }
+        },
+    );
+    idle_detector.start();
+
+    let pty_mgr = Arc::new(Mutex::new(PtyManager::new(output_senders.clone(), Arc::clone(&idle_detector))));
     let tg_mgr: TelegramBridgeState =
         Arc::new(tokio::sync::Mutex::new(TelegramBridgeManager::new(output_senders)));
 
@@ -34,9 +67,12 @@ pub fn run() {
         .manage(tg_mgr)
         .manage(settings)
         .manage(detached_sessions.clone())
-        .setup(|app| {
+        .setup(move |app| {
             use tauri::WebviewWindowBuilder;
             use tauri::WebviewUrl;
+
+            // Make AppHandle available to idle detector callbacks
+            let _ = app_handle_lock.set(app.handle().clone());
 
             let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
                 .expect("Failed to load app icon");

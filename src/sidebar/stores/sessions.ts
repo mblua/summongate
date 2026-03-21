@@ -46,4 +46,8 @@ export const sessionsStore = {
   renameSession(id: string, name: string) {
     setState("sessions", (s) => s.id === id, "name", name);
   },
+
+  setSessionWaiting(id: string, waiting: boolean) {
+    setState("sessions", (s) => s.id === id, "waitingForInput", waiting);
+  },
 };

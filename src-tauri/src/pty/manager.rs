@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::errors::AppError;
+use crate::pty::idle_detector::IdleDetector;
 use crate::telegram::manager::OutputSenderMap;
 
 struct PtyInstance {
@@ -18,6 +19,7 @@ struct PtyInstance {
 pub struct PtyManager {
     ptys: Arc<Mutex<HashMap<Uuid, PtyInstance>>>,
     output_senders: OutputSenderMap,
+    idle_detector: Arc<IdleDetector>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -28,10 +30,11 @@ struct PtyOutputPayload {
 }
 
 impl PtyManager {
-    pub fn new(output_senders: OutputSenderMap) -> Self {
+    pub fn new(output_senders: OutputSenderMap, idle_detector: Arc<IdleDetector>) -> Self {
         Self {
             ptys: Arc::new(Mutex::new(HashMap::new())),
             output_senders,
+            idle_detector,
         }
     }
 
@@ -114,6 +117,7 @@ impl PtyManager {
         // and feeds active Telegram bridges via the output sender map
         let session_id_str = id.to_string();
         let output_senders = self.output_senders.clone();
+        let idle_detector = Arc::clone(&self.idle_detector);
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             loop {
@@ -121,6 +125,9 @@ impl PtyManager {
                     Ok(0) => break, // EOF
                     Ok(n) => {
                         let data = buf[..n].to_vec();
+
+                        // Record PTY activity for idle detection
+                        idle_detector.record_activity(id);
 
                         // Feed Telegram bridge if active (non-blocking)
                         if let Ok(senders) = output_senders.lock() {
@@ -183,6 +190,7 @@ impl PtyManager {
         let mut ptys = self.ptys.lock().unwrap();
         // Dropping the PtyInstance will close the master, which signals the child
         ptys.remove(&id);
+        self.idle_detector.remove_session(id);
         Ok(())
     }
 }

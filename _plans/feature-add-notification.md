@@ -126,8 +126,8 @@ Cuando la sesión activa (la que el usuario está mirando) queda idle, el dot se
 
 ## Estado
 
-- [ ] Phase 1: Rust backend
-- [ ] Phase 2: IPC wiring
-- [ ] Phase 3: Frontend store + subscriptions
-- [ ] Phase 4: CSS + dot rendering
+- [x] Phase 1: Rust backend
+- [x] Phase 2: IPC wiring
+- [x] Phase 3: Frontend store + subscriptions
+- [x] Phase 4: CSS + dot rendering
 - [ ] Phase 5: Verificación visual

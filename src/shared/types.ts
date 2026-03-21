@@ -6,6 +6,7 @@ export interface Session {
   createdAt: string;
   workingDirectory: string;
   status: SessionStatus;
+  waitingForInput: boolean;
 }
 
 export type SessionStatus = "active" | "running" | "idle" | { exited: number };

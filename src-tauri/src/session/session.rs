@@ -12,6 +12,7 @@ pub struct Session {
     pub created_at: DateTime<Utc>,
     pub working_directory: String,
     pub status: SessionStatus,
+    pub waiting_for_input: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -34,6 +35,7 @@ pub struct SessionInfo {
     pub created_at: String,
     pub working_directory: String,
     pub status: SessionStatus,
+    pub waiting_for_input: bool,
 }
 
 impl From<&Session> for SessionInfo {
@@ -46,6 +48,7 @@ impl From<&Session> for SessionInfo {
             created_at: s.created_at.to_rfc3339(),
             working_directory: s.working_directory.clone(),
             status: s.status.clone(),
+            waiting_for_input: s.waiting_for_input,
         }
     }
 }

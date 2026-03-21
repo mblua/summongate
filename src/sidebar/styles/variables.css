@@ -14,6 +14,7 @@
   --status-running: #3a7bff;
   --status-idle: #555566;
   --status-exited: #ff3b5c;
+  --status-waiting: #22c55e;
 
   /* Titlebar */
   --titlebar-bg: #08080d;

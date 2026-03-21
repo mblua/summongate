@@ -199,6 +199,8 @@ html, body, #root {
 .session-item-status.running { background: var(--status-running); }
 .session-item-status.idle { background: var(--status-idle); }
 .session-item-status.exited { background: var(--status-exited); }
+/* .waiting must override all other status colors (active, running, idle, exited) */
+.session-item .session-item-status.waiting { background: var(--status-waiting); box-shadow: 0 0 6px var(--status-waiting); }
 
 /* Close button on session item */
 .session-item-close {

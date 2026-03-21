@@ -9,6 +9,8 @@ import {
   onSessionDestroyed,
   onSessionSwitched,
   onSessionRenamed,
+  onSessionIdle,
+  onSessionBusy,
   onTelegramBridgeAttached,
   onTelegramBridgeDetached,
   onTelegramBridgeError,
@@ -85,6 +87,18 @@ const SidebarApp: Component = () => {
     unlisteners.push(
       await onSessionRenamed(({ id, name }) => {
         sessionsStore.renameSession(id, name);
+      })
+    );
+
+    unlisteners.push(
+      await onSessionIdle(({ id }) => {
+        sessionsStore.setSessionWaiting(id, true);
+      })
+    );
+
+    unlisteners.push(
+      await onSessionBusy(({ id }) => {
+        sessionsStore.setSessionWaiting(id, false);
       })
     );
 

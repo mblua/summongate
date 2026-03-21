@@ -113,6 +113,18 @@ export const TelegramAPI = {
     invoke<number>("telegram_send_test", { token }),
 };
 
+export function onSessionIdle(
+  callback: (data: { id: string }) => void
+): Promise<UnlistenFn> {
+  return listen<{ id: string }>("session_idle", (e) => callback(e.payload));
+}
+
+export function onSessionBusy(
+  callback: (data: { id: string }) => void
+): Promise<UnlistenFn> {
+  return listen<{ id: string }>("session_busy", (e) => callback(e.payload));
+}
+
 export function onTelegramBridgeAttached(
   callback: (data: BridgeInfo) => void
 ): Promise<UnlistenFn> {

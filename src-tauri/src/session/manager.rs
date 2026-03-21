@@ -43,6 +43,7 @@ impl SessionManager {
             created_at: chrono::Utc::now(),
             working_directory,
             status: SessionStatus::Running,
+            waiting_for_input: false,
         };
 
         self.sessions.write().await.insert(id, session.clone());
@@ -141,6 +142,20 @@ impl SessionManager {
         let mut sessions = self.sessions.write().await;
         if let Some(s) = sessions.get_mut(&id) {
             s.status = SessionStatus::Exited(code);
+        }
+    }
+
+    pub async fn mark_idle(&self, id: Uuid) {
+        let mut sessions = self.sessions.write().await;
+        if let Some(s) = sessions.get_mut(&id) {
+            s.waiting_for_input = true;
+        }
+    }
+
+    pub async fn mark_busy(&self, id: Uuid) {
+        let mut sessions = self.sessions.write().await;
+        if let Some(s) = sessions.get_mut(&id) {
+            s.waiting_for_input = false;
         }
     }
 }

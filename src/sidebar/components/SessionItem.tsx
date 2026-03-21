@@ -99,7 +99,7 @@ const SessionItem: Component<{
       onClick={handleClick}
     >
       <div
-        class={`session-item-status ${statusClass(props.session.status)}`}
+        class={`session-item-status ${props.session.waitingForInput ? "waiting" : statusClass(props.session.status)}`}
       />
       <div class="session-item-info">
         <Show
