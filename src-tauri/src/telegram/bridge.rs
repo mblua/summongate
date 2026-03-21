@@ -212,6 +212,11 @@ impl RowTracker {
         result
     }
 
+    /// Mark content as already emitted (e.g., user input captured on Enter)
+    fn mark_emitted(&mut self, content: &str) {
+        self.emitted_content.insert(content.to_string());
+    }
+
     /// Returns true if any row is unstable (changed recently, not yet emitted)
     fn has_pending(&self) -> bool {
         self.rows
@@ -508,6 +513,7 @@ async fn output_task(
     // until they press Enter. Auto-clears after TYPING_TIMEOUT_MS as safety net.
     const TYPING_TIMEOUT_MS: u64 = 5000;
     let mut typing_since: Option<Instant> = None;
+    let mut was_typing = false;
 
     logger.log("INIT", &session_id, &format!(
         "output_task started: filter={} stabilization={}ms tick={}ms",
@@ -523,11 +529,13 @@ async fn output_task(
                 // Check typing suppression
                 let is_typing = typing_flag.load(Ordering::Relaxed);
                 if is_typing {
+                    was_typing = true;
                     if let Some(since) = typing_since {
                         // Auto-clear after timeout (safety net)
                         if since.elapsed() > Duration::from_millis(TYPING_TIMEOUT_MS) {
                             typing_flag.store(false, Ordering::Relaxed);
                             typing_since = None;
+                            was_typing = false;
                             logger.log("TYPING", &session_id, "auto-cleared after timeout");
                         } else {
                             // Still typing - skip harvest but keep updating tracker
@@ -538,6 +546,35 @@ async fn output_task(
                         continue;
                     }
                 } else {
+                    // Transition: was typing → Enter pressed
+                    // Capture user input from the vt100 screen (the ❯ line)
+                    if was_typing {
+                        was_typing = false;
+
+                        // Scan screen bottom-to-top for the most recent prompt line
+                        let screen = vt.screen();
+                        for row_idx in (0..screen.size().0).rev() {
+                            let row_text = screen.contents_between(
+                                row_idx, 0, row_idx, screen.size().1,
+                            );
+                            let cleaned = strip_trailing_decoration(&row_text);
+                            let trimmed = cleaned.trim();
+                            if trimmed.starts_with("\u{276F} ") {
+                                let user_input = &trimmed["\u{276F} ".len()..];
+                                if !user_input.is_empty() {
+                                    let msg = format!("\u{276F} {}", user_input);
+                                    logger.log("USER_INPUT", &session_id, &msg);
+                                    diag.log_sent(&msg);
+                                    // Mark this content as emitted so it won't be sent again
+                                    tracker.mark_emitted(&cleaned);
+                                    buffer.push_str(&msg);
+                                    buffer.push('\n');
+                                    last_buffer_add = Instant::now();
+                                }
+                                break;
+                            }
+                        }
+                    }
                     typing_since = None;
                 }
 
