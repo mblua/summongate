@@ -198,6 +198,26 @@ Config export/import, session history, notifications, snippets, cross-platform.
 
 ---
 
+## CRITICAL — Running the App
+
+**NEVER run `npm run tauri dev` or `npm run tauri build` without running this check first:**
+
+```bash
+wmic process where "name='summongate.exe'" get ProcessId,ExecutablePath
+```
+
+**How to read the results:**
+- `ExecutablePath` contains `Program Files` → **PROD instance. DO NOT TOUCH. DO NOT KILL. NEVER.**
+- `ExecutablePath` contains `target\debug` → DEV instance from a previous `tauri dev`. Can be killed safely.
+- `ExecutablePath` contains `target\release` → Local release build, ask user before touching.
+
+**Rules:**
+1. NEVER kill, stop, or interfere with a PROD instance (Program Files) under any circumstance.
+2. If a DEV instance (`target\debug`) is running, kill it before launching a new one.
+3. When in doubt, **ask the user**.
+
+---
+
 ## Key Commands
 
 ```bash
