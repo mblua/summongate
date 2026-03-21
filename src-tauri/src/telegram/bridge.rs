@@ -150,7 +150,8 @@ async fn output_task(
 
                         deadline = tokio::time::Instant::now() + flush_timeout;
 
-                        if buffer.contains('\n') || buffer.len() > 2000 {
+                        let meaningful_len = buffer.trim().len();
+                        if meaningful_len > 2000 || (buffer.contains('\n') && meaningful_len >= 10) {
                             flush_buffer(&mut buffer, &client, &token, chat_id, &session_id, &app, &mut logger).await;
                             deadline = tokio::time::Instant::now() + far_future;
                         }
@@ -228,13 +229,7 @@ fn clean_terminal_output(raw: &str) -> String {
         result.push(line.to_string());
     }
 
-    if result.is_empty() {
-        String::new()
-    } else {
-        let mut out = result.join("\n");
-        out.push('\n');
-        out
-    }
+    result.join("\n")
 }
 
 // ── Flush to Telegram ────────────────────────────────────────
