@@ -241,24 +241,36 @@ fn strip_trailing_decoration(s: &str) -> String {
 /// Strip trailing spinner animation from a vt100 row.
 /// Claude Code places spinner text (e.g. `✶ Gallivanting…`) at the right edge
 /// of the 220-col screen. This gets concatenated with real content on the same row.
-/// Pattern: {spaces} {spinner_char} {text}{…}
+/// Pattern: {5+ spaces} {spinner_char} {text}{…}
+///
+/// IMPORTANT: ● (U+25CF) is both a spinner char AND the Claude Code response
+/// indicator (e.g. `● Response text`). To avoid cutting entire response lines,
+/// we require the spinner char to be preceded by at least 5 spaces (indicating
+/// it's at the right edge, not at the start of content).
 fn strip_trailing_spinner(s: &str) -> String {
-    // Look for the last occurrence of a spinner char preceded by whitespace
-    let bytes = s.as_bytes();
     let mut best_cut = None;
 
     for (i, c) in s.char_indices() {
-        if CLAUDE_SPINNERS.contains(&c) {
-            // Must be preceded by whitespace (or be at start)
-            let is_preceded_by_space = i == 0 || bytes[i - 1] == b' ';
-            if is_preceded_by_space {
-                // Check if the rest of the line ends with … or ...
-                let after = s[i + c.len_utf8()..].trim_end();
-                if after.ends_with('\u{2026}') || after.ends_with("...") {
-                    // This looks like a spinner suffix - cut here
-                    best_cut = Some(i);
-                }
-            }
+        if !CLAUDE_SPINNERS.contains(&c) {
+            continue;
+        }
+
+        // Require significant whitespace gap before the spinner char.
+        // This prevents matching ● at position 0 in response lines.
+        if i < 5 {
+            continue;
+        }
+        let preceding = &s[..i];
+        let content_end = preceding.trim_end().len();
+        let gap = i - content_end;
+        if gap < 5 {
+            continue;
+        }
+
+        // Check if the rest of the line ends with … or ...
+        let after = s[i + c.len_utf8()..].trim_end();
+        if after.ends_with('\u{2026}') || after.ends_with("...") {
+            best_cut = Some(content_end);
         }
     }
 
@@ -338,7 +350,16 @@ impl AgentFilter for ClaudeCodeFilter {
         }
 
         // Tool headers: ●─Bash(...), ●─Read(...), etc.
-        if trimmed.starts_with("\u{25CF}\u{2500}") {
+        // Also catch ─Bash(...) when ● is on a separate vt100 row.
+        if trimmed.starts_with("\u{25CF}\u{2500}")
+            || trimmed.starts_with("\u{2500}Bash(")
+            || trimmed.starts_with("\u{2500}Read(")
+            || trimmed.starts_with("\u{2500}Edit(")
+            || trimmed.starts_with("\u{2500}Write(")
+            || trimmed.starts_with("\u{2500}Grep(")
+            || trimmed.starts_with("\u{2500}Glob(")
+            || trimmed.starts_with("\u{2500}Agent(")
+        {
             return false;
         }
 
@@ -370,14 +391,17 @@ impl AgentFilter for ClaudeCodeFilter {
             return false;
         }
 
-        // Low alphanumeric ratio (progress bars, decorative lines)
-        let total: usize = trimmed.chars().count();
-        if total > 5 {
-            let alnum: usize = trimmed
+        // Low alphanumeric ratio (progress bars, decorative lines, garbled rows)
+        // Do NOT count spaces - garbled rows like "────────❯          ue─bajar."
+        // have many spaces that inflate the ratio.
+        let non_space: String = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+        let total_ns: usize = non_space.chars().count();
+        if total_ns > 5 {
+            let alnum: usize = non_space
                 .chars()
-                .filter(|c| c.is_alphanumeric() || *c == ' ')
+                .filter(|c| c.is_alphanumeric())
                 .count();
-            if (alnum as f32 / total as f32) < 0.30 {
+            if (alnum as f32 / total_ns as f32) < 0.30 {
                 return false;
             }
         }
