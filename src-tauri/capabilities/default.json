@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for termgate",
+  "description": "Default capabilities for summongate",
   "windows": ["sidebar", "terminal"],
   "permissions": [
     "core:default",

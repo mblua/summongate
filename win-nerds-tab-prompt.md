@@ -1,8 +1,8 @@
-# termgate — Prompt de Desarrollo Completo
+# summongate — Prompt de Desarrollo Completo
 
 ## Contexto del Proyecto
 
-**termgate** es una aplicación de escritorio standalone para Windows que funciona como un **session manager externo de terminales** con las tabs desacopladas en una ventana lateral (sidebar), mientras la terminal activa se muestra en una ventana principal separada. El objetivo es resolver una limitación que ninguna terminal en Windows ofrece nativamente: tener un panel lateral persistente con la lista de sesiones de terminal, independiente de la ventana donde se ejecuta la consola.
+**summongate** es una aplicación de escritorio standalone para Windows que funciona como un **session manager externo de terminales** con las tabs desacopladas en una ventana lateral (sidebar), mientras la terminal activa se muestra en una ventana principal separada. El objetivo es resolver una limitación que ninguna terminal en Windows ofrece nativamente: tener un panel lateral persistente con la lista de sesiones de terminal, independiente de la ventana donde se ejecuta la consola.
 
 ### Analogía
 
@@ -77,7 +77,7 @@ Ambas ventanas son independientes pero están sincronizadas. Al hacer click en u
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐    │
 │  │              FILESYSTEM                         │    │
-│  │  ~/.termgate/                              │    │
+│  │  ~/.summongate/                              │    │
 │  │  ├── config.toml      (configuración global)    │    │
 │  │  ├── themes/          (archivos de tema)        │    │
 │  │  ├── layouts/         (layouts guardados)       │    │
@@ -115,7 +115,7 @@ Usuario tipea en xterm.js → Tauri Command "pty_write(bytes)" → Rust escribe 
 ## Estructura del Proyecto
 
 ```
-termgate/
+summongate/
 ├── src-tauri/                          # Backend Rust
 │   ├── Cargo.toml
 │   ├── tauri.conf.json                 # Config de Tauri (multiventana, permisos)
@@ -286,7 +286,7 @@ termgate/
 
 ```
 ┌─────────────────────────────┐
-│  ⚡ termgate    [—][×] │  ← Title bar (custom, draggable)
+│  ⚡ summongate    [—][×] │  ← Title bar (custom, draggable)
 ├─────────────────────────────┤
 │  [🔍 Search sessions...]    │  ← Search/filter bar
 ├─────────────────────────────┤
@@ -391,11 +391,11 @@ termgate/
 #### 4.1 Estructura de un Tema
 
 ```toml
-# ~/.termgate/themes/cyberpunk.toml
+# ~/.summongate/themes/cyberpunk.toml
 
 [metadata]
 name = "Cyberpunk"
-author = "termgate"
+author = "summongate"
 version = "1.0"
 
 [colors]
@@ -461,7 +461,7 @@ Incluir al menos 3 temas de fábrica:
 ### 5. Configuración Global
 
 ```toml
-# ~/.termgate/config.toml
+# ~/.summongate/config.toml
 
 [general]
 default_shell = "powershell.exe"
@@ -686,7 +686,7 @@ fn main() {
                 "sidebar",
                 tauri::WebviewUrl::App("index.html?window=sidebar".into()),
             )
-            .title("termgate")
+            .title("summongate")
             .inner_size(280.0, 600.0)
             .min_inner_size(200.0, 400.0)
             .decorations(false)   // Custom titlebar
@@ -976,5 +976,5 @@ thiserror = "2"
 6. **Todos los tipos deben estar definidos en `shared/types.ts`** y los structs equivalentes en Rust deben ser serializables con serde para que el IPC sea type-safe.
 7. **No uses ningún framework CSS**. CSS vanilla con variables. El theming se logra inyectando CSS variables desde el tema TOML.
 8. **xterm.js debe usar el WebGL addon** para rendering. Fallback al canvas renderer si WebGL no está disponible.
-9. **Persistí todo en archivos TOML** en `~/.termgate/`. No uses bases de datos ni localStorage.
+9. **Persistí todo en archivos TOML** en `~/.summongate/`. No uses bases de datos ni localStorage.
 10. **Custom titlebar**: Ambas ventanas deben tener `decorations: false` en Tauri y un titlebar custom en HTML/CSS que soporte drag (usando `data-tauri-drag-region`).

@@ -3417,6 +3417,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
+name = "summongate"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs",
+ "env_logger",
+ "log",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "swift-rs"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3770,24 +3788,6 @@ checksum = "c4790fc369d5a530f4b544b094e31388b9b3a37c0f4652ade4505945f5660d24"
 dependencies = [
  "new_debug_unreachable",
  "utf-8",
-]
-
-[[package]]
-name = "termgate"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "dirs",
- "env_logger",
- "log",
- "portable-pty",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "thiserror 2.0.18",
- "tokio",
- "uuid",
 ]
 
 [[package]]

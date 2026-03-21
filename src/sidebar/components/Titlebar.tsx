@@ -10,7 +10,7 @@ const Titlebar: Component = () => {
   return (
     <div class="titlebar" data-tauri-drag-region>
       <span class="titlebar-title" data-tauri-drag-region>
-        termgate
+        summongate
       </span>
       <div class="titlebar-controls">
         <button class="titlebar-btn" onClick={handleMinimize} title="Minimize">

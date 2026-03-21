@@ -1,4 +1,4 @@
-# CLAUDE.md — termgate
+# CLAUDE.md — summongate
 
 ## Role Prompt
 
@@ -18,14 +18,14 @@ You write code that is **correct first, fast second, elegant third**. You do not
 
 ## Project Overview
 
-**termgate** is a standalone Windows desktop app — an external terminal session manager with decoupled tabs. Two synchronized windows:
+**summongate** is a standalone Windows desktop app — an external terminal session manager with decoupled tabs. Two synchronized windows:
 
 - **Sidebar Window**: Narrow, always-visible list of terminal sessions (create, rename, reorder, group, delete)
 - **Terminal Window**: Full xterm.js rendering of the active session's PTY output
 
 Built with **Tauri 2.x (Rust backend) + SolidJS + TypeScript (frontend) + xterm.js (terminal emulation)**.
 
-The full spec lives in `termgate-prompt.md` — read it before any significant work.
+The full spec lives in `summongate-prompt.md` — read it before any significant work.
 
 ---
 
@@ -39,7 +39,7 @@ The full spec lives in `termgate-prompt.md` — read it before any significant w
 | Terminal | xterm.js (WebGL addon) |
 | PTY | portable-pty crate |
 | Styles | CSS vanilla + CSS variables |
-| Config | serde + TOML files in `~/.termgate/` |
+| Config | serde + TOML files in `~/.summongate/` |
 | IPC | Tauri Commands + Events |
 
 ---
@@ -73,14 +73,14 @@ PTY stdout produces output
 - Backend: `SessionManager` holds all session state behind `Arc<RwLock<>>`
 - Frontend Sidebar: SolidJS `createStore` for sessions, config, UI state
 - Frontend Terminal: SolidJS store for active terminal state
-- Persistence: TOML files in `~/.termgate/` (config.toml, sessions.toml, themes/*.toml)
+- Persistence: TOML files in `~/.summongate/` (config.toml, sessions.toml, themes/*.toml)
 
 ---
 
 ## Project Structure
 
 ```
-termgate/
+summongate/
 ├── src-tauri/                    # Rust backend
 │   ├── src/
 │   │   ├── main.rs              # Tauri setup, multi-window creation
@@ -127,7 +127,7 @@ termgate/
 ├── package.json
 ├── tsconfig.json
 ├── vite.config.ts
-└── termgate-prompt.md      # Full project specification
+└── summongate-prompt.md      # Full project specification
 ```
 
 ---
@@ -187,7 +187,7 @@ Config export/import, session history, notifications, snippets, cross-platform.
 - Test Rust modules in isolation before wiring to frontend
 - Every IPC type must have matching Rust struct + TS interface
 - xterm.js must use WebGL addon, canvas renderer as fallback only
-- Config persisted to `~/.termgate/*.toml` — no localStorage, no databases
+- Config persisted to `~/.summongate/*.toml` — no localStorage, no databases
 
 ---
 
