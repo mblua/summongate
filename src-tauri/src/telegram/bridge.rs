@@ -726,6 +726,7 @@ async fn poll_task(
                                 "last_prompt",
                                 serde_json::json!({
                                     "text": format!("[TG] {}", update.text),
+                                    "sessionId": session_id_str,
                                 }),
                             );
                         }

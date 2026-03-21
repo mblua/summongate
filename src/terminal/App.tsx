@@ -120,7 +120,7 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
   return (
     <div class="terminal-layout">
       <Titlebar detached={props.detached} />
-      <LastPrompt />
+      <LastPrompt sessionId={props.lockedSessionId} />
       <Show
         when={terminalStore.activeSessionId}
         fallback={

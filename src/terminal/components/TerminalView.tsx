@@ -80,7 +80,7 @@ const TerminalView: Component = () => {
       if (data === "\r") {
         const trimmed = inputBuffer.trim();
         if (trimmed) {
-          emit("last_prompt", { text: trimmed });
+          emit("last_prompt", { text: trimmed, sessionId });
         }
         inputBuffer = "";
       } else if (data === "\x7f") {
