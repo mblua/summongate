@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "kill-dev": "powershell.exe -ExecutionPolicy Bypass -File ./scripts/kill-dev.ps1",
     "tauri": "tauri"
   },
   "dependencies": {

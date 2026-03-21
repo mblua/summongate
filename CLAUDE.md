@@ -200,20 +200,20 @@ Config export/import, session history, notifications, snippets, cross-platform.
 
 ## CRITICAL — Running the App
 
-**NEVER run `npm run tauri dev` or `npm run tauri build` without running this check first:**
+**Before running `npm run tauri dev` or `npm run tauri build`, kill previous dev instances using ONLY the safe script:**
 
 ```bash
-wmic process where "name='summongate.exe'" get ProcessId,ExecutablePath
+npm run kill-dev
 ```
 
-**How to read the results:**
-- `ExecutablePath` contains `Program Files` → **PROD instance. DO NOT TOUCH. DO NOT KILL. NEVER.**
-- `ExecutablePath` contains `target\debug` → DEV instance from a previous `tauri dev`. Can be killed safely.
-- `ExecutablePath` contains `target\release` → Local release build, ask user before touching.
+This script (`scripts/kill-dev.ps1`) **only** kills `target\debug` instances. It **refuses** to touch:
+- `Program Files` (PROD) — NEVER
+- `target\release` — NEVER
+- Unknown paths — NEVER
 
-**Rules:**
-1. NEVER kill, stop, or interfere with a PROD instance (Program Files) under any circumstance.
-2. If a DEV instance (`target\debug`) is running, kill it before launching a new one.
+**ABSOLUTE RULES:**
+1. **NEVER use `taskkill`, `Stop-Process`, `kill`, or ANY direct process-killing command on summongate.exe.** The ONLY allowed way is `npm run kill-dev`.
+2. **NEVER kill, stop, or interfere with a PROD instance (Program Files) under any circumstance.**
 3. When in doubt, **ask the user**.
 
 ---

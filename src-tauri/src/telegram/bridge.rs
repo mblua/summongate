@@ -46,7 +46,9 @@ impl BridgeLogger {
         if let Some(ref mut f) = self.file {
             let now = chrono::Utc::now().format("%H:%M:%S%.3f");
             let preview = if text.len() > 500 {
-                format!("{}...[{}b total]", &text[..500], text.len())
+                let mut end = 500;
+                while !text.is_char_boundary(end) { end -= 1; }
+                format!("{}...[{}b total]", &text[..end], text.len())
             } else {
                 text.to_string()
             };
@@ -372,6 +374,14 @@ async fn poll_task(
                                     "sessionId": session_id_str,
                                     "text": update.text,
                                     "from": update.from_name,
+                                }),
+                            );
+
+                            // Update last-prompt display in terminal window
+                            let _ = app.emit(
+                                "last_prompt",
+                                serde_json::json!({
+                                    "text": format!("[TG] {}", update.text),
                                 }),
                             );
                         }

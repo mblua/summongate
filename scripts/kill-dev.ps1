@@ -1,0 +1,42 @@
+# kill-dev.ps1 - Kill ONLY dev instances of summongate.exe
+# NEVER touches production (Program Files) or release builds.
+
+$procs = Get-WmiObject Win32_Process -Filter "Name='summongate.exe'" 2>$null
+
+if (-not $procs) {
+    Write-Host "[kill-dev] No summongate.exe instances running." -ForegroundColor Green
+    exit 0
+}
+
+$killed = 0
+
+foreach ($p in $procs) {
+    $path = $p.ExecutablePath
+    $pid  = $p.ProcessId
+
+    if ($path -like "*Program Files*") {
+        Write-Host "[kill-dev] SKIPPING PID $pid - PROD instance ($path)" -ForegroundColor Yellow
+        continue
+    }
+
+    if ($path -like "*target\release*") {
+        Write-Host "[kill-dev] SKIPPING PID $pid - release build ($path)" -ForegroundColor Yellow
+        continue
+    }
+
+    if ($path -like "*target\debug*") {
+        Write-Host "[kill-dev] Killing PID $pid - dev instance ($path)" -ForegroundColor Cyan
+        Stop-Process -Id $pid -Force
+        $killed++
+        continue
+    }
+
+    # Unknown path - do not touch
+    Write-Host "[kill-dev] SKIPPING PID $pid - unknown path ($path)" -ForegroundColor Red
+}
+
+if ($killed -eq 0) {
+    Write-Host "[kill-dev] No dev instances to kill." -ForegroundColor Green
+} else {
+    Write-Host "[kill-dev] Killed $killed dev instance(s)." -ForegroundColor Cyan
+}
