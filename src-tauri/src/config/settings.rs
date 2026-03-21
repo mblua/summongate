@@ -1,16 +1,18 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ActionButton {
+pub struct AgentConfig {
     pub id: String,
     pub label: String,
     pub command: String,
     pub args: Vec<String>,
     pub color: String,
-    pub working_directory: String,
+    /// If true, run `git pull` before launching the agent
+    pub git_pull_before: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,7 +20,10 @@ pub struct ActionButton {
 pub struct AppSettings {
     pub default_shell: String,
     pub default_shell_args: Vec<String>,
-    pub action_buttons: Vec<ActionButton>,
+    /// Base directories to scan for repos
+    pub repo_paths: Vec<String>,
+    /// Available coding agents
+    pub agents: Vec<AgentConfig>,
 }
 
 impl Default for AppSettings {
@@ -26,26 +31,75 @@ impl Default for AppSettings {
         Self {
             default_shell: "powershell.exe".to_string(),
             default_shell_args: vec!["-NoLogo".to_string()],
-            action_buttons: vec![
-                ActionButton {
-                    id: "claude".to_string(),
-                    label: "Claude".to_string(),
-                    command: "claude".to_string(),
-                    args: vec![],
-                    color: "#d97706".to_string(),
-                    working_directory: "~".to_string(),
-                },
-                ActionButton {
-                    id: "codex".to_string(),
-                    label: "Codex".to_string(),
-                    command: "codex".to_string(),
-                    args: vec![],
-                    color: "#10b981".to_string(),
-                    working_directory: "~".to_string(),
-                },
+            repo_paths: vec![
+                r"C:\Users\maria\0_repos".to_string(),
+                r"C:\Users\maria\0_repos_phi".to_string(),
             ],
+            agents: vec![],
         }
     }
+}
+
+/// Returns the settings directory: ~/.winnerds/
+fn settings_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".winnerds"))
+}
+
+/// Returns the settings file path: ~/.winnerds/settings.json
+fn settings_path() -> Option<PathBuf> {
+    settings_dir().map(|d| d.join("settings.json"))
+}
+
+/// Load settings from ~/.winnerds/settings.json, falling back to defaults
+pub fn load_settings() -> AppSettings {
+    let path = match settings_path() {
+        Some(p) => p,
+        None => {
+            log::warn!("Could not determine home directory, using defaults");
+            return AppSettings::default();
+        }
+    };
+
+    if !path.exists() {
+        log::info!("No settings file found at {:?}, using defaults", path);
+        return AppSettings::default();
+    }
+
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => match serde_json::from_str::<AppSettings>(&contents) {
+            Ok(settings) => {
+                log::info!("Loaded settings from {:?}", path);
+                settings
+            }
+            Err(e) => {
+                log::error!("Failed to parse settings file: {}", e);
+                AppSettings::default()
+            }
+        },
+        Err(e) => {
+            log::error!("Failed to read settings file: {}", e);
+            AppSettings::default()
+        }
+    }
+}
+
+/// Save settings to ~/.winnerds/settings.json
+pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
+    let dir = settings_dir().ok_or("Could not determine home directory")?;
+    let path = dir.join("settings.json");
+
+    // Ensure directory exists
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create settings directory: {}", e))?;
+
+    let json = serde_json::to_string_pretty(settings)
+        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+
+    std::fs::write(&path, json)
+        .map_err(|e| format!("Failed to write settings file: {}", e))?;
+
+    log::info!("Saved settings to {:?}", path);
+    Ok(())
 }
 
 pub type SettingsState = Arc<RwLock<AppSettings>>;

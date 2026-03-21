@@ -1,48 +1,25 @@
-import { Component, createSignal, For, onMount } from "solid-js";
-import type { ActionButton } from "../../shared/types";
-import { SessionAPI, SettingsAPI } from "../../shared/ipc";
+import { Component, createSignal } from "solid-js";
+import { SessionAPI } from "../../shared/ipc";
 import SettingsModal from "./SettingsModal";
+import OpenAgentModal from "./OpenAgentModal";
 
 const Toolbar: Component = () => {
-  const [buttons, setButtons] = createSignal<ActionButton[]>([]);
   const [showSettings, setShowSettings] = createSignal(false);
-
-  const loadButtons = async () => {
-    const settings = await SettingsAPI.get();
-    setButtons(settings.actionButtons);
-  };
-
-  onMount(loadButtons);
+  const [showOpenAgent, setShowOpenAgent] = createSignal(false);
 
   const handleNewSession = () => {
     SessionAPI.create();
   };
 
-  const handleActionButton = (btn: ActionButton) => {
-    const cwd = btn.workingDirectory === "~" ? undefined : btn.workingDirectory;
-    SessionAPI.create({
-      shell: btn.command,
-      shellArgs: btn.args,
-      cwd,
-      sessionName: btn.label,
-    });
-  };
-
   return (
     <>
       <div class="toolbar-section">
-        <For each={buttons()}>
-          {(btn) => (
-            <button
-              class="toolbar-action-btn"
-              style={{ "--btn-color": btn.color }}
-              onClick={() => handleActionButton(btn)}
-              title={`Launch ${btn.label}`}
-            >
-              {btn.label}
-            </button>
-          )}
-        </For>
+        <button
+          class="toolbar-action-btn toolbar-open-agent-btn"
+          onClick={() => setShowOpenAgent(true)}
+        >
+          &#x25B6; Open Agent
+        </button>
       </div>
       <div class="toolbar">
         <button class="toolbar-btn" onClick={handleNewSession}>
@@ -57,12 +34,10 @@ const Toolbar: Component = () => {
         </button>
       </div>
       {showSettings() && (
-        <SettingsModal
-          onClose={() => {
-            setShowSettings(false);
-            loadButtons();
-          }}
-        />
+        <SettingsModal onClose={() => setShowSettings(false)} />
+      )}
+      {showOpenAgent() && (
+        <OpenAgentModal onClose={() => setShowOpenAgent(false)} />
       )}
     </>
   );

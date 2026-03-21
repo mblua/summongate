@@ -192,7 +192,7 @@ html, body, #root {
   color: var(--status-exited);
 }
 
-/* Action buttons section (Claude, Codex) */
+/* Action buttons section */
 .toolbar-section {
   display: flex;
   gap: var(--spacing-sm);
@@ -201,15 +201,16 @@ html, body, #root {
   border-top: 1px solid var(--sidebar-border);
 }
 
-.toolbar-action-btn {
+.toolbar-open-agent-btn {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: var(--spacing-xs);
   flex: 1;
-  height: 30px;
-  border: 1px solid color-mix(in srgb, var(--btn-color) 40%, transparent);
-  background: color-mix(in srgb, var(--btn-color) 10%, transparent);
-  color: var(--btn-color);
+  height: 32px;
+  border: 1px solid rgba(0, 212, 255, 0.25);
+  background: rgba(0, 212, 255, 0.06);
+  color: var(--sidebar-accent);
   font-family: var(--font-ui);
   font-size: var(--font-size-sm);
   font-weight: 600;
@@ -219,9 +220,9 @@ html, body, #root {
   letter-spacing: 0.3px;
 }
 
-.toolbar-action-btn:hover {
-  background: color-mix(in srgb, var(--btn-color) 20%, transparent);
-  border-color: color-mix(in srgb, var(--btn-color) 60%, transparent);
+.toolbar-open-agent-btn:hover {
+  background: rgba(0, 212, 255, 0.12);
+  border-color: rgba(0, 212, 255, 0.4);
 }
 
 /* Toolbar */
@@ -465,6 +466,36 @@ html, body, #root {
   margin-bottom: var(--spacing-xs);
 }
 
+.settings-button-card-header span:not(.settings-color-dot) {
+  flex: 1;
+}
+
+.settings-agent-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--sidebar-fg-dim);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: background var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.settings-button-card:hover .settings-agent-remove {
+  opacity: 1;
+}
+
+.settings-agent-remove:hover {
+  background: rgba(255, 59, 92, 0.15);
+  color: var(--status-exited);
+}
+
 .settings-color-dot {
   width: 10px;
   height: 10px;
@@ -497,6 +528,103 @@ html, body, #root {
   border-radius: var(--radius-sm);
 }
 
+/* Repo path rows */
+.settings-path-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.settings-path-input {
+  flex: 1;
+}
+
+.settings-path-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--sidebar-fg-dim);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  flex-shrink: 0;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.settings-path-remove:hover {
+  background: rgba(255, 59, 92, 0.15);
+  color: var(--status-exited);
+}
+
+.settings-add-btn {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px dashed var(--sidebar-border);
+  background: transparent;
+  color: var(--sidebar-fg-dim);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.settings-add-btn:hover {
+  border-color: var(--sidebar-accent);
+  color: var(--sidebar-accent);
+}
+
+.settings-agent-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+  flex-wrap: wrap;
+}
+
+.settings-preset-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--sidebar-border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--sidebar-fg);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.settings-preset-btn:hover {
+  border-color: var(--sidebar-accent);
+  background: rgba(0, 212, 255, 0.06);
+}
+
+.settings-preset-btn .settings-color-dot {
+  width: 8px;
+  height: 8px;
+}
+
+/* Checkbox field */
+.settings-checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  color: var(--sidebar-fg-dim);
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.settings-checkbox {
+  accent-color: var(--sidebar-accent);
+  cursor: pointer;
+}
+
 /* Empty state */
 .empty-state {
   display: flex;
@@ -527,4 +655,232 @@ html, body, #root {
 
 .session-item-enter {
   animation: slide-in var(--transition-normal) ease-out;
+}
+
+/* ===== Open Agent Modal ===== */
+.agent-modal {
+  background: #0c0c16;
+  border: 1px solid rgba(0, 212, 255, 0.15);
+  border-radius: 10px;
+  width: 94%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 30px rgba(0, 212, 255, 0.05);
+  overflow: hidden;
+}
+
+.agent-modal-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--sidebar-border);
+}
+
+.agent-modal-title {
+  font-size: var(--font-size-sm);
+  color: var(--sidebar-fg-dim);
+}
+
+.agent-modal-title strong {
+  color: #ffffff;
+}
+
+.agent-back-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--sidebar-accent);
+  cursor: pointer;
+  font-size: 16px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.agent-back-btn:hover {
+  background: rgba(0, 212, 255, 0.1);
+}
+
+/* Search */
+.agent-search-container {
+  position: relative;
+  padding: var(--spacing-sm);
+  border-bottom: 1px solid var(--sidebar-border);
+}
+
+.agent-search-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-radius: var(--radius-md);
+  color: #ffffff;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  outline: none;
+  height: 36px;
+  transition: border-color var(--transition-fast);
+}
+
+.agent-search-input::placeholder {
+  color: var(--sidebar-fg-dim);
+}
+
+.agent-search-input:focus {
+  border-color: var(--sidebar-accent);
+}
+
+.agent-search-spinner {
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(0, 212, 255, 0.2);
+  border-top-color: var(--sidebar-accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: translateY(-50%) rotate(360deg); }
+}
+
+/* List */
+.agent-modal-list {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 300px;
+}
+
+.agent-modal-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.agent-modal-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+.agent-modal-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  border-left: 2px solid transparent;
+}
+
+.agent-modal-item:hover,
+.agent-modal-item.highlighted {
+  background: rgba(0, 212, 255, 0.06);
+}
+
+.agent-modal-item.highlighted {
+  border-left-color: var(--sidebar-accent);
+}
+
+.agent-modal-item-icon {
+  font-size: 14px;
+  width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.agent-modal-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-modal-item-name {
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  color: var(--sidebar-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-modal-item.highlighted .agent-modal-item-name {
+  color: #ffffff;
+}
+
+.agent-modal-item-detail {
+  font-size: 10px;
+  color: var(--sidebar-fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-modal-item-badges {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+
+.agent-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--sidebar-fg-dim);
+}
+
+.agent-badge[data-agent="Claude"] {
+  background: rgba(217, 119, 6, 0.15);
+  color: #d97706;
+}
+
+.agent-badge[data-agent="Codex"] {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.agent-badge[data-agent="Cursor"] {
+  background: rgba(139, 92, 246, 0.15);
+  color: #8b5cf6;
+}
+
+/* Agent choice (after repo selected) */
+.agent-choice {
+  padding: var(--spacing-md);
+}
+
+.agent-color-badge {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.agent-modal-empty {
+  padding: var(--spacing-lg);
+  text-align: center;
+  color: var(--sidebar-fg-dim);
+  font-size: var(--font-size-sm);
+}
+
+/* Footer hints */
+.agent-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-xs) var(--spacing-md);
+  border-top: 1px solid var(--sidebar-border);
+  font-size: 9px;
+  color: var(--sidebar-fg-dim);
+  letter-spacing: 0.3px;
 }

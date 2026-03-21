@@ -1,6 +1,28 @@
-import { Component, createSignal, For, onMount } from "solid-js";
-import type { AppSettings, ActionButton } from "../../shared/types";
+import { Component, createSignal, For, Show, onMount } from "solid-js";
+import type { AppSettings, AgentConfig } from "../../shared/types";
 import { SettingsAPI } from "../../shared/ipc";
+
+const AGENT_PRESETS: Record<string, Omit<AgentConfig, "id">> = {
+  claude: {
+    label: "Claude Code",
+    command: "claude",
+    args: ["--dangerously-skip-permissions"],
+    color: "#d97706",
+    gitPullBefore: true,
+  },
+  codex: {
+    label: "Codex",
+    command: "codex",
+    args: [],
+    color: "#10b981",
+    gitPullBefore: true,
+  },
+};
+
+let idCounter = 0;
+function newId(): string {
+  return `agent_${Date.now()}_${idCounter++}`;
+}
 
 const SettingsModal: Component<{ onClose: () => void }> = (props) => {
   const [settings, setSettings] = createSignal<AppSettings | null>(null);
@@ -19,26 +41,70 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
     if (s) setSettings({ ...s, [key]: value });
   };
 
-  const updateButton = (index: number, field: keyof ActionButton, value: string) => {
+  // Repo paths
+  const updateRepoPath = (index: number, value: string) => {
     const s = settings();
     if (!s) return;
-    const buttons = [...s.actionButtons];
-    buttons[index] = { ...buttons[index], [field]: value };
-    updateField("actionButtons", buttons);
+    const paths = [...s.repoPaths];
+    paths[index] = value;
+    updateField("repoPaths", paths);
   };
 
-  const updateButtonArgs = (index: number, value: string) => {
+  const addRepoPath = () => {
     const s = settings();
     if (!s) return;
-    const buttons = [...s.actionButtons];
-    buttons[index] = {
-      ...buttons[index],
-      args: value
-        .split(" ")
-        .map((a) => a.trim())
-        .filter(Boolean),
-    };
-    updateField("actionButtons", buttons);
+    updateField("repoPaths", [...s.repoPaths, ""]);
+  };
+
+  const removeRepoPath = (index: number) => {
+    const s = settings();
+    if (!s) return;
+    const paths = s.repoPaths.filter((_, i) => i !== index);
+    updateField("repoPaths", paths);
+  };
+
+  // Agents
+  const updateAgent = (
+    index: number,
+    field: keyof AgentConfig,
+    value: string | boolean | string[]
+  ) => {
+    const s = settings();
+    if (!s) return;
+    const agents = [...s.agents];
+    agents[index] = { ...agents[index], [field]: value };
+    updateField("agents", agents);
+  };
+
+  const addAgent = (preset?: Omit<AgentConfig, "id">) => {
+    const s = settings();
+    if (!s) return;
+    const agent: AgentConfig = preset
+      ? { id: newId(), ...preset }
+      : {
+          id: newId(),
+          label: "",
+          command: "",
+          args: [],
+          color: "#6366f1",
+          gitPullBefore: false,
+        };
+    updateField("agents", [...s.agents, agent]);
+  };
+
+  const removeAgent = (index: number) => {
+    const s = settings();
+    if (!s) return;
+    updateField(
+      "agents",
+      s.agents.filter((_, i) => i !== index)
+    );
+  };
+
+  const hasAgentByCommand = (command: string): boolean => {
+    const s = settings();
+    if (!s) return false;
+    return s.agents.some((a) => a.command === command);
   };
 
   const handleSave = async () => {
@@ -56,12 +122,8 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
     }
   };
 
-  const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Escape") props.onClose();
-  };
-
   return (
-    <div class="modal-overlay" onClick={handleOverlayClick} onKeyDown={handleKeyDown} tabIndex={-1}>
+    <div class="modal-overlay" onClick={handleOverlayClick}>
       <div class="modal-container">
         <div class="modal-header">
           <span class="modal-title">Settings</span>
@@ -80,7 +142,9 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
                 <input
                   class="settings-input"
                   value={settings()!.defaultShell}
-                  onInput={(e) => updateField("defaultShell", e.currentTarget.value)}
+                  onInput={(e) =>
+                    updateField("defaultShell", e.currentTarget.value)
+                  }
                 />
               </label>
               <label class="settings-field">
@@ -98,57 +162,91 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
               </label>
             </div>
 
-            {/* Action Buttons */}
+            {/* Repo Paths */}
             <div class="settings-section">
-              <div class="settings-section-title">Action Buttons</div>
-              <For each={settings()!.actionButtons}>
-                {(btn, i) => (
+              <div class="settings-section-title">Repo Scan Paths</div>
+              <For each={settings()!.repoPaths}>
+                {(path, i) => (
+                  <div class="settings-path-row">
+                    <input
+                      class="settings-input settings-path-input"
+                      value={path}
+                      onInput={(e) =>
+                        updateRepoPath(i(), e.currentTarget.value)
+                      }
+                      placeholder="C:\path\to\repos"
+                    />
+                    <button
+                      class="settings-path-remove"
+                      onClick={() => removeRepoPath(i())}
+                      title="Remove"
+                    >
+                      &#x2715;
+                    </button>
+                  </div>
+                )}
+              </For>
+              <button class="settings-add-btn" onClick={addRepoPath}>
+                + Add Path
+              </button>
+            </div>
+
+            {/* Agents */}
+            <div class="settings-section">
+              <div class="settings-section-title">Agents</div>
+
+              <For each={settings()!.agents}>
+                {(agent, i) => (
                   <div class="settings-button-card">
                     <div class="settings-button-card-header">
                       <div
                         class="settings-color-dot"
-                        style={{ background: btn.color }}
+                        style={{ background: agent.color }}
                       />
-                      <span>{btn.label}</span>
+                      <span>{agent.label || "New Agent"}</span>
+                      <button
+                        class="settings-agent-remove"
+                        onClick={() => removeAgent(i())}
+                        title="Remove agent"
+                      >
+                        &#x2715;
+                      </button>
                     </div>
                     <label class="settings-field">
                       <span class="settings-label">Label</span>
                       <input
                         class="settings-input"
-                        value={btn.label}
+                        value={agent.label}
                         onInput={(e) =>
-                          updateButton(i(), "label", e.currentTarget.value)
+                          updateAgent(i(), "label", e.currentTarget.value)
                         }
+                        placeholder="My Agent"
                       />
                     </label>
                     <label class="settings-field">
                       <span class="settings-label">Command</span>
                       <input
                         class="settings-input"
-                        value={btn.command}
+                        value={agent.command}
                         onInput={(e) =>
-                          updateButton(i(), "command", e.currentTarget.value)
+                          updateAgent(i(), "command", e.currentTarget.value)
                         }
+                        placeholder="agent-cli"
                       />
                     </label>
                     <label class="settings-field">
                       <span class="settings-label">Arguments</span>
                       <input
                         class="settings-input"
-                        value={btn.args.join(" ")}
+                        value={agent.args.join(" ")}
                         onInput={(e) =>
-                          updateButtonArgs(i(), e.currentTarget.value)
+                          updateAgent(
+                            i(),
+                            "args",
+                            e.currentTarget.value.split(" ").filter(Boolean)
+                          )
                         }
-                      />
-                    </label>
-                    <label class="settings-field">
-                      <span class="settings-label">Working Directory</span>
-                      <input
-                        class="settings-input"
-                        value={btn.workingDirectory}
-                        onInput={(e) =>
-                          updateButton(i(), "workingDirectory", e.currentTarget.value)
-                        }
+                        placeholder="--flag value"
                       />
                     </label>
                     <label class="settings-field">
@@ -157,23 +255,72 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
                         <input
                           type="color"
                           class="settings-color-picker"
-                          value={btn.color}
+                          value={agent.color}
                           onInput={(e) =>
-                            updateButton(i(), "color", e.currentTarget.value)
+                            updateAgent(i(), "color", e.currentTarget.value)
                           }
                         />
                         <input
                           class="settings-input settings-input-sm"
-                          value={btn.color}
+                          value={agent.color}
                           onInput={(e) =>
-                            updateButton(i(), "color", e.currentTarget.value)
+                            updateAgent(i(), "color", e.currentTarget.value)
                           }
                         />
                       </div>
                     </label>
+                    <label class="settings-checkbox-field">
+                      <input
+                        type="checkbox"
+                        class="settings-checkbox"
+                        checked={agent.gitPullBefore}
+                        onChange={(e) =>
+                          updateAgent(
+                            i(),
+                            "gitPullBefore",
+                            e.currentTarget.checked
+                          )
+                        }
+                      />
+                      <span>Run git pull before launch</span>
+                    </label>
                   </div>
                 )}
               </For>
+
+              {/* Add agent actions */}
+              <div class="settings-agent-actions">
+                <Show when={!hasAgentByCommand("claude")}>
+                  <button
+                    class="settings-preset-btn"
+                    onClick={() => addAgent(AGENT_PRESETS.claude)}
+                  >
+                    <span
+                      class="settings-color-dot"
+                      style={{ background: AGENT_PRESETS.claude.color }}
+                    />
+                    + Claude Code
+                  </button>
+                </Show>
+                <Show when={!hasAgentByCommand("codex")}>
+                  <button
+                    class="settings-preset-btn"
+                    onClick={() => addAgent(AGENT_PRESETS.codex)}
+                  >
+                    <span
+                      class="settings-color-dot"
+                      style={{ background: AGENT_PRESETS.codex.color }}
+                    />
+                    + Codex
+                  </button>
+                </Show>
+                <button
+                  class="settings-add-btn"
+                  onClick={() => addAgent()}
+                >
+                  + Custom Agent
+                </button>
+              </div>
             </div>
           </div>
         )}

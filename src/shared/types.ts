@@ -65,17 +65,24 @@ export interface PtyOutputEvent {
   data: number[];
 }
 
-export interface ActionButton {
+export interface AgentConfig {
   id: string;
   label: string;
   command: string;
   args: string[];
   color: string;
-  workingDirectory: string;
+  gitPullBefore: boolean;
+}
+
+export interface RepoMatch {
+  name: string;
+  path: string;
+  agents: string[];
 }
 
 export interface AppSettings {
   defaultShell: string;
   defaultShellArgs: string[];
-  actionButtons: ActionButton[];
+  repoPaths: string[];
+  agents: AgentConfig[];
 }

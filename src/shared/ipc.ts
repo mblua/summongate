@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { Session, PtyOutputEvent, AppSettings } from "./types";
+import type { Session, PtyOutputEvent, AppSettings, RepoMatch } from "./types";
 
 export interface CreateSessionOptions {
   shell?: string;
@@ -42,6 +42,11 @@ export const SettingsAPI = {
   get: () => invoke<AppSettings>("get_settings"),
   update: (settings: AppSettings) =>
     invoke<void>("update_settings", { newSettings: settings }),
+};
+
+export const ReposAPI = {
+  search: (query: string) =>
+    invoke<RepoMatch[]>("search_repos", { query }),
 };
 
 export function onPtyOutput(

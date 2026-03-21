@@ -6,7 +6,7 @@ pub mod session;
 
 use std::sync::{Arc, Mutex};
 
-use config::settings::{AppSettings, SettingsState};
+use config::settings::SettingsState;
 use pty::manager::PtyManager;
 use session::manager::SessionManager;
 
@@ -14,7 +14,7 @@ use session::manager::SessionManager;
 pub fn run() {
     let session_mgr = Arc::new(tokio::sync::RwLock::new(SessionManager::new()));
     let pty_mgr = Arc::new(Mutex::new(PtyManager::new()));
-    let settings: SettingsState = Arc::new(tokio::sync::RwLock::new(AppSettings::default()));
+    let settings: SettingsState = Arc::new(tokio::sync::RwLock::new(config::settings::load_settings()));
 
     tauri::Builder::default()
         .manage(session_mgr)
@@ -62,6 +62,7 @@ pub fn run() {
             commands::pty::pty_resize,
             commands::config::get_settings,
             commands::config::update_settings,
+            commands::repos::search_repos,
         ])
         .run(tauri::generate_context!())
         .expect("error while running application");
