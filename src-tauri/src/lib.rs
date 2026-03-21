@@ -30,7 +30,7 @@ pub fn run() {
                 "sidebar",
                 WebviewUrl::App("index.html?window=sidebar".into()),
             )
-            .title("win-nerds-tab")
+            .title("termgate")
             .inner_size(280.0, 600.0)
             .min_inner_size(200.0, 400.0)
             .decorations(false)

@@ -1,5 +1,5 @@
 [package]
-name = "win-nerds-tab"
+name = "termgate"
 version = "0.1.0"
 edition = "2021"
 
@@ -21,5 +21,5 @@ dirs = "6"
 tauri-build = { version = "2", features = [] }
 
 [lib]
-name = "win_nerds_tab_lib"
+name = "termgate_lib"
 crate-type = ["lib", "cdylib", "staticlib"]

@@ -40,17 +40,17 @@ impl Default for AppSettings {
     }
 }
 
-/// Returns the settings directory: ~/.winnerds/
+/// Returns the settings directory: ~/.termgate/
 fn settings_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".winnerds"))
+    dirs::home_dir().map(|h| h.join(".termgate"))
 }
 
-/// Returns the settings file path: ~/.winnerds/settings.json
+/// Returns the settings file path: ~/.termgate/settings.json
 fn settings_path() -> Option<PathBuf> {
     settings_dir().map(|d| d.join("settings.json"))
 }
 
-/// Load settings from ~/.winnerds/settings.json, falling back to defaults
+/// Load settings from ~/.termgate/settings.json, falling back to defaults
 pub fn load_settings() -> AppSettings {
     let path = match settings_path() {
         Some(p) => p,
@@ -83,7 +83,7 @@ pub fn load_settings() -> AppSettings {
     }
 }
 
-/// Save settings to ~/.winnerds/settings.json
+/// Save settings to ~/.termgate/settings.json
 pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
     let dir = settings_dir().ok_or("Could not determine home directory")?;
     let path = dir.join("settings.json");

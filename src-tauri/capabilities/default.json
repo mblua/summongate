@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for win-nerds-tab",
+  "description": "Default capabilities for termgate",
   "windows": ["sidebar", "terminal"],
   "permissions": [
     "core:default",

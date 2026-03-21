@@ -3773,6 +3773,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "termgate"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs",
+ "env_logger",
+ "log",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "termios"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4513,24 +4531,6 @@ dependencies = [
  "thiserror 2.0.18",
  "windows",
  "windows-core 0.61.2",
-]
-
-[[package]]
-name = "win-nerds-tab"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "dirs",
- "env_logger",
- "log",
- "portable-pty",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "thiserror 2.0.18",
- "tokio",
- "uuid",
 ]
 
 [[package]]

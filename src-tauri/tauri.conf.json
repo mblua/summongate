@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicedoc/tauri/dev/packages/tauri-utils/schema.json",
-  "productName": "win-nerds-tab",
+  "productName": "termgate",
   "version": "0.1.0",
-  "identifier": "com.winnerds.tab",
+  "identifier": "com.termgate.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",

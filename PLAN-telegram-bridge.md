@@ -1,4 +1,4 @@
-# Plan: Telegram Bridge para winnerds-tab
+# Plan: Telegram Bridge para termgate
 
 ## Contexto
 
@@ -42,7 +42,7 @@ Telegram getUpdates → Bridge Poll Task → pty_write() → PTY stdin
 | `src-tauri/src/commands/mod.rs` | `pub mod telegram;` |
 | `src-tauri/src/config/settings.rs` | `telegram_bots: Vec<TelegramBotConfig>` con `#[serde(default)]` |
 | `src-tauri/src/pty/manager.rs` | Read loop: check output sender map, clone bytes si bridge activo |
-| `src-tauri/src/commands/session.rs` | Auto-attach: leer `.winnerds-tab/config.json` al crear sesión |
+| `src-tauri/src/commands/session.rs` | Auto-attach: leer `.termgate/config.json` al crear sesión |
 | `src-tauri/src/errors.rs` | Agregar TelegramError variant |
 | `src/shared/types.ts` | TelegramBotConfig, BridgeInfo, BridgeStatus interfaces |
 | `src/shared/ipc.ts` | TelegramAPI + event listeners |
@@ -73,7 +73,7 @@ pub struct BridgeInfo {
     pub color: String,
 }
 
-// Per-repo config (.winnerds-tab/config.json)
+// Per-repo config (.termgate/config.json)
 pub struct RepoConfig {
     pub telegram_bot: Option<String>,  // bot label
 }
@@ -153,7 +153,7 @@ type BridgeStatus = "active" | { error: string } | "detaching"
 - Botón Telegram on hover → lista bots disponibles o detach si ya tiene uno
 
 ### Per-Repo Auto-Attach
-- `.winnerds-tab/config.json` → `{ "telegramBot": "mi-bot" }`
+- `.termgate/config.json` → `{ "telegramBot": "mi-bot" }`
 - Al crear sesión con cwd: leer config, buscar bot por label, auto-attach si disponible
 - Silent skip si bot no existe o está ocupado
 
@@ -184,17 +184,17 @@ type BridgeStatus = "active" | { error: string } | "detaching"
 14. Bridges store + event listeners
 
 ### Fase E: Per-Repo Auto-Attach
-15. Leer `.winnerds-tab/config.json` en create_session
+15. Leer `.termgate/config.json` en create_session
 16. Auto-attach logic
 
 ---
 
 ## Verificación
 
-1. Agregar un bot en Settings, guardar, recargar → persiste en `~/.winnerds/settings.json`
+1. Agregar un bot en Settings, guardar, recargar → persiste en `~/.termgate/settings.json`
 2. Test connection → mensaje llega a Telegram
 3. Crear sesión, attach bot → output del terminal aparece en Telegram
 4. Escribir en Telegram → texto aparece en la terminal
 5. Detach → bridge se para limpiamente
-6. Crear `.winnerds-tab/config.json` en un repo, abrir sesión ahí → auto-attach
+6. Crear `.termgate/config.json` en un repo, abrir sesión ahí → auto-attach
 7. Destruir sesión con bridge → auto-detach sin errores
