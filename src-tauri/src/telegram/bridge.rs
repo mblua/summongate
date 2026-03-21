@@ -163,11 +163,11 @@ impl RowTracker {
         let now = Instant::now();
         for row_idx in 0..screen.size().0 {
             let row_text = screen.contents_between(row_idx, 0, row_idx, screen.size().1);
-            let trimmed = row_text.trim_end().to_string();
+            let cleaned = strip_trailing_decoration(&row_text);
 
             let idx = row_idx as usize;
-            if idx < self.rows.len() && self.rows[idx].content != trimmed {
-                self.rows[idx].content = trimmed;
+            if idx < self.rows.len() && self.rows[idx].content != cleaned {
+                self.rows[idx].content = cleaned.to_string();
                 self.rows[idx].last_changed = now;
                 self.rows[idx].emitted = false;
             }
@@ -219,6 +219,18 @@ impl RowTracker {
     }
 }
 
+/// Strip trailing box-drawing characters and whitespace from a vt100 row.
+/// Claude Code's TUI places separators (─━═) at the right edge of the screen.
+/// When vt100 reads the full 220-col row, these get concatenated with content.
+fn strip_trailing_decoration(s: &str) -> String {
+    let trimmed = s.trim_end();
+    let result = trimmed.trim_end_matches(|c: char| {
+        // Box-drawing: ─━═│┃┌┐└┘├┤┬┴┼╔╗╚╝╠╣╦╩╬
+        "\u{2500}\u{2501}\u{2550}\u{2502}\u{2503}\u{250C}\u{2510}\u{2514}\u{2518}\u{251C}\u{2524}\u{252C}\u{2534}\u{253C}\u{2554}\u{2557}\u{255A}\u{255D}\u{2560}\u{2563}\u{2566}\u{2569}\u{256C}".contains(c)
+    });
+    result.trim_end().to_string()
+}
+
 // ── Agent Filter (pluggable per coding agent) ────────────────
 //
 // The AgentFilter trait allows different filtering rules for
@@ -238,6 +250,10 @@ trait AgentFilter: Send + Sync {
 struct ClaudeCodeFilter;
 
 /// Patterns that indicate Claude Code TUI chrome
+///
+/// IMPORTANT: Do NOT add model names like "Opus 4" here - they match
+/// conversation content when Claude mentions its own model. Use status-bar-
+/// specific patterns instead (e.g. "] │" which only appears in the header).
 const CLAUDE_CHROME_PATTERNS: &[&str] = &[
     "bypass permissions",
     "shift+tab to cycle",
@@ -254,11 +270,9 @@ const CLAUDE_CHROME_PATTERNS: &[&str] = &[
     "(resets in",
     "Claude in Chrome enabled",
     "Claude Code v",
-    "Opus 4",
-    "Sonnet 4",
-    "Haiku 4",
-    "Claude Max",
-    "Claude Pro",
+    // Status bar header: "[Model (context) | Plan] │ branch"
+    // The "] │" pattern catches this without matching conversation content
+    "] \u{2502}",
 ];
 
 /// Claude Code spinner characters (defense in depth - stabilization is primary)
@@ -320,9 +334,13 @@ impl AgentFilter for ClaudeCodeFilter {
             }
         }
 
-        // Standalone prompt markers
-        if trimmed == "\u{276F}" || trimmed == ">" {
-            // ❯
+        // Prompt markers and user input echo.
+        // Lines starting with ❯ are user input - the user already knows what
+        // they typed (either from Telegram or from the terminal).
+        // Filtering these also prevents streaming partial lines from being sent
+        // (user pauses while typing cause partial lines to stabilize).
+        if trimmed == "\u{276F}" || trimmed == ">" || trimmed.starts_with("\u{276F} ") {
+            // ❯ or ❯ followed by text
             return false;
         }
 
