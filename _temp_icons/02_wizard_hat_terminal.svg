@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="100" fill="#0D0D12"/>
+  <path d="M256 70 L350 320 L162 320 Z" fill="#3B1F6E" stroke="#8B5CF6" stroke-width="3"/>
+  <ellipse cx="256" cy="320" rx="120" ry="28" fill="#3B1F6E" stroke="#8B5CF6" stroke-width="3"/>
+  <!-- Terminal prompt on hat -->
+  <text x="220" y="270" font-family="monospace" font-size="48" font-weight="bold" fill="#10B981">$_</text>
+  <circle cx="285" cy="170" r="6" fill="#FBBF24"/>
+  <circle cx="245" cy="200" r="4" fill="#FBBF24" opacity="0.7"/>
+</svg>

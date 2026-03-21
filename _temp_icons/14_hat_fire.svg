@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="g14" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#DC2626"/>
+      <stop offset="50%" stop-color="#F59E0B"/>
+      <stop offset="100%" stop-color="#FBBF24"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="100" fill="#0D0D12"/>
+  <path d="M256 110 L345 330 L167 330 Z" fill="#2D1B4E" stroke="#6C3FA0" stroke-width="3"/>
+  <ellipse cx="256" cy="335" rx="120" ry="25" fill="#2D1B4E" stroke="#6C3FA0" stroke-width="3"/>
+  <!-- Fire from tip -->
+  <path d="M256 110 Q240 70 256 40 Q265 65 270 55 Q275 80 260 110" fill="url(#g14)" opacity="0.9"/>
+  <path d="M256 110 Q248 80 252 55 Q260 75 265 65 Q268 85 258 110" fill="#FBBF24" opacity="0.6"/>
+  <!-- Ember particles -->
+  <circle cx="240" cy="50" r="3" fill="#F59E0B" opacity="0.5"/>
+  <circle cx="270" cy="35" r="2" fill="#FBBF24" opacity="0.4"/>
+  <circle cx="250" cy="25" r="2" fill="#F59E0B" opacity="0.3"/>
+</svg>

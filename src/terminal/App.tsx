@@ -11,6 +11,7 @@ import {
 import { registerShortcuts, unregisterShortcuts } from "../shared/shortcuts";
 import { terminalStore } from "./stores/terminal";
 import Titlebar from "./components/Titlebar";
+import LastPrompt from "../sidebar/components/LastPrompt";
 import TerminalView from "./components/TerminalView";
 import StatusBar from "./components/StatusBar";
 import "./styles/terminal.css";
@@ -119,6 +120,7 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
   return (
     <div class="terminal-layout">
       <Titlebar detached={props.detached} />
+      <LastPrompt />
       <Show
         when={terminalStore.activeSessionId}
         fallback={

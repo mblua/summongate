@@ -5,6 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { PtyAPI, onPtyOutput } from "../../shared/ipc";
 import { terminalStore } from "../stores/terminal";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { emit } from "@tauri-apps/api/event";
 import "@xterm/xterm/css/xterm.css";
 
 const TerminalView: Component = () => {
@@ -13,6 +14,7 @@ const TerminalView: Component = () => {
   let fitAddon: FitAddon | null = null;
   let unlistenPtyOutput: UnlistenFn | null = null;
   let resizeObserver: ResizeObserver | null = null;
+  let inputBuffer = "";
 
   const initTerminal = () => {
     terminal = new Terminal({
@@ -66,12 +68,29 @@ const TerminalView: Component = () => {
     fitAddon.fit();
     updateSize();
 
-    // Handle user input → PTY write
+    // Handle user input → PTY write + track last prompt
     terminal.onData((data) => {
       const sessionId = terminalStore.activeSessionId;
       if (sessionId) {
         const encoder = new TextEncoder();
         PtyAPI.write(sessionId, encoder.encode(data));
+      }
+
+      // Track input for last-prompt display
+      if (data === "\r") {
+        const trimmed = inputBuffer.trim();
+        if (trimmed) {
+          emit("last_prompt", { text: trimmed });
+        }
+        inputBuffer = "";
+      } else if (data === "\x7f") {
+        // Backspace
+        inputBuffer = inputBuffer.slice(0, -1);
+      } else if (data.length === 1 && data >= " ") {
+        inputBuffer += data;
+      } else if (data.length > 1 && !data.startsWith("\x1b")) {
+        // Pasted text
+        inputBuffer += data;
       }
     });
 

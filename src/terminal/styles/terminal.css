@@ -38,6 +38,7 @@ html, body, #root {
   flex-shrink: 0;
 }
 
+
 .titlebar-title {
   font-weight: 500;
   font-size: var(--font-size-sm);
@@ -103,6 +104,45 @@ html, body, #root {
 .titlebar-btn-close:hover {
   background: var(--titlebar-btn-close-hover);
   color: white;
+}
+
+/* Last Prompt Panel */
+.last-prompt-panel {
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+  min-height: 40px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.last-prompt-panel::-webkit-scrollbar {
+  width: 3px;
+}
+
+.last-prompt-panel::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+}
+
+.last-prompt-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  color: var(--statusbar-fg);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.last-prompt-text {
+  font-size: var(--font-size-sm);
+  color: #e8e8e8;
+  font-family: "Cascadia Code", "JetBrains Mono", monospace;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.85;
 }
 
 /* Terminal container */

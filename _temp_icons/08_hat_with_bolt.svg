@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="100" fill="#0D0D12"/>
+  <path d="M256 90 L345 325 L167 325 Z" fill="#2D1B4E" stroke="#7C3AED" stroke-width="3"/>
+  <ellipse cx="256" cy="330" rx="120" ry="26" fill="#2D1B4E" stroke="#7C3AED" stroke-width="3"/>
+  <!-- Lightning bolt coming from hat tip -->
+  <path d="M256 70 L230 140 L260 140 L220 220 L270 160 L245 160 Z" fill="#FBBF24" stroke="#F59E0B" stroke-width="2"/>
+  <!-- Electric particles -->
+  <circle cx="210" cy="180" r="3" fill="#FBBF24" opacity="0.5"/>
+  <circle cx="280" cy="120" r="2" fill="#FBBF24" opacity="0.4"/>
+  <circle cx="200" cy="130" r="2" fill="#FBBF24" opacity="0.3"/>
+</svg>
