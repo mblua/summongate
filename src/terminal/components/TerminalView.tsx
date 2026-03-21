@@ -79,7 +79,7 @@ const TerminalView: Component = () => {
       // Track input for last-prompt display
       if (data === "\r") {
         const trimmed = inputBuffer.trim();
-        if (trimmed) {
+        if (trimmed && sessionId) {
           emit("last_prompt", { text: trimmed, sessionId });
         }
         inputBuffer = "";

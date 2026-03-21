@@ -47,8 +47,12 @@ const SessionItem: Component<{
 
   const handleClick = async () => {
     if (!editing()) {
-      SessionAPI.switch(props.session.id);
-      (await WebviewWindow.getByLabel("terminal"))?.setFocus();
+      await SessionAPI.switch(props.session.id);
+      const detachedLabel = `terminal-${props.session.id.replace(/-/g, "")}`;
+      const detachedWin = await WebviewWindow.getByLabel(detachedLabel);
+      if (!detachedWin) {
+        (await WebviewWindow.getByLabel("terminal"))?.setFocus();
+      }
     }
   };
 
