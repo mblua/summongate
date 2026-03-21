@@ -104,4 +104,6 @@ export interface AppSettings {
   repoPaths: string[];
   agents: AgentConfig[];
   telegramBots: TelegramBotConfig[];
+  sidebarAlwaysOnTop: boolean;
+  raiseTerminalOnClick: boolean;
 }

@@ -29,6 +29,16 @@ pub struct AppSettings {
     /// Configured Telegram bots for bridge
     #[serde(default)]
     pub telegram_bots: Vec<TelegramBotConfig>,
+    /// Keep sidebar window always on top
+    #[serde(default)]
+    pub sidebar_always_on_top: bool,
+    /// Raise terminal window when sidebar is clicked
+    #[serde(default = "default_true")]
+    pub raise_terminal_on_click: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for AppSettings {
@@ -42,6 +52,8 @@ impl Default for AppSettings {
             ],
             agents: vec![],
             telegram_bots: vec![],
+            sidebar_always_on_top: false,
+            raise_terminal_on_click: true,
         }
     }
 }

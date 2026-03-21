@@ -1,4 +1,5 @@
 import { Component, createSignal, For, Show, onMount } from "solid-js";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { AppSettings, AgentConfig, TelegramBotConfig } from "../../shared/types";
 import { SettingsAPI, TelegramAPI } from "../../shared/ipc";
 
@@ -163,6 +164,8 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
     if (!s) return;
     setSaving(true);
     await SettingsAPI.update(s);
+    // Apply always-on-top immediately
+    await getCurrentWindow().setAlwaysOnTop(s.sidebarAlwaysOnTop);
     setSaving(false);
     props.onClose();
   };
@@ -210,6 +213,33 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
                     )
                   }
                 />
+              </label>
+            </div>
+
+            {/* Window */}
+            <div class="settings-section">
+              <div class="settings-section-title">Window</div>
+              <label class="settings-checkbox-field">
+                <input
+                  type="checkbox"
+                  class="settings-checkbox"
+                  checked={settings()!.sidebarAlwaysOnTop}
+                  onChange={(e) =>
+                    updateField("sidebarAlwaysOnTop", e.currentTarget.checked)
+                  }
+                />
+                <span>Sidebar always on top</span>
+              </label>
+              <label class="settings-checkbox-field">
+                <input
+                  type="checkbox"
+                  class="settings-checkbox"
+                  checked={settings()!.raiseTerminalOnClick}
+                  onChange={(e) =>
+                    updateField("raiseTerminalOnClick", e.currentTarget.checked)
+                  }
+                />
+                <span>Raise terminal when clicking sidebar</span>
               </label>
             </div>
 

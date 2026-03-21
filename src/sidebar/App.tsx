@@ -1,7 +1,9 @@
 import { Component, onMount, onCleanup } from "solid-js";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import {
   SessionAPI,
+  SettingsAPI,
   TelegramAPI,
   onSessionCreated,
   onSessionDestroyed,
@@ -22,9 +24,34 @@ import "./styles/sidebar.css";
 const SidebarApp: Component = () => {
   const unlisteners: UnlistenFn[] = [];
   let shortcutHandler: ((e: KeyboardEvent) => void) | null = null;
+  let raiseTerminalEnabled = true;
+  let lastRaiseTime = 0;
+
+  const handleRaiseTerminal = async () => {
+    if (!raiseTerminalEnabled) return;
+    const now = Date.now();
+    if (now - lastRaiseTime < 500) return;
+    lastRaiseTime = now;
+    try {
+      const terminal = await Window.getByLabel("terminal");
+      if (terminal) {
+        await terminal.setFocus();
+        await getCurrentWindow().setFocus();
+      }
+    } catch {}
+  };
 
   onMount(async () => {
     shortcutHandler = registerShortcuts();
+
+    // Apply window settings
+    const appSettings = await SettingsAPI.get();
+    raiseTerminalEnabled = appSettings.raiseTerminalOnClick;
+    if (appSettings.sidebarAlwaysOnTop) {
+      await getCurrentWindow().setAlwaysOnTop(true);
+    }
+    document.addEventListener("mousedown", handleRaiseTerminal);
+
     // Load initial sessions
     const sessions = await SessionAPI.list();
     sessionsStore.setSessions(sessions);
@@ -88,6 +115,7 @@ const SidebarApp: Component = () => {
   onCleanup(() => {
     unlisteners.forEach((unlisten) => unlisten());
     if (shortcutHandler) unregisterShortcuts(shortcutHandler);
+    document.removeEventListener("mousedown", handleRaiseTerminal);
   });
 
   return (
