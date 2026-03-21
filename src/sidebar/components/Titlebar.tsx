@@ -2,7 +2,7 @@ import { Component } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import iconUrl from "../../assets/icon-16.png";
 
-const APP_VERSION = "0.2.0";
+const APP_VERSION = "0.2.1";
 
 const Titlebar: Component = () => {
   const appWindow = getCurrentWindow();
