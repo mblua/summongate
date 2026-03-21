@@ -23,40 +23,22 @@ pub fn run() {
 
     let output_senders: OutputSenderMap = Arc::new(Mutex::new(HashMap::new()));
 
-    // Idle detector: emits session_idle / session_busy events
-    // AppHandle is set in setup() via OnceLock; callbacks safely no-op until then.
     // Idle detector: emits session_idle / session_busy events.
-    // Callbacks run on native threads (watcher + PTY read loop), so we need
-    // a tokio Handle to spawn async work. Both Handle and AppHandle are set
-    // in setup() via OnceLock; callbacks safely no-op until then.
-    struct RuntimeCtx {
-        app: tauri::AppHandle,
-        rt: tokio::runtime::Handle,
-    }
-    let ctx_lock: Arc<OnceLock<RuntimeCtx>> = Arc::new(OnceLock::new());
-    let ctx_for_idle = Arc::clone(&ctx_lock);
-    let ctx_for_busy = Arc::clone(&ctx_lock);
-    let session_mgr_idle = Arc::clone(&session_mgr);
-    let session_mgr_busy = Arc::clone(&session_mgr);
+    // Callbacks run on native threads (watcher + PTY read loop).
+    // AppHandle.emit() is sync and thread-safe, so no tokio needed.
+    // AppHandle is set in setup() via OnceLock; callbacks no-op until then.
+    let app_handle_lock: Arc<OnceLock<tauri::AppHandle>> = Arc::new(OnceLock::new());
+    let handle_for_idle = Arc::clone(&app_handle_lock);
+    let handle_for_busy = Arc::clone(&app_handle_lock);
     let idle_detector = IdleDetector::new(
         move |id| {
-            let mgr = Arc::clone(&session_mgr_idle);
-            if let Some(ctx) = ctx_for_idle.get() {
-                let app = ctx.app.clone();
-                ctx.rt.spawn(async move {
-                    mgr.read().await.mark_idle(id).await;
-                    let _ = tauri::Emitter::emit(&app, "session_idle", serde_json::json!({ "id": id.to_string() }));
-                });
+            if let Some(app) = handle_for_idle.get() {
+                let _ = tauri::Emitter::emit(app, "session_idle", serde_json::json!({ "id": id.to_string() }));
             }
         },
         move |id| {
-            let mgr = Arc::clone(&session_mgr_busy);
-            if let Some(ctx) = ctx_for_busy.get() {
-                let app = ctx.app.clone();
-                ctx.rt.spawn(async move {
-                    mgr.read().await.mark_busy(id).await;
-                    let _ = tauri::Emitter::emit(&app, "session_busy", serde_json::json!({ "id": id.to_string() }));
-                });
+            if let Some(app) = handle_for_busy.get() {
+                let _ = tauri::Emitter::emit(app, "session_busy", serde_json::json!({ "id": id.to_string() }));
             }
         },
     );
@@ -79,11 +61,8 @@ pub fn run() {
             use tauri::WebviewWindowBuilder;
             use tauri::WebviewUrl;
 
-            // Make AppHandle + Tokio Handle available to idle detector callbacks
-            let _ = ctx_lock.set(RuntimeCtx {
-                app: app.handle().clone(),
-                rt: tokio::runtime::Handle::current(),
-            });
+            // Make AppHandle available to idle detector callbacks
+            let _ = app_handle_lock.set(app.handle().clone());
 
             let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
                 .expect("Failed to load app icon");
