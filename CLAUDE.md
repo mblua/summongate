@@ -189,6 +189,13 @@ Config export/import, session history, notifications, snippets, cross-platform.
   3. `src/sidebar/components/Titlebar.tsx` → `APP_VERSION`
 - Bump at minimum the patch version on every compilable change set
 
+### Git Branching
+- **NUNCA hacer cambios directamente en `main`**. Todo cambio debe realizarse en un branch dedicado con prefijo segun el tipo:
+  - `feature/` — nueva funcionalidad
+  - `fix/` — correccion de bug
+  - `bug/` — investigacion/fix de bug
+- Merge a `main` solo via PR o merge explícito del usuario
+
 ### General
 - No over-engineering. No premature abstractions
 - Test Rust modules in isolation before wiring to frontend
