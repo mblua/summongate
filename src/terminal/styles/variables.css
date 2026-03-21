@@ -1,0 +1,33 @@
+:root {
+  /* Terminal colors — Noir theme */
+  --terminal-bg: #0a0a0f;
+  --terminal-fg: #e8e8e8;
+  --terminal-cursor: #00d4ff;
+  --terminal-selection: rgba(0, 212, 255, 0.25);
+
+  /* Titlebar */
+  --titlebar-bg: #08080d;
+  --titlebar-fg: #888898;
+  --titlebar-btn-hover: rgba(255, 255, 255, 0.08);
+  --titlebar-btn-close-hover: #e81123;
+
+  /* Status bar */
+  --statusbar-bg: #08080d;
+  --statusbar-fg: #666678;
+  --statusbar-accent: #00d4ff;
+
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+
+  /* Typography */
+  --font-ui: "Geist", "Outfit", "General Sans", "Segoe UI", sans-serif;
+  --font-terminal: "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
+  --font-size-sm: 11px;
+  --font-size-md: 13px;
+  --font-size-terminal: 14px;
+
+  /* Transitions */
+  --transition-fast: 150ms ease-out;
+}

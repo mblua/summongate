@@ -1,0 +1,49 @@
+:root {
+  /* Sidebar colors — Noir theme default */
+  --sidebar-bg: #0a0a0f;
+  --sidebar-fg: #d0d0d8;
+  --sidebar-fg-dim: #6a6a78;
+  --sidebar-accent: #00d4ff;
+  --sidebar-hover: #12121e;
+  --sidebar-active: #161628;
+  --sidebar-border: rgba(255, 255, 255, 0.06);
+  --sidebar-surface: #0e0e18;
+
+  /* Status */
+  --status-active: #00d4ff;
+  --status-running: #3a7bff;
+  --status-idle: #555566;
+  --status-exited: #ff3b5c;
+
+  /* Titlebar */
+  --titlebar-bg: #08080d;
+  --titlebar-fg: #888898;
+  --titlebar-btn-hover: rgba(255, 255, 255, 0.08);
+  --titlebar-btn-close-hover: #e81123;
+
+  /* Toolbar */
+  --toolbar-bg: #0a0a12;
+  --toolbar-btn-bg: rgba(0, 212, 255, 0.1);
+  --toolbar-btn-hover: rgba(0, 212, 255, 0.2);
+  --toolbar-btn-fg: #00d4ff;
+
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+
+  /* Typography */
+  --font-ui: "Geist", "Outfit", "General Sans", "Segoe UI", sans-serif;
+  --font-size-sm: 11px;
+  --font-size-md: 13px;
+  --font-size-lg: 14px;
+
+  /* Transitions */
+  --transition-fast: 150ms ease-out;
+  --transition-normal: 200ms ease-out;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+}

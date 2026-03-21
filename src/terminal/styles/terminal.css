@@ -1,0 +1,145 @@
+@import "./variables.css";
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-md);
+  color: var(--terminal-fg);
+  background: var(--terminal-bg);
+}
+
+/* Layout */
+.terminal-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100%;
+}
+
+/* Titlebar */
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 var(--spacing-sm);
+  background: var(--titlebar-bg);
+  color: var(--titlebar-fg);
+  font-size: var(--font-size-sm);
+  -webkit-app-region: drag;
+  flex-shrink: 0;
+}
+
+.titlebar-title {
+  font-weight: 500;
+  font-size: var(--font-size-sm);
+  opacity: 0.7;
+}
+
+.titlebar-session-name {
+  font-weight: 600;
+  color: var(--statusbar-accent);
+  opacity: 1;
+}
+
+.titlebar-controls {
+  display: flex;
+  gap: 0;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--titlebar-fg);
+  cursor: pointer;
+  font-size: 12px;
+  transition: background var(--transition-fast);
+}
+
+.titlebar-btn:hover {
+  background: var(--titlebar-btn-hover);
+}
+
+.titlebar-btn-close:hover {
+  background: var(--titlebar-btn-close-hover);
+  color: white;
+}
+
+/* Terminal container */
+.terminal-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.terminal-container .xterm {
+  height: 100%;
+  padding: 2px 0 0 4px;
+}
+
+/* Status bar */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  height: 22px;
+  padding: 0 var(--spacing-sm);
+  background: var(--statusbar-bg);
+  color: var(--statusbar-fg);
+  font-size: 10px;
+  font-family: var(--font-ui);
+  flex-shrink: 0;
+  letter-spacing: 0.3px;
+}
+
+.status-bar-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-bar-accent {
+  color: var(--statusbar-accent);
+}
+
+/* Empty terminal state */
+.terminal-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: var(--spacing-md);
+  color: var(--statusbar-fg);
+  font-size: var(--font-size-md);
+}
+
+.terminal-empty-btn {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  background: rgba(0, 212, 255, 0.08);
+  color: var(--statusbar-accent);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background var(--transition-fast);
+}
+
+.terminal-empty-btn:hover {
+  background: rgba(0, 212, 255, 0.15);
+}
