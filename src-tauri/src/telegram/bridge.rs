@@ -165,6 +165,7 @@ impl RowTracker {
         for row_idx in 0..screen.size().0 {
             let row_text = screen.contents_between(row_idx, 0, row_idx, screen.size().1);
             let cleaned = strip_trailing_decoration(&row_text);
+            let cleaned = strip_trailing_spinner(&cleaned);
 
             let idx = row_idx as usize;
             if idx < self.rows.len() && self.rows[idx].content != cleaned {
@@ -237,6 +238,37 @@ fn strip_trailing_decoration(s: &str) -> String {
     result.trim_end().to_string()
 }
 
+/// Strip trailing spinner animation from a vt100 row.
+/// Claude Code places spinner text (e.g. `✶ Gallivanting…`) at the right edge
+/// of the 220-col screen. This gets concatenated with real content on the same row.
+/// Pattern: {spaces} {spinner_char} {text}{…}
+fn strip_trailing_spinner(s: &str) -> String {
+    // Look for the last occurrence of a spinner char preceded by whitespace
+    let bytes = s.as_bytes();
+    let mut best_cut = None;
+
+    for (i, c) in s.char_indices() {
+        if CLAUDE_SPINNERS.contains(&c) {
+            // Must be preceded by whitespace (or be at start)
+            let is_preceded_by_space = i == 0 || bytes[i - 1] == b' ';
+            if is_preceded_by_space {
+                // Check if the rest of the line ends with … or ...
+                let after = s[i + c.len_utf8()..].trim_end();
+                if after.ends_with('\u{2026}') || after.ends_with("...") {
+                    // This looks like a spinner suffix - cut here
+                    best_cut = Some(i);
+                }
+            }
+        }
+    }
+
+    if let Some(cut) = best_cut {
+        s[..cut].trim_end().to_string()
+    } else {
+        s.to_string()
+    }
+}
+
 // ── Agent Filter (pluggable per coding agent) ────────────────
 //
 // The AgentFilter trait allows different filtering rules for
@@ -298,6 +330,16 @@ impl AgentFilter for ClaudeCodeFilter {
             if trimmed.contains(pattern) {
                 return false;
             }
+        }
+
+        // Tool execution progress: ⎿  Running…, ⎿  Running… (3s)
+        if trimmed.starts_with("\u{23BF}") && trimmed.contains("Running") {
+            return false;
+        }
+
+        // Tool headers: ●─Bash(...), ●─Read(...), etc.
+        if trimmed.starts_with("\u{25CF}\u{2500}") {
+            return false;
         }
 
         // Box-drawing lines (separators)
@@ -394,14 +436,11 @@ fn is_thinking_line(s: &str) -> bool {
 
     if check.ends_with('\u{2026}') || check.ends_with("...") {
         let word_part = check.trim_end_matches('\u{2026}').trim_end_matches("...");
-        if !word_part.is_empty()
-            && word_part
-                .chars()
-                .next()
-                .map(|c| c.is_uppercase())
-                .unwrap_or(false)
-            && word_part.chars().all(|c| c.is_alphabetic())
-        {
+        // Any short text starting with a spinner char and ending with ellipsis
+        // is a Claude Code thinking/processing animation (e.g. "Topsy-turvying…",
+        // "Gallivanting…", "Ttokens.rvying…"). Limit to 50 chars to avoid
+        // false positives with real content.
+        if !word_part.is_empty() && word_part.len() < 50 {
             return true;
         }
     }
@@ -558,9 +597,10 @@ async fn output_task(
                                 row_idx, 0, row_idx, screen.size().1,
                             );
                             let cleaned = strip_trailing_decoration(&row_text);
+                            let cleaned = strip_trailing_spinner(&cleaned);
                             let trimmed = cleaned.trim();
                             if trimmed.starts_with("\u{276F} ") {
-                                let user_input = &trimmed["\u{276F} ".len()..];
+                                let user_input = trimmed["\u{276F} ".len()..].trim();
                                 if !user_input.is_empty() {
                                     let msg = format!("\u{276F} {}", user_input);
                                     logger.log("USER_INPUT", &session_id, &msg);
