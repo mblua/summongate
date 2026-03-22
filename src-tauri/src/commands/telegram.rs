@@ -100,7 +100,7 @@ pub async fn telegram_send_test(token: String) -> Result<i64, String> {
         &client,
         &token,
         chat_id,
-        "summongate connected",
+        "agentscommander connected",
     )
     .await
     .map_err(|e| e.to_string())?;

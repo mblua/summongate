@@ -28,7 +28,7 @@ pub enum BridgeStatus {
     Detaching,
 }
 
-/// Per-repo config read from .summongate/config.json
+/// Per-repo config read from .agentscommander/config.json
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoConfig {
