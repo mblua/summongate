@@ -1,4 +1,4 @@
-# Diagnostico: Emision de mensajes SummonGate a Telegram
+# Diagnostico: Emision de mensajes AgentsCommander a Telegram
 
 **Fecha:** 2026-03-21
 **Branch:** `fix/telegram`
@@ -8,7 +8,7 @@
 
 ## Problema
 
-La emision de mensajes desde SummonGate hacia Telegram llega corrupta. Los mensajes que se ven limpios en la terminal de Claude Code llegan a Telegram con:
+La emision de mensajes desde AgentsCommander hacia Telegram llega corrupta. Los mensajes que se ven limpios en la terminal de Claude Code llegan a Telegram con:
 
 1. Texto sin espacios ("HolaMariano,teescucho" en vez de "Hola Mariano, te escucho")
 2. Caracteres de spinner mezclados con contenido real
@@ -47,8 +47,8 @@ Antes de arrancar, dejame hacer el pull inicial.
 
 Se agrego un `DiagLogger` en `bridge.rs` que escribe dos archivos sin truncar:
 
-- `~/.summongate/diag-raw.log` - Todo lo que llega del PTY (post procesamiento, pre filtro)
-- `~/.summongate/diag-sent.log` - Todo lo que efectivamente se envia a Telegram
+- `~/.agentscommander/diag-raw.log` - Todo lo que llega del PTY (post procesamiento, pre filtro)
+- `~/.agentscommander/diag-sent.log` - Todo lo que efectivamente se envia a Telegram
 
 Ambos con timestamp por entrada. Se truncan al iniciar un nuevo bridge para tener capturas limpias.
 
@@ -254,8 +254,8 @@ Worst case: 800ms (stabilization) + 200ms (tick) + 500ms (flush) = **1500ms** de
 
 - **v4 (RowTracker + stabilization) desplegada** en branch `fix/telegram`, pendiente de validacion
 - Los archivos de diagnostico se siguen generando:
-  - `~/.summongate/diag-raw.log` - filas post-stabilization, pre-filtro
-  - `~/.summongate/diag-sent.log` - lo que se envia a Telegram
+  - `~/.agentscommander/diag-raw.log` - filas post-stabilization, pre-filtro
+  - `~/.agentscommander/diag-sent.log` - lo que se envia a Telegram
 - Compila sin errores, clippy sin warnings nuevos
 
 ## Proximos pasos
