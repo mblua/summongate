@@ -18,6 +18,14 @@ Built with **Tauri 2.x** (Rust) + **SolidJS** (TypeScript) + **xterm.js** (WebGL
 - **Keyboard shortcuts** - New session, close, switch between sessions
 - **Configurable** - Shell, args, repo paths, agents, and bots via `~/.summongate/settings.json`
 
+## Design Principles
+
+These are deliberate choices that shape the project. They are not accidents.
+
+- **No MCP.** We consider the Model Context Protocol to add little practical value over simpler alternatives (HTTP APIs, direct IPC). It is not used unless a specific integration strictly requires it.
+
+- **Files over databases.** All state and communication is persisted to plain files (JSON, TOML). This makes every change visible via `git diff`, trivial to inspect, and easy to debug. Databases will be introduced later for performance-critical paths once the data model is mature - not before.
+
 ## Tech Stack
 
 | Layer | Tech |
