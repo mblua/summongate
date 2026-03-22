@@ -36,11 +36,14 @@ impl GitWatcher {
 
     pub fn start(self: &Arc<Self>) {
         let watcher = Arc::clone(self);
-        tokio::task::spawn(async move {
-            loop {
-                tokio::time::sleep(POLL_INTERVAL).await;
-                watcher.poll().await;
-            }
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime for GitWatcher");
+            rt.block_on(async move {
+                loop {
+                    tokio::time::sleep(POLL_INTERVAL).await;
+                    watcher.poll().await;
+                }
+            });
         });
     }
 
