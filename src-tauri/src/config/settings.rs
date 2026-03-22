@@ -57,17 +57,17 @@ impl Default for AppSettings {
     }
 }
 
-/// Returns the settings directory: ~/.summongate/
+/// Returns the settings directory: ~/.agentscommander/
 fn settings_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".summongate"))
+    dirs::home_dir().map(|h| h.join(".agentscommander"))
 }
 
-/// Returns the settings file path: ~/.summongate/settings.json
+/// Returns the settings file path: ~/.agentscommander/settings.json
 fn settings_path() -> Option<PathBuf> {
     settings_dir().map(|d| d.join("settings.json"))
 }
 
-/// Load settings from ~/.summongate/settings.json, falling back to defaults
+/// Load settings from ~/.agentscommander/settings.json, falling back to defaults
 pub fn load_settings() -> AppSettings {
     let path = match settings_path() {
         Some(p) => p,
@@ -100,7 +100,7 @@ pub fn load_settings() -> AppSettings {
     }
 }
 
-/// Save settings to ~/.summongate/settings.json
+/// Save settings to ~/.agentscommander/settings.json
 pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
     let dir = settings_dir().ok_or("Could not determine home directory")?;
     let path = dir.join("settings.json");

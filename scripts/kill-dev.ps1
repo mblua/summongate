@@ -1,10 +1,10 @@
-# kill-dev.ps1 - Kill ONLY dev instances of summongate.exe
+# kill-dev.ps1 - Kill ONLY dev instances of agentscommander.exe
 # NEVER touches production (Program Files) or release builds.
 
-$procs = Get-WmiObject Win32_Process -Filter "Name='summongate.exe'" 2>$null
+$procs = Get-WmiObject Win32_Process -Filter "Name='agentscommander.exe'" 2>$null
 
 if (-not $procs) {
-    Write-Host "[kill-dev] No summongate.exe instances running." -ForegroundColor Green
+    Write-Host "[kill-dev] No agentscommander.exe instances running." -ForegroundColor Green
     exit 0
 }
 

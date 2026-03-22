@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for summongate",
+  "description": "Default capabilities for agentscommander",
   "windows": ["sidebar", "terminal", "terminal-*"],
   "permissions": [
     "core:default",
