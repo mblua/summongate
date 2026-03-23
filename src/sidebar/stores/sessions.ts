@@ -50,4 +50,8 @@ export const sessionsStore = {
   setSessionWaiting(id: string, waiting: boolean) {
     setState("sessions", (s) => s.id === id, "waitingForInput", waiting);
   },
+
+  setGitBranch(sessionId: string, branch: string | null) {
+    setState("sessions", (s) => s.id === sessionId, "gitBranch", branch);
+  },
 };

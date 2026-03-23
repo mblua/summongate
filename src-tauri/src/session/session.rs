@@ -14,6 +14,7 @@ pub struct Session {
     pub status: SessionStatus,
     pub waiting_for_input: bool,
     pub last_prompt: Option<String>,
+    pub git_branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -38,6 +39,7 @@ pub struct SessionInfo {
     pub status: SessionStatus,
     pub waiting_for_input: bool,
     pub last_prompt: Option<String>,
+    pub git_branch: Option<String>,
 }
 
 impl From<&Session> for SessionInfo {
@@ -52,6 +54,7 @@ impl From<&Session> for SessionInfo {
             status: s.status.clone(),
             waiting_for_input: s.waiting_for_input,
             last_prompt: s.last_prompt.clone(),
+            git_branch: s.git_branch.clone(),
         }
     }
 }

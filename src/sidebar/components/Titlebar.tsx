@@ -2,7 +2,7 @@ import { Component } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import iconUrl from "../../assets/icon-16.png";
 
-const APP_VERSION = "0.4.1";
+const APP_VERSION = "0.4.2";
 
 const Titlebar: Component = () => {
   const appWindow = getCurrentWindow();
@@ -15,7 +15,7 @@ const Titlebar: Component = () => {
       <div class="titlebar-brand" data-tauri-drag-region>
         <img src={iconUrl} class="titlebar-icon" alt="" draggable={false} />
         <span class="titlebar-title" data-tauri-drag-region>
-          summongate
+          agents commander
         </span>
         <span class="titlebar-version" data-tauri-drag-region>
           v{APP_VERSION}

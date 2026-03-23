@@ -11,6 +11,7 @@ import {
   onSessionRenamed,
   onSessionIdle,
   onSessionBusy,
+  onSessionGitBranch,
   onTelegramBridgeAttached,
   onTelegramBridgeDetached,
   onTelegramBridgeError,
@@ -99,6 +100,12 @@ const SidebarApp: Component = () => {
     unlisteners.push(
       await onSessionBusy(({ id }) => {
         sessionsStore.setSessionWaiting(id, false);
+      })
+    );
+
+    unlisteners.push(
+      await onSessionGitBranch(({ sessionId, branch }) => {
+        sessionsStore.setGitBranch(sessionId, branch);
       })
     );
 

@@ -116,6 +116,15 @@ export const TelegramAPI = {
     invoke<number>("telegram_send_test", { token }),
 };
 
+export function onSessionGitBranch(
+  callback: (data: { sessionId: string; branch: string | null }) => void
+): Promise<UnlistenFn> {
+  return listen<{ sessionId: string; branch: string | null }>(
+    "session_git_branch",
+    (e) => callback(e.payload)
+  );
+}
+
 export function onSessionIdle(
   callback: (data: { id: string }) => void
 ): Promise<UnlistenFn> {

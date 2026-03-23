@@ -127,6 +127,11 @@ const SessionItem: Component<{
             onClick={(e) => e.stopPropagation()}
           />
         </Show>
+        <Show when={props.session.gitBranch}>
+          <div class="session-item-branch" title={props.session.gitBranch!}>
+            {props.session.gitBranch}
+          </div>
+        </Show>
         <div class="session-item-shell">{props.session.shell}</div>
       </div>
       <button

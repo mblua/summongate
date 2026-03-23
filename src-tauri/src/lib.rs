@@ -8,7 +8,10 @@ pub mod telegram;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use tauri::Manager;
+
 use config::settings::SettingsState;
+use pty::git_watcher::GitWatcher;
 use pty::idle_detector::IdleDetector;
 use pty::manager::PtyManager;
 use session::manager::SessionManager;
@@ -44,7 +47,10 @@ pub fn run() {
     );
     idle_detector.start();
 
-    let pty_mgr = Arc::new(Mutex::new(PtyManager::new(output_senders.clone(), Arc::clone(&idle_detector))));
+    let session_mgr_for_git = Arc::clone(&session_mgr);
+    let output_senders_for_pty = output_senders.clone();
+    let idle_detector_for_pty = Arc::clone(&idle_detector);
+
     let tg_mgr: TelegramBridgeState =
         Arc::new(tokio::sync::Mutex::new(TelegramBridgeManager::new(output_senders)));
 
@@ -53,7 +59,6 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(session_mgr)
-        .manage(pty_mgr)
         .manage(tg_mgr)
         .manage(settings)
         .manage(detached_sessions.clone())
@@ -64,6 +69,18 @@ pub fn run() {
             // Make AppHandle available to idle detector callbacks
             let _ = app_handle_lock.set(app.handle().clone());
 
+            // Git branch watcher: polls git branch for each session every 5s
+            let git_watcher = GitWatcher::new(session_mgr_for_git, app.handle().clone());
+            git_watcher.start();
+
+            // PtyManager needs GitWatcher for cleanup on session kill
+            let pty_mgr = Arc::new(Mutex::new(PtyManager::new(
+                output_senders_for_pty,
+                idle_detector_for_pty,
+                git_watcher,
+            )));
+            app.manage(pty_mgr);
+
             let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
                 .expect("Failed to load app icon");
 
@@ -73,7 +90,7 @@ pub fn run() {
                 "sidebar",
                 WebviewUrl::App("index.html?window=sidebar".into()),
             )
-            .title("summongate")
+            .title("Agents Commander")
             .icon(icon.clone())
             .expect("Failed to set sidebar icon")
             .inner_size(280.0, 600.0)

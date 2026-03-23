@@ -11,7 +11,6 @@ pub struct AgentConfig {
     pub id: String,
     pub label: String,
     pub command: String,
-    pub args: Vec<String>,
     pub color: String,
     /// If true, run `git pull` before launching the agent
     pub git_pull_before: bool,
@@ -58,18 +57,42 @@ impl Default for AppSettings {
     }
 }
 
-/// Returns the settings directory: ~/.summongate/
+/// Returns the settings directory: ~/.agentscommander/
 fn settings_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".summongate"))
+    dirs::home_dir().map(|h| h.join(".agentscommander"))
 }
 
-/// Returns the settings file path: ~/.summongate/settings.json
+/// Returns the settings file path: ~/.agentscommander/settings.json
 fn settings_path() -> Option<PathBuf> {
     settings_dir().map(|d| d.join("settings.json"))
 }
 
-/// Load settings from ~/.summongate/settings.json, falling back to defaults
+/// Migrate settings from old ~/.summongate/ to ~/.agentscommander/ if needed
+fn migrate_from_summongate() {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return,
+    };
+    let old_path = home.join(".summongate").join("settings.json");
+    let new_dir = home.join(".agentscommander");
+    let new_path = new_dir.join("settings.json");
+
+    if old_path.exists() && !new_path.exists() {
+        log::info!("Migrating settings from {:?} to {:?}", old_path, new_path);
+        if let Err(e) = std::fs::create_dir_all(&new_dir) {
+            log::error!("Failed to create new settings dir: {}", e);
+            return;
+        }
+        if let Err(e) = std::fs::copy(&old_path, &new_path) {
+            log::error!("Failed to copy settings: {}", e);
+        }
+    }
+}
+
+/// Load settings from ~/.agentscommander/settings.json, falling back to defaults
 pub fn load_settings() -> AppSettings {
+    migrate_from_summongate();
+
     let path = match settings_path() {
         Some(p) => p,
         None => {
@@ -101,7 +124,7 @@ pub fn load_settings() -> AppSettings {
     }
 }
 
-/// Save settings to ~/.summongate/settings.json
+/// Save settings to ~/.agentscommander/settings.json
 pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
     let dir = settings_dir().ok_or("Could not determine home directory")?;
     let path = dir.join("settings.json");

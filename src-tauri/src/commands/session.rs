@@ -65,9 +65,9 @@ pub async fn create_session(
     // Emit session_created event
     let _ = app.emit("session_created", info.clone());
 
-    // Auto-attach Telegram bot if repo has .summongate/config.json
+    // Auto-attach Telegram bot if repo has .agentscommander/config.json
     let config_path = std::path::Path::new(&cwd)
-        .join(".summongate")
+        .join(".agentscommander")
         .join("config.json");
     if let Ok(contents) = tokio::fs::read_to_string(&config_path).await {
         if let Ok(repo_config) = serde_json::from_str::<RepoConfig>(&contents) {

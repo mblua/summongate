@@ -84,18 +84,21 @@ const OpenAgentModal: Component<{ onClose: () => void }> = (props) => {
   };
 
   const launchAgent = (repo: RepoMatch, agent: AgentConfig) => {
-    // Build the command: if gitPullBefore, chain git pull && agent command
+    // Build the command: parse command string into executable + args
+    const parts = agent.command.trim().split(/\s+/);
+    const executable = parts[0];
+    const cmdArgs = parts.slice(1);
+
     let shell: string;
     let shellArgs: string[];
 
     if (agent.gitPullBefore) {
       // Use cmd.exe /K to keep the session alive after command runs
       shell = "cmd.exe";
-      const agentCmd = [agent.command, ...agent.args].join(" ");
-      shellArgs = ["/K", `git pull && ${agentCmd}`];
+      shellArgs = ["/K", `git pull && ${agent.command}`];
     } else {
-      shell = agent.command;
-      shellArgs = [...agent.args];
+      shell = executable;
+      shellArgs = cmdArgs;
     }
 
     SessionAPI.create({
@@ -169,7 +172,7 @@ const OpenAgentModal: Component<{ onClose: () => void }> = (props) => {
                     <div class="agent-modal-item-info">
                       <div class="agent-modal-item-name">{agent.label}</div>
                       <div class="agent-modal-item-detail">
-                        {agent.command} {agent.args.join(" ")}
+                        {agent.command}
                       </div>
                     </div>
                   </div>

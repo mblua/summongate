@@ -1,5 +1,5 @@
 [package]
-name = "summongate"
+name = "agentscommander"
 version = "0.4.2"
 edition = "2021"
 
@@ -25,5 +25,5 @@ vt100 = "0.15"
 tauri-build = { version = "2", features = [] }
 
 [lib]
-name = "summongate_lib"
+name = "agentscommander_lib"
 crate-type = ["lib", "cdylib", "staticlib"]

@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::errors::AppError;
+use crate::pty::git_watcher::GitWatcher;
 use crate::pty::idle_detector::IdleDetector;
 use crate::telegram::manager::OutputSenderMap;
 
@@ -20,6 +21,7 @@ pub struct PtyManager {
     ptys: Arc<Mutex<HashMap<Uuid, PtyInstance>>>,
     output_senders: OutputSenderMap,
     idle_detector: Arc<IdleDetector>,
+    git_watcher: Arc<GitWatcher>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -30,11 +32,12 @@ struct PtyOutputPayload {
 }
 
 impl PtyManager {
-    pub fn new(output_senders: OutputSenderMap, idle_detector: Arc<IdleDetector>) -> Self {
+    pub fn new(output_senders: OutputSenderMap, idle_detector: Arc<IdleDetector>, git_watcher: Arc<GitWatcher>) -> Self {
         Self {
             ptys: Arc::new(Mutex::new(HashMap::new())),
             output_senders,
             idle_detector,
+            git_watcher,
         }
     }
 
@@ -191,6 +194,7 @@ impl PtyManager {
         // Dropping the PtyInstance will close the master, which signals the child
         ptys.remove(&id);
         self.idle_detector.remove_session(id);
+        self.git_watcher.remove_session(id);
         Ok(())
     }
 }
