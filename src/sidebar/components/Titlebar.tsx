@@ -4,7 +4,8 @@ import iconUrl from "../../assets/icon-16.png";
 import { getConsoleText } from "../../shared/console-capture";
 import { DebugAPI } from "../../shared/ipc";
 
-const APP_VERSION = "0.4.5";
+declare const __APP_VERSION__: string;
+const APP_VERSION = __APP_VERSION__;
 
 const Titlebar: Component = () => {
   const appWindow = getCurrentWindow();

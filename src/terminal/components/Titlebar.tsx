@@ -2,7 +2,8 @@ import { Component, Show } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { terminalStore } from "../stores/terminal";
 
-const APP_VERSION = "0.4.3";
+declare const __APP_VERSION__: string;
+const APP_VERSION = __APP_VERSION__;
 
 const Titlebar: Component<{ detached?: boolean }> = (props) => {
   const appWindow = getCurrentWindow();
