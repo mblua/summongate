@@ -1,14 +1,26 @@
-import { Component } from "solid-js";
+import { Component, createSignal } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import iconUrl from "../../assets/icon-16.png";
+import { getConsoleText } from "../../shared/console-capture";
+import { DebugAPI } from "../../shared/ipc";
 
-const APP_VERSION = "0.4.5";
+declare const __APP_VERSION__: string;
+const APP_VERSION = __APP_VERSION__;
 
 const Titlebar: Component = () => {
   const appWindow = getCurrentWindow();
+  const [copied, setCopied] = createSignal(false);
 
   const handleMinimize = () => appWindow.minimize();
   const handleClose = () => appWindow.close();
+
+  const handleCopyLogs = async (e: MouseEvent) => {
+    e.stopPropagation();
+    const text = getConsoleText();
+    await DebugAPI.saveLogs(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
 
   return (
     <div class="titlebar" data-tauri-drag-region>
@@ -25,6 +37,15 @@ const Titlebar: Component = () => {
         )}
       </div>
       <div class="titlebar-controls">
+        {import.meta.env.DEV && (
+          <button
+            class={`titlebar-btn titlebar-btn-logs ${copied() ? "copied" : ""}`}
+            onClick={handleCopyLogs}
+            title={copied() ? "Copied!" : "Copy console logs to clipboard"}
+          >
+            {copied() ? "\u2713" : "\u2261"}
+          </button>
+        )}
         <button class="titlebar-btn" onClick={handleMinimize} title="Minimize">
           &#x2014;
         </button>

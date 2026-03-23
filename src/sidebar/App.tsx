@@ -19,6 +19,7 @@ import {
 import { registerShortcuts, unregisterShortcuts } from "../shared/shortcuts";
 import { sessionsStore } from "./stores/sessions";
 import { bridgesStore } from "./stores/bridges";
+import { settingsStore } from "./stores/settings";
 import Titlebar from "./components/Titlebar";
 import SessionList from "./components/SessionList";
 import Toolbar from "./components/Toolbar";
@@ -54,6 +55,9 @@ const SidebarApp: Component = () => {
       await getCurrentWindow().setAlwaysOnTop(true);
     }
     document.addEventListener("mousedown", handleRaiseTerminal);
+
+    // Load settings into reactive store (for voice-to-text visibility etc.)
+    await settingsStore.load();
 
     // Load initial sessions
     const sessions = await SessionAPI.list();

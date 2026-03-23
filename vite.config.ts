@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import solidPlugin from "vite-plugin-solid";
+import tauriConf from "./src-tauri/tauri.conf.json";
 
 export default defineConfig({
   plugins: [solidPlugin()],
@@ -9,6 +10,9 @@ export default defineConfig({
     strictPort: true,
   },
   envPrefix: ["VITE_", "TAURI_"],
+  define: {
+    __APP_VERSION__: JSON.stringify(tauriConf.version),
+  },
   build: {
     target: "esnext",
     minify: !process.env.TAURI_DEBUG ? "esbuild" : false,

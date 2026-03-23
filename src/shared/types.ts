@@ -108,4 +108,7 @@ export interface AppSettings {
   telegramBots: TelegramBotConfig[];
   sidebarAlwaysOnTop: boolean;
   raiseTerminalOnClick: boolean;
+  voiceToTextEnabled: boolean;
+  geminiApiKey: string;
+  geminiModel: string;
 }

@@ -1,6 +1,6 @@
 # Agents Commander
 
-A standalone Windows terminal session manager with decoupled tabs. Two synchronized windows work together: a narrow **Sidebar** for managing sessions, and a full **Terminal** window rendering the active PTY via xterm.js.
+A standalone terminal session manager with decoupled tabs. Two synchronized windows work together: a narrow **Sidebar** for managing sessions, and a full **Terminal** window rendering the active PTY via xterm.js.
 
 Built with **Tauri 2.x** (Rust) + **SolidJS** (TypeScript) + **xterm.js** (WebGL).
 
@@ -18,6 +18,14 @@ Built with **Tauri 2.x** (Rust) + **SolidJS** (TypeScript) + **xterm.js** (WebGL
 - **Keyboard shortcuts** - New session, close, switch between sessions
 - **Configurable** - Shell, args, repo paths, agents, and bots via `~/.agentscommander/settings.json`
 
+## Platform Support
+
+| Platform | Status |
+|----------|--------|
+| Windows | Tested - primary development platform |
+| Linux | Compatible - less tested |
+| macOS | Compatible - not tested |
+
 ## Tech Stack
 
 | Layer | Tech |
@@ -26,7 +34,7 @@ Built with **Tauri 2.x** (Rust) + **SolidJS** (TypeScript) + **xterm.js** (WebGL
 | Backend | Rust + tokio |
 | Frontend | SolidJS + TypeScript |
 | Terminal | xterm.js (WebGL addon) |
-| PTY | portable-pty (ConPTY on Windows) |
+| PTY | portable-pty (ConPTY on Windows, Unix PTY on Linux/macOS) |
 | Styles | Vanilla CSS + CSS variables |
 | Bundler | Vite 6 |
 
@@ -34,9 +42,9 @@ Built with **Tauri 2.x** (Rust) + **SolidJS** (TypeScript) + **xterm.js** (WebGL
 
 - [Node.js](https://nodejs.org/) 20+
 - [Rust](https://rustup.rs/) (stable)
-- Windows 10 1809+ (ConPTY support required)
-
-For Linux builds: `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`
+- **Windows**: Windows 10 1809+ (ConPTY support required)
+- **Linux**: `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`
+- **macOS**: Xcode Command Line Tools
 
 ## Development
 
@@ -69,7 +77,7 @@ cd src-tauri && cargo test
 npm run tauri build
 ```
 
-The production binary is at `src-tauri/target/release/agentscommander.exe`. Run it directly - do not use the NSIS/MSI installers for local testing.
+The production binary is at `src-tauri/target/release/agentscommander` (`.exe` on Windows). Run it directly - do not use the NSIS/MSI installers for local testing.
 
 ## Releases
 
@@ -86,11 +94,13 @@ This creates a draft release with installers for Windows, macOS (ARM + Intel), a
 
 Settings are stored in `~/.agentscommander/settings.json`:
 
+On Windows the default shell is `powershell.exe`; on Linux/macOS it is `/bin/bash`.
+
 ```json
 {
   "defaultShell": "powershell.exe",
   "defaultShellArgs": ["-NoLogo"],
-  "repoPaths": ["C:\\Users\\you\\repos"],
+  "repoPaths": [],
   "agents": [
     {
       "id": "claude",

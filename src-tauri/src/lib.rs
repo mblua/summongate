@@ -85,7 +85,7 @@ pub fn run() {
                 .expect("Failed to load app icon");
 
             // Create Sidebar window
-            let _sidebar = WebviewWindowBuilder::new(
+            let sidebar = WebviewWindowBuilder::new(
                 app,
                 "sidebar",
                 WebviewUrl::App("index.html?window=sidebar".into()),
@@ -99,7 +99,7 @@ pub fn run() {
             .build()?;
 
             // Create Terminal window
-            let _terminal = WebviewWindowBuilder::new(
+            let terminal = WebviewWindowBuilder::new(
                 app,
                 "terminal",
                 WebviewUrl::App("index.html?window=terminal".into()),
@@ -111,6 +111,10 @@ pub fn run() {
             .min_inner_size(400.0, 300.0)
             .decorations(false)
             .build()?;
+
+            // Suppress unused variable warnings
+            let _ = &sidebar;
+            let _ = &terminal;
 
             // Restore sessions from last run
             let persisted = sessions_persistence::load_sessions();
@@ -216,6 +220,8 @@ pub fn run() {
             commands::telegram::telegram_send_test,
             commands::window::detach_terminal,
             commands::window::close_detached_terminal,
+            commands::voice::voice_transcribe,
+            commands::config::save_debug_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running application");

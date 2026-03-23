@@ -34,10 +34,23 @@ pub struct AppSettings {
     /// Raise terminal window when sidebar is clicked
     #[serde(default = "default_true")]
     pub raise_terminal_on_click: bool,
+    /// Enable voice-to-text microphone button on session items
+    #[serde(default)]
+    pub voice_to_text_enabled: bool,
+    /// Gemini API key for voice transcription
+    #[serde(default)]
+    pub gemini_api_key: String,
+    /// Gemini model for voice transcription
+    #[serde(default = "default_gemini_model")]
+    pub gemini_model: String,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_gemini_model() -> String {
+    "gemini-2.5-flash".to_string()
 }
 
 impl Default for AppSettings {
@@ -64,6 +77,9 @@ impl Default for AppSettings {
             telegram_bots: vec![],
             sidebar_always_on_top: false,
             raise_terminal_on_click: true,
+            voice_to_text_enabled: false,
+            gemini_api_key: String::new(),
+            gemini_model: default_gemini_model(),
         }
     }
 }
