@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
@@ -32,7 +32,11 @@ struct PtyOutputPayload {
 }
 
 impl PtyManager {
-    pub fn new(output_senders: OutputSenderMap, idle_detector: Arc<IdleDetector>, git_watcher: Arc<GitWatcher>) -> Self {
+    pub fn new(
+        output_senders: OutputSenderMap,
+        idle_detector: Arc<IdleDetector>,
+        git_watcher: Arc<GitWatcher>,
+    ) -> Self {
         Self {
             ptys: Arc::new(Mutex::new(HashMap::new())),
             output_senders,
@@ -128,6 +132,13 @@ impl PtyManager {
                     Ok(0) => break, // EOF
                     Ok(n) => {
                         let data = buf[..n].to_vec();
+                        crate::audit::log_bytes(
+                            "pty_output",
+                            Some(&session_id_str),
+                            "pty",
+                            "outbound",
+                            &data,
+                        );
 
                         // Record PTY activity for idle detection
                         idle_detector.record_activity(id);

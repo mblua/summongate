@@ -23,26 +23,38 @@ const SessionItem: Component<{
 
   const handleTelegramClick = async (e: MouseEvent) => {
     e.stopPropagation();
-    const b = bridge();
-    if (b) {
-      // Detach existing bridge
-      await TelegramAPI.detach(props.session.id);
-    } else {
-      // Load bots and show menu (or auto-attach if only one)
+    try {
+      const b = bridge();
+      if (b) {
+        await TelegramAPI.detach(props.session.id);
+        return;
+      }
+
       const settings = await SettingsAPI.get();
       const bots = settings.telegramBots || [];
+      if (bots.length === 0) {
+        window.alert("No hay bots de Telegram configurados. Abrí Settings > Telegram Bots y agregá uno primero.");
+        return;
+      }
       if (bots.length === 1) {
         await TelegramAPI.attach(props.session.id, bots[0].id);
-      } else if (bots.length > 1) {
-        setAvailableBots(bots);
-        setShowBotMenu(true);
+        return;
       }
+
+      setAvailableBots(bots);
+      setShowBotMenu(true);
+    } catch (error) {
+      window.alert(`No se pudo activar Telegram: ${error}`);
     }
   };
 
   const handleBotSelect = async (botId: string) => {
     setShowBotMenu(false);
-    await TelegramAPI.attach(props.session.id, botId);
+    try {
+      await TelegramAPI.attach(props.session.id, botId);
+    } catch (error) {
+      window.alert(`No se pudo activar Telegram: ${error}`);
+    }
   };
 
   const handleClick = async () => {

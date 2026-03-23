@@ -11,6 +11,7 @@ pub fn pty_write(
     data: Vec<u8>,
 ) -> Result<(), String> {
     let uuid = Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
+    crate::audit::log_bytes("pty_write", Some(&session_id), "terminal", "inbound", &data);
     pty_mgr
         .lock()
         .unwrap()

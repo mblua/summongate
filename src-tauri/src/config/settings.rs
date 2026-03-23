@@ -130,8 +130,7 @@ pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
     let json = serde_json::to_string_pretty(settings)
         .map_err(|e| format!("Failed to serialize settings: {}", e))?;
 
-    std::fs::write(&path, json)
-        .map_err(|e| format!("Failed to write settings file: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Failed to write settings file: {}", e))?;
 
     log::info!("Saved settings to {:?}", path);
     Ok(())

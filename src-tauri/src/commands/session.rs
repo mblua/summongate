@@ -160,10 +160,7 @@ pub async fn destroy_session(
         .map_err(|e| e.to_string())?;
 
     let mgr = session_mgr.read().await;
-    let new_active = mgr
-        .destroy_session(uuid)
-        .await
-        .map_err(|e| e.to_string())?;
+    let new_active = mgr.destroy_session(uuid).await.map_err(|e| e.to_string())?;
 
     // Persist after destruction
     persist_current_state(&mgr).await;
@@ -209,9 +206,7 @@ pub async fn switch_session(
     }
 
     let mgr = session_mgr.read().await;
-    mgr.switch_session(uuid)
-        .await
-        .map_err(|e| e.to_string())?;
+    mgr.switch_session(uuid).await.map_err(|e| e.to_string())?;
 
     // Persist after switch (updates was_active)
     persist_current_state(&mgr).await;
@@ -262,6 +257,7 @@ pub async fn set_last_prompt(
     text: String,
 ) -> Result<(), String> {
     let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+    crate::audit::log_text("last_prompt", Some(&id), "terminal", "inbound", &text);
     let mgr = session_mgr.read().await;
     mgr.set_last_prompt(uuid, text.clone()).await;
     let _ = app.emit(

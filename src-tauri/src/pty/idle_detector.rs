@@ -32,7 +32,10 @@ impl IdleDetector {
     /// Record PTY activity for a session. If the session was idle,
     /// fires on_busy and removes it from idle_set.
     pub fn record_activity(&self, session_id: Uuid) {
-        self.activity.lock().unwrap().insert(session_id, Instant::now());
+        self.activity
+            .lock()
+            .unwrap()
+            .insert(session_id, Instant::now());
         let was_idle = self.idle_set.lock().unwrap().remove(&session_id);
         if was_idle {
             (self.on_busy)(session_id);
@@ -48,21 +51,18 @@ impl IdleDetector {
     /// Start the watcher thread that polls for idle transitions.
     pub fn start(self: &Arc<Self>) {
         let detector = Arc::clone(self);
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(CHECK_INTERVAL);
+        std::thread::spawn(move || loop {
+            std::thread::sleep(CHECK_INTERVAL);
 
-                let now = Instant::now();
-                let activity = detector.activity.lock().unwrap();
-                let mut idle_set = detector.idle_set.lock().unwrap();
+            let now = Instant::now();
+            let activity = detector.activity.lock().unwrap();
+            let mut idle_set = detector.idle_set.lock().unwrap();
 
-                for (&session_id, &last_seen) in activity.iter() {
-                    if now.duration_since(last_seen) > IDLE_THRESHOLD
-                        && !idle_set.contains(&session_id)
-                    {
-                        idle_set.insert(session_id);
-                        (detector.on_idle)(session_id);
-                    }
+            for (&session_id, &last_seen) in activity.iter() {
+                if now.duration_since(last_seen) > IDLE_THRESHOLD && !idle_set.contains(&session_id)
+                {
+                    idle_set.insert(session_id);
+                    (detector.on_idle)(session_id);
                 }
             }
         });

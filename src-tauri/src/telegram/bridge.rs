@@ -20,16 +20,15 @@ struct BridgeLogger {
 
 impl BridgeLogger {
     fn new(session_id: &str) -> Self {
-        let file = crate::config::config_dir()
-            .and_then(|dir| {
-                std::fs::create_dir_all(&dir).ok()?;
-                let path = dir.join("telegram-bridge.log");
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&path)
-                    .ok()
-            });
+        let file = crate::config::config_dir().and_then(|dir| {
+            std::fs::create_dir_all(&dir).ok()?;
+            let path = dir.join("telegram-bridge.log");
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .ok()
+        });
 
         if let Some(ref f) = file {
             let path = f.metadata().ok();
@@ -46,16 +45,8 @@ impl BridgeLogger {
     fn log(&mut self, direction: &str, session_id: &str, text: &str) {
         if let Some(ref mut f) = self.file {
             let now = chrono::Utc::now().format("%H:%M:%S%.3f");
-            let preview = if text.len() > 500 {
-                let mut end = 500;
-                while !text.is_char_boundary(end) {
-                    end -= 1;
-                }
-                format!("{}...[{}b total]", &text[..end], text.len())
-            } else {
-                text.to_string()
-            };
-            let _ = writeln!(f, "[{}] {} sid={} | {}", now, direction, session_id, preview);
+            let _ = writeln!(f, "[{}] {} sid={}", now, direction, session_id);
+            let _ = writeln!(f, "{}", text);
             let _ = f.flush();
         }
     }
@@ -91,7 +82,10 @@ impl DiagLogger {
             log::info!("Diagnostic logger active: diag-raw.log + diag-sent.log");
         }
 
-        Self { raw_file, sent_file }
+        Self {
+            raw_file,
+            sent_file,
+        }
     }
 
     /// Log stabilized rows (post-stabilization, pre-agent-filter)
@@ -269,13 +263,20 @@ const CLAUDE_CHROME_PATTERNS: &[&str] = &[
     "(resets in",
     "Claude in Chrome enabled",
     "Claude Code v",
+    "Claude Code, la CLI oficial de Anthropic",
+    "Senior Open Source Marketing Strategist",
+    "Estoy configurado para ayudarte con el repo",
+    "Mi expertise cubre:",
+    "growth marketing",
     // Status bar header: "[Model (context) | Plan] │ branch"
     // The "] │" pattern catches this without matching conversation content
     "] \u{2502}",
 ];
 
 /// Claude Code spinner characters (defense in depth - stabilization is primary)
-const CLAUDE_SPINNERS: &[char] = &['\u{273B}', '\u{2736}', '*', '\u{2722}', '\u{00B7}', '\u{25CF}', '\u{273D}'];
+const CLAUDE_SPINNERS: &[char] = &[
+    '\u{273B}', '\u{2736}', '*', '\u{2722}', '\u{00B7}', '\u{25CF}', '\u{273D}',
+];
 // ✻ ✶ * ✢ · ● ✽
 
 impl AgentFilter for ClaudeCodeFilter {
@@ -283,6 +284,13 @@ impl AgentFilter for ClaudeCodeFilter {
         let trimmed = line.trim();
 
         if trimmed.is_empty() {
+            return false;
+        }
+
+        // Extremely short fragments from wrapped/repainted rows are noise in Telegram.
+        if trimmed.len() <= 6
+            && trimmed.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        {
             return false;
         }
 
@@ -315,9 +323,7 @@ impl AgentFilter for ClaudeCodeFilter {
         }
 
         // Hook notifications
-        if trimmed.contains("(running stop hook")
-            || trimmed.contains("(running start hook")
-        {
+        if trimmed.contains("(running stop hook") || trimmed.contains("(running start hook") {
             return false;
         }
 
@@ -371,7 +377,10 @@ impl AgentFilter for ClaudeCodeFilter {
 fn is_thinking_line(s: &str) -> bool {
     let s = s.trim();
 
-    if s.contains("(thinking)") || s.contains("\u{27E1} thinking") {
+    if s.contains("(thinking)")
+        || s.contains("\u{27E1} thinking")
+        || s.contains("(thought for ")
+    {
         return true;
     }
 
@@ -499,10 +508,16 @@ async fn output_task(
     let mut tick = tokio::time::interval(Duration::from_millis(TICK_MS));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    logger.log("INIT", &session_id, &format!(
-        "output_task started: filter={} stabilization={}ms tick={}ms",
-        filter.name(), STABILIZATION_MS, TICK_MS,
-    ));
+    logger.log(
+        "INIT",
+        &session_id,
+        &format!(
+            "output_task started: filter={} stabilization={}ms tick={}ms",
+            filter.name(),
+            STABILIZATION_MS,
+            TICK_MS,
+        ),
+    );
 
     loop {
         tokio::select! {
@@ -541,6 +556,14 @@ async fn output_task(
             maybe_data = rx.recv() => {
                 match maybe_data {
                     Some(data) => {
+                        crate::audit::log_bytes(
+                            "bridge_rx_pty",
+                            Some(&session_id),
+                            "telegram_bridge",
+                            "inbound",
+                            &data,
+                        );
+
                         // Phase 2: Process through virtual terminal
                         vt.process(&data);
 
@@ -567,8 +590,14 @@ async fn output_task(
     }
     if !buffer.is_empty() {
         flush_buffer(
-            &mut buffer, &client, &token, chat_id,
-            &session_id, &app, &mut logger, &mut diag,
+            &mut buffer,
+            &client,
+            &token,
+            chat_id,
+            &session_id,
+            &app,
+            &mut logger,
+            &mut diag,
         )
         .await;
     }
@@ -605,6 +634,13 @@ async fn flush_buffer(
     }
 
     for chunk in chunk_text(&text, 4000) {
+        crate::audit::log_text(
+            "telegram_send",
+            Some(session_id),
+            "telegram",
+            "outbound",
+            &chunk,
+        );
         logger.log("SEND_TG", session_id, &chunk);
         diag.log_sent(&chunk);
 
@@ -674,11 +710,7 @@ async fn poll_task(
                 logger.log(
                     "POLL_INIT",
                     &session_id_str,
-                    &format!(
-                        "skipped {} old messages, offset={}",
-                        updates.len(),
-                        offset
-                    ),
+                    &format!("skipped {} old messages, offset={}", updates.len(), offset),
                 );
             }
         }
@@ -703,8 +735,22 @@ async fn poll_task(
                             }
 
                             logger.log("RECV_TG", &session_id_str, &format!("from={} text={}", update.from_name, update.text));
+                            crate::audit::log_text(
+                                "telegram_recv",
+                                Some(&session_id_str),
+                                "telegram",
+                                "inbound",
+                                &update.text,
+                            );
 
                             let input = format!("{}\r", update.text);
+                            crate::audit::log_bytes(
+                                "telegram_to_pty",
+                                Some(&session_id_str),
+                                "telegram_bridge",
+                                "outbound",
+                                input.as_bytes(),
+                            );
                             if let Ok(mgr) = pty_mgr.lock() {
                                 if let Err(e) = mgr.write(session_id, input.as_bytes()) {
                                     logger.log("PTY_ERR", &session_id_str, &e.to_string());
@@ -723,6 +769,13 @@ async fn poll_task(
 
                             // Persist last prompt in backend + emit to all windows
                             let tg_prompt = format!("[TG] {}", update.text);
+                            crate::audit::log_text(
+                                "last_prompt",
+                                Some(&session_id_str),
+                                "telegram",
+                                "inbound",
+                                &tg_prompt,
+                            );
                             {
                                 let mgr_state = app.state::<std::sync::Arc<tokio::sync::RwLock<crate::session::manager::SessionManager>>>();
                                 let mgr = mgr_state.read().await;

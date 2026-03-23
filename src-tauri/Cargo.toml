@@ -1,6 +1,6 @@
 [package]
 name = "agentscommander"
-version = "0.4.5"
+version = "0.4.6"
 edition = "2021"
 
 [dependencies]
@@ -20,6 +20,7 @@ reqwest = { version = "0.12", features = ["json"] }
 strip-ansi-escapes = "0.2"
 tokio-util = "0.7"
 vt100 = "0.15"
+base64 = "0.22"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -75,10 +75,7 @@ pub async fn detach_terminal(
         mgr.switch_session(next_uuid)
             .await
             .map_err(|e| e.to_string())?;
-        let _ = app.emit(
-            "session_switched",
-            serde_json::json!({ "id": next_id }),
-        );
+        let _ = app.emit("session_switched", serde_json::json!({ "id": next_id }));
     } else {
         // No other non-detached sessions - clear the main terminal
         let _ = app.emit(

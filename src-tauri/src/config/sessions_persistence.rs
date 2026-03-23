@@ -39,7 +39,11 @@ pub fn load_sessions() -> Vec<PersistedSession> {
     match std::fs::read_to_string(&path) {
         Ok(contents) => match serde_json::from_str::<Vec<PersistedSession>>(&contents) {
             Ok(sessions) => {
-                log::info!("Loaded {} persisted sessions from {:?}", sessions.len(), path);
+                log::info!(
+                    "Loaded {} persisted sessions from {:?}",
+                    sessions.len(),
+                    path
+                );
                 sessions
             }
             Err(e) => {
@@ -65,8 +69,7 @@ pub fn save_sessions(sessions: &[PersistedSession]) -> Result<(), String> {
     let json = serde_json::to_string_pretty(sessions)
         .map_err(|e| format!("Failed to serialize sessions: {}", e))?;
 
-    std::fs::write(&path, json)
-        .map_err(|e| format!("Failed to write sessions file: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Failed to write sessions file: {}", e))?;
 
     log::info!("Saved {} sessions to {:?}", sessions.len(), path);
     Ok(())
