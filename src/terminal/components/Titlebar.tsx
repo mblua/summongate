@@ -2,6 +2,8 @@ import { Component, Show } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { terminalStore } from "../stores/terminal";
 
+const APP_VERSION = "0.4.3";
+
 const Titlebar: Component<{ detached?: boolean }> = (props) => {
   const appWindow = getCurrentWindow();
 
@@ -19,7 +21,9 @@ const Titlebar: Component<{ detached?: boolean }> = (props) => {
     <div class="titlebar" data-tauri-drag-region>
       <div class="titlebar-title" data-tauri-drag-region>
         {import.meta.env.DEV && (
-          <span class="titlebar-dev-badge" data-tauri-drag-region>DEV</span>
+          <span class="titlebar-dev-badge" data-tauri-drag-region>
+            DEV {APP_VERSION}
+          </span>
         )}
         <Show when={props.detached}>
           <span class="titlebar-detached-badge">DETACHED</span>

@@ -1,22 +1,103 @@
-import { Component, onMount, onCleanup, createEffect } from "solid-js";
+import { Component, createEffect, onCleanup, onMount } from "solid-js";
 import { Terminal } from "@xterm/xterm";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { FitAddon } from "@xterm/addon-fit";
-import { PtyAPI, SessionAPI, onPtyOutput } from "../../shared/ipc";
+import {
+  PtyAPI,
+  SessionAPI,
+  onPtyOutput,
+  onSessionDestroyed,
+} from "../../shared/ipc";
 import { terminalStore } from "../stores/terminal";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import "@xterm/xterm/css/xterm.css";
 
-const TerminalView: Component = () => {
-  let containerRef!: HTMLDivElement;
-  let terminal: Terminal | null = null;
-  let fitAddon: FitAddon | null = null;
-  let unlistenPtyOutput: UnlistenFn | null = null;
-  let resizeObserver: ResizeObserver | null = null;
-  let inputBuffer = "";
+interface SessionTerminal {
+  container: HTMLDivElement;
+  terminal: Terminal;
+  fitAddon: FitAddon;
+  inputBuffer: string;
+}
 
-  const initTerminal = () => {
-    terminal = new Terminal({
+const TerminalView: Component = () => {
+  let hostRef!: HTMLDivElement;
+  let activeSessionId: string | null = null;
+  let resizeObserver: ResizeObserver | null = null;
+  let unlistenPtyOutput: UnlistenFn | null = null;
+  let unlistenSessionDestroyed: UnlistenFn | null = null;
+
+  const terminals = new Map<string, SessionTerminal>();
+
+  const getCoreViewport = (terminal: Terminal) =>
+    (terminal as Terminal & {
+      _core?: {
+        viewport?: {
+          reset(): void;
+          syncScrollArea(immediate?: boolean): void;
+        };
+      };
+    })._core?.viewport;
+
+  const updateSize = (terminal: Terminal) => {
+    terminalStore.setTermSize(terminal.cols, terminal.rows);
+  };
+
+  const syncViewport = (sessionId: string, immediate = false) => {
+    const entry = terminals.get(sessionId);
+    if (!entry) {
+      return;
+    }
+
+    entry.fitAddon.fit();
+    getCoreViewport(entry.terminal)?.syncScrollArea(immediate);
+    updateSize(entry.terminal);
+    void PtyAPI.resize(sessionId, entry.terminal.cols, entry.terminal.rows);
+  };
+
+  const scheduleViewportSync = (sessionId: string) => {
+    requestAnimationFrame(() => {
+      if (sessionId !== activeSessionId) {
+        return;
+      }
+
+      syncViewport(sessionId, true);
+
+      requestAnimationFrame(() => {
+        if (sessionId === activeSessionId) {
+          syncViewport(sessionId, true);
+        }
+      });
+    });
+  };
+
+  const disposeSessionTerminal = (sessionId: string) => {
+    const entry = terminals.get(sessionId);
+    if (!entry) {
+      return;
+    }
+
+    entry.terminal.dispose();
+    entry.container.remove();
+    terminals.delete(sessionId);
+
+    if (activeSessionId === sessionId) {
+      activeSessionId = null;
+    }
+  };
+
+  const createSessionTerminal = (sessionId: string) => {
+    const existing = terminals.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+
+    const container = document.createElement("div");
+    container.className = "terminal-instance";
+    container.dataset.sessionId = sessionId;
+    container.hidden = true;
+    hostRef.appendChild(container);
+
+    const terminal = new Terminal({
       fontFamily: "'Cascadia Code', 'JetBrains Mono', 'Fira Code', monospace",
       fontSize: 14,
       lineHeight: 1.2,
@@ -48,12 +129,10 @@ const TerminalView: Component = () => {
       allowTransparency: false,
     });
 
-    fitAddon = new FitAddon();
+    const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
+    terminal.open(container);
 
-    terminal.open(containerRef);
-
-    // Try WebGL addon, fall back silently
     try {
       const webglAddon = new WebglAddon();
       webglAddon.onContextLoss(() => {
@@ -61,91 +140,128 @@ const TerminalView: Component = () => {
       });
       terminal.loadAddon(webglAddon);
     } catch {
-      // Canvas renderer fallback — automatic
+      // Canvas renderer fallback is automatic.
     }
 
-    fitAddon.fit();
-    updateSize();
+    const entry: SessionTerminal = {
+      container,
+      terminal,
+      fitAddon,
+      inputBuffer: "",
+    };
 
-    // Handle user input → PTY write + track last prompt
     terminal.onData((data) => {
-      const sessionId = terminalStore.activeSessionId;
-      if (sessionId) {
-        const encoder = new TextEncoder();
-        PtyAPI.write(sessionId, encoder.encode(data));
+      if (activeSessionId !== sessionId) {
+        return;
       }
 
-      // Track input for last-prompt display
+      const encoder = new TextEncoder();
+      void PtyAPI.write(sessionId, encoder.encode(data));
+
       if (data === "\r") {
-        const trimmed = inputBuffer.trim();
-        if (trimmed && sessionId) {
-          SessionAPI.setLastPrompt(sessionId, trimmed);
+        const trimmed = entry.inputBuffer.trim();
+        if (trimmed) {
+          void SessionAPI.setLastPrompt(sessionId, trimmed);
         }
-        inputBuffer = "";
+        entry.inputBuffer = "";
       } else if (data === "\x7f") {
-        // Backspace
-        inputBuffer = inputBuffer.slice(0, -1);
+        entry.inputBuffer = entry.inputBuffer.slice(0, -1);
       } else if (data.length === 1 && data >= " ") {
-        inputBuffer += data;
+        entry.inputBuffer += data;
       } else if (data.length > 1 && !data.startsWith("\x1b")) {
-        // Pasted text
-        inputBuffer += data;
+        entry.inputBuffer += data;
       }
     });
 
-    // Handle resize
     terminal.onResize(({ cols, rows }) => {
-      const sessionId = terminalStore.activeSessionId;
-      if (sessionId) {
-        PtyAPI.resize(sessionId, cols, rows);
+      if (activeSessionId !== sessionId) {
+        return;
       }
+
       terminalStore.setTermSize(cols, rows);
+      void PtyAPI.resize(sessionId, cols, rows);
     });
 
-    // Observe container resize
-    resizeObserver = new ResizeObserver(() => {
-      if (fitAddon) {
-        fitAddon.fit();
-      }
-    });
-    resizeObserver.observe(containerRef);
+    terminals.set(sessionId, entry);
+    return entry;
   };
 
-  const updateSize = () => {
-    if (terminal) {
-      terminalStore.setTermSize(terminal.cols, terminal.rows);
+  const showSessionTerminal = (sessionId: string) => {
+    const next = createSessionTerminal(sessionId);
+
+    if (activeSessionId && activeSessionId !== sessionId) {
+      const previous = terminals.get(activeSessionId);
+      if (previous) {
+        previous.container.hidden = true;
+      }
     }
+
+    next.container.hidden = false;
+    activeSessionId = sessionId;
+    next.terminal.focus();
+    next.terminal.scrollToBottom();
+    getCoreViewport(next.terminal)?.reset();
+    scheduleViewportSync(sessionId);
   };
 
   onMount(async () => {
-    initTerminal();
-
-    // Listen for PTY output
-    unlistenPtyOutput = await onPtyOutput(({ sessionId, data }) => {
-      if (sessionId === terminalStore.activeSessionId && terminal) {
-        terminal.write(new Uint8Array(data));
+    resizeObserver = new ResizeObserver(() => {
+      if (activeSessionId) {
+        scheduleViewportSync(activeSessionId);
       }
+    });
+    resizeObserver.observe(hostRef);
+
+    unlistenPtyOutput = await onPtyOutput(({ sessionId, data }) => {
+      const entry =
+        terminals.get(sessionId) ?? (sessionId === activeSessionId
+          ? createSessionTerminal(sessionId)
+          : null);
+
+      if (!entry) {
+        return;
+      }
+
+      entry.terminal.write(new Uint8Array(data), () => {
+        if (sessionId === activeSessionId) {
+          getCoreViewport(entry.terminal)?.syncScrollArea(true);
+        }
+      });
+    });
+
+    unlistenSessionDestroyed = await onSessionDestroyed(({ id }) => {
+      disposeSessionTerminal(id);
     });
   });
 
-  // When the active session changes, clear terminal and resize PTY
   createEffect(() => {
     const sessionId = terminalStore.activeSessionId;
-    if (sessionId && terminal && fitAddon) {
-      terminal.clear();
-      fitAddon.fit();
-      // Send resize to new session PTY
-      PtyAPI.resize(sessionId, terminal.cols, terminal.rows);
+    if (!sessionId) {
+      if (activeSessionId) {
+        const activeEntry = terminals.get(activeSessionId);
+        if (activeEntry) {
+          activeEntry.container.hidden = true;
+        }
+      }
+      activeSessionId = null;
+      terminalStore.setTermSize(0, 0);
+      return;
     }
+
+    showSessionTerminal(sessionId);
   });
 
   onCleanup(() => {
     unlistenPtyOutput?.();
+    unlistenSessionDestroyed?.();
     resizeObserver?.disconnect();
-    terminal?.dispose();
+
+    for (const sessionId of Array.from(terminals.keys())) {
+      disposeSessionTerminal(sessionId);
+    }
   });
 
-  return <div class="terminal-container" ref={containerRef!} />;
+  return <div class="terminal-host" ref={hostRef!} />;
 };
 
 export default TerminalView;

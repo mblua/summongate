@@ -152,9 +152,25 @@ html, body, #root {
   overflow: hidden;
 }
 
+.terminal-host {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.terminal-instance {
+  position: absolute;
+  inset: 0;
+}
+
 .terminal-container .xterm {
   height: 100%;
   padding: 2px 0 0 4px;
+}
+
+.terminal-container .xterm,
+.terminal-container .xterm * {
+  box-sizing: content-box;
 }
 
 /* Status bar */
