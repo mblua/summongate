@@ -45,10 +45,7 @@ impl Default for AppSettings {
         Self {
             default_shell: "powershell.exe".to_string(),
             default_shell_args: vec!["-NoLogo".to_string()],
-            repo_paths: vec![
-                r"C:\Users\maria\0_repos".to_string(),
-                r"C:\Users\maria\0_repos_phi".to_string(),
-            ],
+            repo_paths: vec![],
             agents: vec![],
             telegram_bots: vec![],
             sidebar_always_on_top: false,
