@@ -26,6 +26,31 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        if: matrix.platform == 'windows-latest'
+        id: changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            FEATS=$(git log ${PREV_TAG}..HEAD --oneline --no-merges --grep="^feat" | sed 's/^[a-f0-9]* /- /')
+            FIXES=$(git log ${PREV_TAG}..HEAD --oneline --no-merges --grep="^fix" | sed 's/^[a-f0-9]* /- /')
+            DOCS=$(git log ${PREV_TAG}..HEAD --oneline --no-merges --grep="^docs" | sed 's/^[a-f0-9]* /- /')
+            OTHER=$(git log ${PREV_TAG}..HEAD --oneline --no-merges --grep="^feat" --grep="^fix" --grep="^docs" --invert-grep | sed 's/^[a-f0-9]* /- /')
+            BODY=""
+            [ -n "$FEATS" ] && BODY="${BODY}### Features\n${FEATS}\n\n"
+            [ -n "$FIXES" ] && BODY="${BODY}### Fixes\n${FIXES}\n\n"
+            [ -n "$DOCS" ] && BODY="${BODY}### Docs\n${DOCS}\n\n"
+            [ -n "$OTHER" ] && BODY="${BODY}### Other\n${OTHER}\n\n"
+          else
+            BODY="Initial release"
+          fi
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        shell: bash
 
       - name: Install dependencies (Ubuntu)
         if: matrix.platform == 'ubuntu-22.04'
@@ -58,7 +83,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Agents Commander ${{ github.ref_name }}'
-          releaseBody: 'See the assets below to download and install Agents Commander.'
+          releaseBody: ${{ steps.changelog.outputs.body || 'See the assets below to download and install Agents Commander.' }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
