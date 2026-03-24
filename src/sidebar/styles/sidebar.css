@@ -1082,21 +1082,23 @@ html, body, #root {
   width: 96%;
   max-width: 520px;
   max-height: 90vh;
+  overflow: hidden;
 }
 
 /* Tab bar */
 .settings-tabs {
   display: flex;
   gap: 0;
-  padding: 0 var(--spacing-lg);
+  padding: 0;
   border-bottom: 1px solid var(--sidebar-border);
   flex-shrink: 0;
 }
 
 .settings-tab {
-  padding: var(--spacing-sm) var(--spacing-md);
+  flex: 1;
+  padding: var(--spacing-sm) var(--spacing-xs);
   font-family: var(--font-ui);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs, 11px);
   font-weight: 500;
   color: var(--sidebar-fg-dim);
   background: transparent;
@@ -1104,7 +1106,7 @@ html, body, #root {
   border-bottom: 2px solid transparent;
   cursor: pointer;
   transition: color var(--transition-fast), border-color var(--transition-fast);
-  white-space: nowrap;
+  text-align: center;
 }
 
 .settings-tab:hover {
