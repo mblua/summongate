@@ -34,25 +34,52 @@ pub struct AppSettings {
     /// Raise terminal window when sidebar is clicked
     #[serde(default = "default_true")]
     pub raise_terminal_on_click: bool,
+    /// Enable voice-to-text microphone button on session items
+    #[serde(default)]
+    pub voice_to_text_enabled: bool,
+    /// Gemini API key for voice transcription
+    #[serde(default)]
+    pub gemini_api_key: String,
+    /// Gemini model for voice transcription
+    #[serde(default = "default_gemini_model")]
+    pub gemini_model: String,
 }
 
 fn default_true() -> bool {
     true
 }
 
+fn default_gemini_model() -> String {
+    "gemini-2.5-flash".to_string()
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
+        let (default_shell, default_shell_args, repo_paths) = if cfg!(target_os = "windows") {
+            (
+                "powershell.exe".to_string(),
+                vec!["-NoLogo".to_string()],
+                vec![],
+            )
+        } else {
+            (
+                "/bin/bash".to_string(),
+                vec![],
+                vec![format!("{}/repos", dirs::home_dir().unwrap_or_default().display())],
+            )
+        };
+
         Self {
-            default_shell: "powershell.exe".to_string(),
-            default_shell_args: vec!["-NoLogo".to_string()],
-            repo_paths: vec![
-                r"C:\Users\maria\0_repos".to_string(),
-                r"C:\Users\maria\0_repos_phi".to_string(),
-            ],
+            default_shell,
+            default_shell_args,
+            repo_paths,
             agents: vec![],
             telegram_bots: vec![],
             sidebar_always_on_top: false,
             raise_terminal_on_click: true,
+            voice_to_text_enabled: false,
+            gemini_api_key: String::new(),
+            gemini_model: default_gemini_model(),
         }
     }
 }

@@ -177,7 +177,7 @@ html, body, #root {
 .status-bar {
   display: flex;
   align-items: center;
-  gap: var(--spacing-md);
+  justify-content: space-between;
   height: 22px;
   padding: 0 var(--spacing-sm);
   background: var(--statusbar-bg);
@@ -186,6 +186,12 @@ html, body, #root {
   font-family: var(--font-ui);
   flex-shrink: 0;
   letter-spacing: 0.3px;
+}
+
+.status-bar-left {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
 }
 
 .status-bar-item {
@@ -202,6 +208,104 @@ html, body, #root {
   color: #ffaa00;
   font-weight: 600;
   letter-spacing: 0.3px;
+}
+
+/* Status bar recording/processing indicators */
+.status-bar-recording {
+  color: #ff4444;
+  font-weight: 600;
+}
+
+.status-bar-rec-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ff4444;
+  animation: sb-rec-pulse 1s ease-in-out infinite;
+}
+
+@keyframes sb-rec-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.status-bar-processing {
+  color: var(--statusbar-accent);
+}
+
+.status-bar-spinner {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid transparent;
+  border-top-color: var(--statusbar-accent);
+  border-radius: 50%;
+  animation: sb-spin 0.8s linear infinite;
+}
+
+@keyframes sb-spin {
+  to { transform: rotate(360deg); }
+}
+
+.status-bar-error {
+  color: #ffaa00;
+}
+
+/* Status bar action buttons */
+.status-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.status-bar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--statusbar-fg);
+  cursor: pointer;
+  font-size: 11px;
+  border-radius: 3px;
+  transition: background 150ms ease-out, color 150ms ease-out;
+  padding: 0;
+  line-height: 1;
+}
+
+.status-bar-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--terminal-fg);
+}
+
+.status-bar-btn:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.status-bar-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.status-bar-btn-mic.recording {
+  color: #ff4444;
+  animation: sb-rec-pulse 1s ease-in-out infinite;
+}
+
+.status-bar-btn-mic.recording:hover {
+  background: rgba(255, 68, 68, 0.15);
+}
+
+.status-bar-btn-mic.processing {
+  color: var(--statusbar-accent);
+  opacity: 0.5;
+}
+
+.status-bar-btn-clear:hover {
+  color: #ffaa00;
 }
 
 /* Empty terminal state */

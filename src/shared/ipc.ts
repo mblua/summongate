@@ -99,6 +99,18 @@ export function onSessionRenamed(
   );
 }
 
+// Voice API
+export const VoiceAPI = {
+  transcribe: (audio: number[], mimeType: string) =>
+    invoke<string>("voice_transcribe", { audio, mimeType }),
+};
+
+// Debug API
+export const DebugAPI = {
+  saveLogs: (content: string) =>
+    invoke<void>("save_debug_logs", { content }),
+};
+
 // Window API
 export const WindowAPI = {
   detach: (sessionId: string) =>

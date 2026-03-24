@@ -1,3 +1,4 @@
+import "./shared/console-capture";
 import { render } from "solid-js/web";
 import SidebarApp from "./sidebar/App";
 import TerminalApp from "./terminal/App";

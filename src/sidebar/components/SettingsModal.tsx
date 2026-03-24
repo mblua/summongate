@@ -10,6 +10,15 @@ import type {
   RepoMatch,
 } from "../../shared/types";
 import { SettingsAPI, TelegramAPI, DarkFactoryAPI, ReposAPI } from "../../shared/ipc";
+import { settingsStore } from "../../shared/stores/settings";
+
+const GEMINI_MODELS = [
+  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash (recommended)" },
+  { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+  { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+  { id: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
+  { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
+];
 
 const AGENT_PRESETS: Record<string, Omit<AgentConfig, "id">> = {
   claude: {
@@ -290,6 +299,8 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
       DarkFactoryAPI.save(dfConfig()),
     ]);
     await getCurrentWindow().setAlwaysOnTop(s.sidebarAlwaysOnTop);
+    // Refresh settings store so mic button visibility updates
+    settingsStore.refresh();
     setSaving(false);
     props.onClose();
   };
@@ -494,8 +505,56 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
   );
 
   const renderIntegrationsTab = () => (
-    <div class="settings-section">
-      <div class="settings-section-title">Telegram Bots</div>
+    <>
+      {/* Voice to Text */}
+      <div class="settings-section">
+        <div class="settings-section-title">Voice to Text</div>
+        <label class="settings-checkbox-field">
+          <input
+            type="checkbox"
+            class="settings-checkbox"
+            checked={settings()!.voiceToTextEnabled}
+            onChange={(e) =>
+              updateField("voiceToTextEnabled", e.currentTarget.checked)
+            }
+          />
+          <span>Enable microphone button on sessions</span>
+        </label>
+        <Show when={settings()!.voiceToTextEnabled}>
+          <label class="settings-field">
+            <span class="settings-label">Gemini API Key</span>
+            <input
+              class="settings-input"
+              type="password"
+              value={settings()!.geminiApiKey}
+              onInput={(e) =>
+                updateField("geminiApiKey", e.currentTarget.value)
+              }
+              placeholder="AIza..."
+            />
+          </label>
+          <label class="settings-field">
+            <span class="settings-label">Gemini Model</span>
+            <select
+              class="settings-input"
+              value={settings()!.geminiModel}
+              onChange={(e) =>
+                updateField("geminiModel", e.currentTarget.value)
+              }
+            >
+              <For each={GEMINI_MODELS}>
+                {(m) => (
+                  <option value={m.id}>{m.label}</option>
+                )}
+              </For>
+            </select>
+          </label>
+        </Show>
+      </div>
+
+      {/* Telegram Bots */}
+      <div class="settings-section">
+        <div class="settings-section-title">Telegram Bots</div>
 
       <For each={settings()!.telegramBots || []}>
         {(bot, i) => (
@@ -589,6 +648,7 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
         + Add Telegram Bot
       </button>
     </div>
+    </>
   );
 
   const renderDarkFactoryTab = () => (

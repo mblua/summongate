@@ -3,6 +3,8 @@ import type { Session, SessionStatus, TelegramBotConfig } from "../../shared/typ
 import { SessionAPI, TelegramAPI, SettingsAPI, WindowAPI } from "../../shared/ipc";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { bridgesStore } from "../stores/bridges";
+import { settingsStore } from "../../shared/stores/settings";
+import { voiceRecorder, formatRecordingTime } from "../../shared/voice-recorder";
 
 function statusClass(status: SessionStatus): string {
   if (typeof status === "string") return status;
@@ -20,15 +22,20 @@ const SessionItem: Component<{
   let inputRef!: HTMLInputElement;
 
   const bridge = () => bridgesStore.getBridge(props.session.id);
+  const isRecording = () => voiceRecorder.recordingSessionId() === props.session.id;
+  const isProcessing = () => voiceRecorder.processingSessionId() === props.session.id;
+
+  const handleMicClick = (e: MouseEvent) => {
+    e.stopPropagation();
+    voiceRecorder.toggle(props.session.id);
+  };
 
   const handleTelegramClick = async (e: MouseEvent) => {
     e.stopPropagation();
     const b = bridge();
     if (b) {
-      // Detach existing bridge
       await TelegramAPI.detach(props.session.id);
     } else {
-      // Load bots and show menu (or auto-attach if only one)
       const settings = await SettingsAPI.get();
       const bots = settings.telegramBots || [];
       if (bots.length === 1) {
@@ -60,7 +67,6 @@ const SessionItem: Component<{
     e.stopPropagation();
     setEditValue(props.session.name);
     setEditing(true);
-    // Focus input after it renders
     requestAnimationFrame(() => {
       inputRef?.focus();
       inputRef?.select();
@@ -99,6 +105,7 @@ const SessionItem: Component<{
     SessionAPI.destroy(props.session.id);
   };
 
+
   return (
     <div
       class={`session-item session-item-enter ${props.isActive ? "active" : ""}`}
@@ -127,13 +134,51 @@ const SessionItem: Component<{
             onClick={(e) => e.stopPropagation()}
           />
         </Show>
-        <Show when={props.session.gitBranch}>
-          <div class="session-item-branch" title={props.session.gitBranch!}>
-            {props.session.gitBranch}
+
+        <Show when={isRecording()}>
+          <div class="session-item-voice-indicator recording">
+            <div class="voice-dot" />
+            <div class="voice-level-bar">
+              <div
+                class="voice-level-fill"
+                style={{ width: `${Math.min(voiceRecorder.audioLevel() * 100 * 2.5, 100)}%` }}
+              />
+            </div>
+            <span class="voice-time">{formatRecordingTime(voiceRecorder.recordingSeconds())}</span>
           </div>
         </Show>
-        <div class="session-item-shell">{props.session.shell}</div>
+
+        <Show when={isProcessing()}>
+          <div class="session-item-voice-indicator processing">
+            <div class="voice-spinner" />
+            <span class="voice-processing-text">Transcribing...</span>
+          </div>
+        </Show>
+
+        <Show when={voiceRecorder.micError()}>
+          <div class="session-item-voice-indicator error">
+            <span class="voice-error-text">{voiceRecorder.micError()}</span>
+          </div>
+        </Show>
+
+        <Show when={!isRecording() && !isProcessing() && !voiceRecorder.micError()}>
+          <Show when={props.session.gitBranch}>
+            <div class="session-item-branch" title={props.session.gitBranch!}>
+              {props.session.gitBranch}
+            </div>
+          </Show>
+          <div class="session-item-shell">{props.session.shell}</div>
+        </Show>
       </div>
+      <Show when={settingsStore.voiceEnabled}>
+        <button
+          class={`session-item-mic ${isRecording() ? "recording" : ""} ${isProcessing() ? "processing" : ""} ${voiceRecorder.micError() ? "error" : ""}`}
+          onClick={handleMicClick}
+          title={isRecording() ? "Stop recording" : isProcessing() ? "Transcribing..." : voiceRecorder.micError() ? voiceRecorder.micError()! : "Voice to text"}
+        >
+          &#x1F399;
+        </button>
+      </Show>
       <button
         class="session-item-detach"
         onClick={handleDetach}

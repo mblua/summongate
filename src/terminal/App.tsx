@@ -9,6 +9,7 @@ import {
   onSessionRenamed,
 } from "../shared/ipc";
 import { registerShortcuts, unregisterShortcuts } from "../shared/shortcuts";
+import { settingsStore } from "../shared/stores/settings";
 import { terminalStore } from "./stores/terminal";
 import Titlebar from "./components/Titlebar";
 import LastPrompt from "./components/LastPrompt";
@@ -54,6 +55,7 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
 
   onMount(async () => {
     shortcutHandler = registerShortcuts();
+    settingsStore.load();
     await loadActiveSession();
 
     if (!props.lockedSessionId) {

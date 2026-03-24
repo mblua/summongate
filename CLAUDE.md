@@ -265,6 +265,36 @@ npx tsc --noEmit               # TypeScript check
 
 ---
 
+## Bug Investigation Protocol
+
+**Every fix/ or bug/ branch MUST follow this protocol:**
+
+### 1. Logbook
+- Create `_logbooks/{branch_name}.md` (replace `/` with `__` in branch name)
+- Start with a clear **Problem Statement**: what is broken, what is expected, what is observed
+- Log every test, result, discovery, and workaround chronologically
+- Reformulate the problem as understanding deepens
+
+### 2. Investigation Flow
+1. **Reproduce** - Confirm the bug exists. Log exact steps and observed output
+2. **Hypothesize** - State what you think is causing it before touching code
+3. **Test** - Make a targeted change, rebuild, test. Log the result (pass/fail + details)
+4. **Iterate** - If the fix did not work, log why, update hypothesis, try again
+5. **Validate** - Once fixed, test edge cases. Log what was tested and results
+6. **Document** - Update the logbook with the final fix and any remaining caveats
+
+### 3. Diagnostic Artifacts
+- Save relevant logs, screenshots, or command outputs in the logbook
+- For Telegram bridge: check `~/.summongate/diag-raw.log` and `diag-sent.log`
+- For general issues: capture before/after state
+
+### 4. Rules
+- Never assume a fix works without testing it
+- Log negative results too (what did NOT work and why)
+- Each test entry should have: **what was changed**, **how it was tested**, **result**
+
+---
+
 <!-- rtk-instructions -->
 ## RTK (Token Optimizer)
 

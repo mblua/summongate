@@ -1,6 +1,6 @@
 # Agents Commander
 
-A standalone Windows terminal session manager with decoupled tabs. Two synchronized windows work together: a narrow **Sidebar** for managing sessions, and a full **Terminal** window rendering the active PTY via xterm.js.
+A standalone terminal session manager with decoupled tabs. Two synchronized windows work together: a narrow **Sidebar** for managing sessions, and a full **Terminal** window rendering the active PTY via xterm.js.
 
 Built with **Tauri 2.x** (Rust) + **SolidJS** (TypeScript) + **xterm.js** (WebGL).
 
@@ -13,9 +13,11 @@ Built with **Tauri 2.x** (Rust) + **SolidJS** (TypeScript) + **xterm.js** (WebGL
 - **Detached windows** - Pop a session out into its own dedicated terminal window
 - **Idle detection** - Visual indicator (green dot) when a session is idle vs busy
 - **Agent launcher** - Open pre-configured CLI agents (Claude Code, etc.) from the toolbar
+- **Voice-to-text** - Dictate into any session via Gemini transcription (push-to-talk in terminal, toggle in sidebar)
+- **Clear agent input** - One-click button to clear the coding agent's input line (Ctrl+U)
 - **Telegram bridge** - Attach a Telegram bot to a session for remote monitoring
 - **Custom titlebar** - Frameless windows with draggable titlebar, no native decorations
-- **Keyboard shortcuts** - New session, close, switch between sessions
+- **Keyboard shortcuts** - New session, close, switch, voice toggle (Ctrl+Shift+R)
 - **Configurable** - Shell, args, repo paths, agents, and bots via `~/.agentscommander/settings.json`
 
 ## Design Principles
@@ -28,6 +30,14 @@ These are deliberate choices that shape the project. They are not accidents.
 
 - **One agent = one directory.** An agent is defined by a `CLAUDE.md` file (or equivalent role prompt file) inside its own directory. A directory can optionally include a `.agentscommander/` config folder to specify a custom role prompt file path (e.g., if it is not named `CLAUDE.md`), but the file must still live within the root of that directory. Multiple role prompts within the same directory or its subdirectories are strictly forbidden. Why? Most coding agents assume that the entire contents of their working directory are relevant context and may read files freely. If multiple role prompts coexisted in one directory tree, an agent could inadvertently read another agent's role - leaking context, confusing behavior, and wasting tokens. To run multiple agents from a single repository, structure it so each agent has its own subdirectory with its own `CLAUDE.md` inside.
 
+## Platform Support
+
+| Platform | Status |
+|----------|--------|
+| Windows | Tested - primary development platform |
+| Linux | Compatible - less tested |
+| macOS | Compatible - not tested |
+
 ## Tech Stack
 
 | Layer | Tech |
@@ -36,7 +46,7 @@ These are deliberate choices that shape the project. They are not accidents.
 | Backend | Rust + tokio |
 | Frontend | SolidJS + TypeScript |
 | Terminal | xterm.js (WebGL addon) |
-| PTY | portable-pty (ConPTY on Windows) |
+| PTY | portable-pty (ConPTY on Windows, Unix PTY on Linux/macOS) |
 | Styles | Vanilla CSS + CSS variables |
 | Bundler | Vite 6 |
 
@@ -44,9 +54,9 @@ These are deliberate choices that shape the project. They are not accidents.
 
 - [Node.js](https://nodejs.org/) 20+
 - [Rust](https://rustup.rs/) (stable)
-- Windows 10 1809+ (ConPTY support required)
-
-For Linux builds: `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`
+- **Windows**: Windows 10 1809+ (ConPTY support required)
+- **Linux**: `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf`
+- **macOS**: Xcode Command Line Tools
 
 ## Development
 
@@ -79,7 +89,7 @@ cd src-tauri && cargo test
 npm run tauri build
 ```
 
-The production binary is at `src-tauri/target/release/agentscommander.exe`. Run it directly - do not use the NSIS/MSI installers for local testing.
+The production binary is at `src-tauri/target/release/agentscommander` (`.exe` on Windows). Run it directly - do not use the NSIS/MSI installers for local testing.
 
 ## Releases
 
@@ -96,11 +106,13 @@ This creates a draft release with installers for Windows, macOS (ARM + Intel), a
 
 Settings are stored in `~/.agentscommander/settings.json`:
 
+On Windows the default shell is `powershell.exe`; on Linux/macOS it is `/bin/bash`.
+
 ```json
 {
   "defaultShell": "powershell.exe",
   "defaultShellArgs": ["-NoLogo"],
-  "repoPaths": ["C:\\Users\\you\\repos"],
+  "repoPaths": [],
   "agents": [
     {
       "id": "claude",

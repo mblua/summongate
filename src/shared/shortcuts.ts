@@ -1,4 +1,5 @@
 import { SessionAPI } from "./ipc";
+import { voiceRecorder } from "./voice-recorder";
 
 type ShortcutHandler = (e: KeyboardEvent) => void;
 
@@ -21,6 +22,15 @@ const shortcuts: Array<{
     handler: async () => {
       const activeId = await SessionAPI.getActive();
       if (activeId) SessionAPI.destroy(activeId);
+    },
+  },
+  {
+    ctrl: true,
+    shift: true,
+    key: "r",
+    handler: async () => {
+      const activeId = await SessionAPI.getActive();
+      if (activeId) voiceRecorder.toggle(activeId);
     },
   },
 ];

@@ -101,6 +101,22 @@ html, body, #root {
   color: white;
 }
 
+.titlebar-btn-logs {
+  font-size: 14px;
+  opacity: 0.5;
+}
+
+.titlebar-btn-logs:hover {
+  opacity: 1;
+  background: rgba(0, 212, 255, 0.15);
+  color: var(--sidebar-accent);
+}
+
+.titlebar-btn-logs.copied {
+  opacity: 1;
+  color: #10b981;
+}
+
 /* Session List */
 .session-list-container {
   flex: 1;
@@ -676,6 +692,127 @@ html, body, #root {
 }
 
 /* Detach button on session item */
+/* Voice-to-text microphone button */
+.session-item-mic {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--sidebar-fg-dim);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  flex-shrink: 0;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.session-item:hover .session-item-mic {
+  display: flex;
+}
+
+.session-item-mic.recording {
+  display: flex;
+  color: #ef4444;
+  animation: mic-pulse 1s ease-in-out infinite;
+}
+
+.session-item-mic.processing {
+  display: flex;
+  color: var(--sidebar-accent);
+  cursor: wait;
+  animation: mic-pulse 1.5s ease-in-out infinite;
+}
+
+.session-item-mic.error {
+  display: flex;
+  color: #f59e0b;
+}
+
+.session-item-mic:hover {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Voice recording/processing inline indicator */
+.session-item-voice-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 16px;
+  margin-top: 2px;
+}
+
+.session-item-voice-indicator .voice-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ef4444;
+  flex-shrink: 0;
+  animation: voice-dot-pulse 1s ease-in-out infinite;
+}
+
+@keyframes voice-dot-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { opacity: 0.6; box-shadow: 0 0 0 4px rgba(239, 68, 68, 0); }
+}
+
+.session-item-voice-indicator .voice-level-bar {
+  flex: 1;
+  height: 4px;
+  background: rgba(239, 68, 68, 0.15);
+  border-radius: 2px;
+  overflow: hidden;
+  max-width: 80px;
+}
+
+.session-item-voice-indicator .voice-level-fill {
+  height: 100%;
+  background: #ef4444;
+  border-radius: 2px;
+  transition: width 80ms linear;
+}
+
+.session-item-voice-indicator .voice-time {
+  font-size: 10px;
+  color: #ef4444;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* Processing state */
+.session-item-voice-indicator.processing .voice-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(0, 212, 255, 0.2);
+  border-top-color: var(--sidebar-accent);
+  border-radius: 50%;
+  animation: voice-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes voice-spin {
+  to { transform: rotate(360deg); }
+}
+
+.session-item-voice-indicator .voice-processing-text {
+  font-size: 10px;
+  color: var(--sidebar-accent);
+}
+
+/* Error state */
+.session-item-voice-indicator.error .voice-error-text {
+  font-size: 10px;
+  color: #f59e0b;
+}
+
 .session-item-detach {
   display: none;
   align-items: center;
