@@ -173,6 +173,20 @@ Version is kept in sync across three files:
 - `src-tauri/Cargo.toml`
 - `src/sidebar/components/Titlebar.tsx`
 
+## Privacy
+
+Agents Commander does not collect telemetry, analytics, or usage data. Optional features (Telegram Bridge, Voice-to-Text) transmit data to external services only when explicitly enabled by the user. See [PRIVACY.md](PRIVACY.md) for details.
+
+## Code Signing
+
+Windows releases are digitally signed. See [Code Signing Policy](CODE_SIGNING_POLICY.md).
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+## Author
+
+**Mariano Blua** — [GitHub](https://github.com/mblua) · [LinkedIn](https://www.linkedin.com/in/mariano-blua)
+
 ## License
 
 [MIT](LICENSE)
