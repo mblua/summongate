@@ -6,15 +6,15 @@ const SessionList: Component = () => {
   return (
     <div class="session-list-container">
       <Show
-        when={sessionsStore.sessions.length > 0}
+        when={sessionsStore.filteredSessions.length > 0}
         fallback={
           <div class="empty-state">
-            <span>No sessions</span>
+            <span>{sessionsStore.teamFilter ? "No sessions in this team" : "No sessions"}</span>
             <span>Click + to create one</span>
           </div>
         }
       >
-        <For each={sessionsStore.sessions}>
+        <For each={sessionsStore.filteredSessions}>
           {(session) => (
             <SessionItem
               session={session}

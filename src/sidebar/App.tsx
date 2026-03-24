@@ -5,6 +5,7 @@ import {
   SessionAPI,
   SettingsAPI,
   TelegramAPI,
+  DarkFactoryAPI,
   onSessionCreated,
   onSessionDestroyed,
   onSessionSwitched,
@@ -21,6 +22,7 @@ import { sessionsStore } from "./stores/sessions";
 import { bridgesStore } from "./stores/bridges";
 import { settingsStore } from "../shared/stores/settings";
 import Titlebar from "./components/Titlebar";
+import TeamFilter from "./components/TeamFilter";
 import SessionList from "./components/SessionList";
 import Toolbar from "./components/Toolbar";
 import "./styles/sidebar.css";
@@ -58,6 +60,12 @@ const SidebarApp: Component = () => {
 
     // Load settings into reactive store (for voice-to-text visibility etc.)
     await settingsStore.load();
+
+    // Load teams for filter
+    try {
+      const dfConfig = await DarkFactoryAPI.get();
+      sessionsStore.setTeams(dfConfig.teams);
+    } catch {}
 
     // Load initial sessions
     const sessions = await SessionAPI.list();
@@ -146,6 +154,7 @@ const SidebarApp: Component = () => {
   return (
     <div class="sidebar-layout">
       <Titlebar />
+      <TeamFilter />
       <SessionList />
       <Toolbar />
     </div>

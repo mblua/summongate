@@ -131,6 +131,14 @@ export interface DarkFactoryConfig {
   teams: Team[];
 }
 
+// Sidebar store state
+export interface SessionsState {
+  sessions: Session[];
+  activeId: string | null;
+  teams: Team[];
+  teamFilter: string | null;
+}
+
 // Phone communication types
 
 export interface PhoneMessage {

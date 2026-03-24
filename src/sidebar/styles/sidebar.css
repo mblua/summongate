@@ -117,6 +117,57 @@ html, body, #root {
   color: #10b981;
 }
 
+/* Team Filter */
+.team-filter {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--sidebar-bg);
+  border-bottom: 1px solid var(--sidebar-border);
+  flex-shrink: 0;
+}
+
+.team-filter-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.team-filter-select {
+  width: 100%;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  padding-right: 24px;
+  border: 1px solid var(--sidebar-border);
+  border-radius: var(--radius-sm);
+  background: var(--sidebar-surface);
+  color: var(--sidebar-fg);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--transition-fast);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.team-filter-chevron {
+  position: absolute;
+  right: 8px;
+  color: var(--sidebar-fg-dim);
+  pointer-events: none;
+}
+
+.team-filter-select:hover {
+  border-color: var(--sidebar-fg-dim);
+}
+
+.team-filter-select:focus {
+  border-color: var(--sidebar-accent);
+}
+
+.team-filter-select option {
+  background: var(--sidebar-surface);
+  color: var(--sidebar-fg);
+}
+
 /* Session List */
 .session-list-container {
   flex: 1;

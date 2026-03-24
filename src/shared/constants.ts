@@ -1,3 +1,5 @@
+export const NO_TEAM = "__no_team__";
+
 export const WINDOW_TYPE = (() => {
   const params = new URLSearchParams(window.location.search);
   return params.get("window") || "sidebar";
