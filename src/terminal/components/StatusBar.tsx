@@ -88,14 +88,6 @@ const StatusBar: Component<{ detached?: boolean }> = (props) => {
       <Show when={terminalStore.activeSessionId}>
         <div class="status-bar-actions">
           <Show when={settingsStore.voiceEnabled}>
-            <button
-              class={`status-bar-btn status-bar-btn-mic ${isRecording() ? "recording" : ""} ${isProcessing() ? "processing" : ""}`}
-              onMouseDown={handleMicDown}
-              title={isRecording() ? "Release to stop" : isProcessing() ? "Transcribing..." : "Hold to record (Ctrl+Shift+R)"}
-              disabled={isProcessing()}
-            >
-              &#x1F399;
-            </button>
             <Show when={isRecording()}>
               <button
                 class="status-bar-btn status-bar-btn-mic-cancel"
@@ -105,6 +97,14 @@ const StatusBar: Component<{ detached?: boolean }> = (props) => {
                 &#x2715;
               </button>
             </Show>
+            <button
+              class={`status-bar-btn status-bar-btn-mic ${isRecording() ? "recording" : ""} ${isProcessing() ? "processing" : ""}`}
+              onMouseDown={handleMicDown}
+              title={isRecording() ? "Release to stop" : isProcessing() ? "Transcribing..." : "Hold to record (Ctrl+Shift+R)"}
+              disabled={isProcessing()}
+            >
+              &#x1F399;
+            </button>
           </Show>
           <button
             class="status-bar-btn status-bar-btn-clear"
