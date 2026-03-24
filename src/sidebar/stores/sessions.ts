@@ -24,7 +24,9 @@ export const sessionsStore = {
   },
 
   addSession(session: Session) {
-    setState("sessions", (prev) => [...prev, session]);
+    setState("sessions", (prev) =>
+      prev.some((s) => s.id === session.id) ? prev : [...prev, session]
+    );
   },
 
   removeSession(id: string) {
