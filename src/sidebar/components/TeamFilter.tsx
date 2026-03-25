@@ -33,27 +33,29 @@ const TeamFilter: Component = () => {
             </svg>
           </div>
         </Show>
-        <button
-          class={`toolbar-gear-btn show-inactive-btn ${sessionsStore.showInactive ? "active" : ""}`}
-          onClick={() => sessionsStore.toggleShowInactive()}
-          title={sessionsStore.showInactive ? "Hide inactive agents" : "Show inactive agents"}
-        >
-          &#x1F441;
-        </button>
-        <button
-          class="toolbar-gear-btn"
-          onClick={() => GuideAPI.open()}
-          title="Hints"
-        >
-          &#x1F4A1;
-        </button>
-        <button
-          class="toolbar-gear-btn"
-          onClick={() => setShowSettings(true)}
-          title="Settings"
-        >
-          &#x2699;
-        </button>
+        <div class="team-filter-actions">
+          <button
+            class={`toolbar-gear-btn show-inactive-btn ${sessionsStore.showInactive ? "active" : ""}`}
+            onClick={() => sessionsStore.toggleShowInactive()}
+            title={sessionsStore.showInactive ? "Hide inactive agents" : "Show inactive agents"}
+          >
+            &#x1F441;
+          </button>
+          <button
+            class="toolbar-gear-btn"
+            onClick={() => GuideAPI.open()}
+            title="Hints"
+          >
+            &#x1F4A1;
+          </button>
+          <button
+            class="toolbar-gear-btn"
+            onClick={() => setShowSettings(true)}
+            title="Settings"
+          >
+            &#x2699;
+          </button>
+        </div>
       </div>
       {showSettings() && (
         <SettingsModal onClose={() => setShowSettings(false)} />

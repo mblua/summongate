@@ -10,6 +10,7 @@ const [recordingSeconds, setRecordingSeconds] = createSignal(0);
 const [audioLevel, setAudioLevel] = createSignal(0);
 const [autoExecuteSessionId, setAutoExecuteSessionId] = createSignal<string | null>(null);
 const [autoExecuteCountdown, setAutoExecuteCountdown] = createSignal(0);
+const [typingWarnSessionId, setTypingWarnSessionId] = createSignal<string | null>(null);
 
 // Internal state (not reactive, not exported)
 let recorder: MediaRecorder | null = null;
@@ -21,6 +22,7 @@ let mimeType = "";
 let recordingTimer: ReturnType<typeof setInterval> | null = null;
 let levelTimer: ReturnType<typeof setInterval> | null = null;
 let autoExecTimer: ReturnType<typeof setInterval> | null = null;
+let typingWarnTimer: ReturnType<typeof setTimeout> | null = null;
 
 function startAudioLevelMonitor(stream: MediaStream) {
   try {
@@ -76,8 +78,9 @@ function cleanupRecording() {
 }
 
 async function start(sessionId: string) {
-  // Cancel any pending auto-execute from a previous session
+  // Cancel any pending state from a previous session
   cancelAutoExecute();
+  cancelTypingWarning();
 
   // Stop any existing recording first
   if (recordingSessionId()) {
@@ -90,16 +93,13 @@ async function start(sessionId: string) {
   setRecordingSeconds(0);
 
   try {
-    console.log("[Voice] Requesting microphone access...");
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    console.log("[Voice] Microphone access granted, tracks:", stream.getAudioTracks().length);
     currentStream = stream;
     chunks = [];
 
     const preferredMime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
       ? "audio/webm;codecs=opus"
       : undefined;
-    console.log("[Voice] MediaRecorder mimeType:", preferredMime || "default");
     const rec = new MediaRecorder(stream, preferredMime ? { mimeType: preferredMime } : undefined);
     recorder = rec;
     mimeType = rec.mimeType || "audio/webm";
@@ -120,12 +120,15 @@ async function start(sessionId: string) {
     };
 
     rec.onstop = async () => {
-      console.log("[Voice] Recording stopped, chunks:", chunks.length);
+      const stoppedSessionId = recordingSessionId();
+
+      // Stop tracking IMMEDIATELY — must await to guarantee the backend
+      // clears the flag before the transcription's own pty_write executes.
+      if (stoppedSessionId) await VoiceAPI.markRecording(stoppedSessionId, false);
+
       stream.getTracks().forEach((t) => t.stop());
       currentStream = null;
       clearTimers();
-
-      const stoppedSessionId = recordingSessionId();
       setRecordingSessionId(null);
       recorder = null;
 
@@ -134,28 +137,30 @@ async function start(sessionId: string) {
       setProcessingSessionId(stoppedSessionId);
 
       const blob = new Blob(chunks, { type: mimeType });
-      console.log("[Voice] Audio blob size:", blob.size, "type:", blob.type);
       const buffer = await blob.arrayBuffer();
       const bytes = Array.from(new Uint8Array(buffer));
-      console.log("[Voice] Sending", bytes.length, "bytes to Gemini...");
 
       try {
         const text = await VoiceAPI.transcribe(bytes, mimeType);
-        console.log("[Voice] Transcription result:", text);
         if (text) {
           const encoder = new TextEncoder();
           await PtyAPI.write(stoppedSessionId, encoder.encode(text));
-          console.log("[Voice] Text written to PTY");
 
-          // Auto-execute: send Enter after configurable delay
-          try {
-            const settings = await SettingsAPI.get();
-            if (settings.voiceAutoExecute) {
-              const delay = settings.voiceAutoExecuteDelay || 15;
-              startAutoExecuteCountdown(stoppedSessionId, delay);
+          // Check if user typed during recording
+          const hadTyping = await VoiceAPI.hadTyping(stoppedSessionId);
+          if (hadTyping) {
+            showTypingWarning(stoppedSessionId);
+          } else {
+            // Auto-execute: send Enter after configurable delay
+            try {
+              const settings = await SettingsAPI.get();
+              if (settings.voiceAutoExecute) {
+                const delay = settings.voiceAutoExecuteDelay || 15;
+                startAutoExecuteCountdown(stoppedSessionId, delay);
+              }
+            } catch {
+              // Settings fetch failed, skip auto-execute
             }
-          } catch {
-            // Settings fetch failed, skip auto-execute
           }
         }
       } catch (err: any) {
@@ -169,7 +174,8 @@ async function start(sessionId: string) {
       }
     };
 
-    console.log("[Voice] Recording started");
+    // Tell backend to start tracking PTY writes for this session
+    void VoiceAPI.markRecording(sessionId, true);
     rec.start();
   } catch (err: any) {
     const msg = err?.message || err?.name || "Microphone access failed";
@@ -192,7 +198,9 @@ function stop() {
 
 /** Cancel recording — discard audio without processing */
 function cancel() {
+  const sid = recordingSessionId();
   cancelAutoExecute();
+  cancelTypingWarning();
   if (recorder) {
     // Detach onstop so it doesn't trigger transcription
     recorder.onstop = null;
@@ -200,8 +208,9 @@ function cancel() {
       recorder.stop();
     }
   }
+  // Stop tracking before cleanup to prevent permanent leak
+  if (sid) void VoiceAPI.markRecording(sid, false);
   cleanupRecording();
-  console.log("[Voice] Recording cancelled");
 }
 
 function toggle(sessionId: string) {
@@ -218,7 +227,6 @@ function startAutoExecuteCountdown(sessionId: string, delay: number) {
   let remaining = delay;
   setAutoExecuteSessionId(sessionId);
   setAutoExecuteCountdown(remaining);
-  console.log(`[Voice] Auto-execute in ${delay}s for session ${sessionId}`);
 
   autoExecTimer = setInterval(async () => {
     remaining--;
@@ -230,12 +238,28 @@ function startAutoExecuteCountdown(sessionId: string, delay: number) {
       setAutoExecuteCountdown(0);
       try {
         await PtyAPI.write(sessionId, new TextEncoder().encode("\r"));
-        console.log("[Voice] Auto-execute: Enter sent");
       } catch (err) {
         console.error("[Voice] Auto-execute failed:", err);
       }
     }
   }, 1000);
+}
+
+function showTypingWarning(sessionId: string) {
+  cancelTypingWarning();
+  setTypingWarnSessionId(sessionId);
+  typingWarnTimer = setTimeout(() => {
+    setTypingWarnSessionId(null);
+    typingWarnTimer = null;
+  }, 5000);
+}
+
+function cancelTypingWarning() {
+  if (typingWarnTimer) {
+    clearTimeout(typingWarnTimer);
+    typingWarnTimer = null;
+  }
+  setTypingWarnSessionId(null);
 }
 
 function cancelAutoExecute() {
@@ -262,6 +286,7 @@ export const voiceRecorder = {
   audioLevel,
   autoExecuteSessionId,
   autoExecuteCountdown,
+  typingWarnSessionId,
 
   // Actions
   start,

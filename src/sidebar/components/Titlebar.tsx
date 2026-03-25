@@ -50,8 +50,11 @@ const Titlebar: Component = () => {
         <span class="titlebar-title" data-tauri-drag-region>
           agents commander
         </span>
+        <span class="titlebar-version" data-tauri-drag-region>
+          v{APP_VERSION}
+        </span>
         {import.meta.env.DEV && (
-          <span class="titlebar-dev-badge" data-tauri-drag-region>DEV {APP_VERSION}</span>
+          <span class="titlebar-dev-badge" data-tauri-drag-region>DEV</span>
         )}
       </div>
       <div class="titlebar-controls">
@@ -65,13 +68,13 @@ const Titlebar: Component = () => {
           </button>
           {layoutOpen() && (
             <div class="layout-dropdown">
-              <button class="layout-option" onClick={() => handleLayout("left")}>
-                <span class="layout-option-icon">&#x25E7;</span>
-                Sidebar Left
-              </button>
               <button class="layout-option" onClick={() => handleLayout("right")}>
                 <span class="layout-option-icon">&#x25E8;</span>
                 Sidebar Right
+              </button>
+              <button class="layout-option" onClick={() => handleLayout("left")}>
+                <span class="layout-option-icon">&#x25E7;</span>
+                Sidebar Left
               </button>
             </div>
           )}

@@ -2,6 +2,7 @@ use base64::Engine;
 use tauri::State;
 
 use crate::config::settings::SettingsState;
+use crate::voice::tracker::VoiceTrackingState;
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -121,4 +122,26 @@ pub async fn voice_transcribe(
 
     log::info!("Voice transcription: {} chars", text.len());
     Ok(text)
+}
+
+#[tauri::command]
+pub fn voice_mark_recording(
+    tracker: State<'_, VoiceTrackingState>,
+    session_id: String,
+    recording: bool,
+) -> Result<(), String> {
+    let uuid = uuid::Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
+    let mut t = tracker.lock().unwrap();
+    t.set_recording(uuid, recording);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn voice_had_typing(
+    tracker: State<'_, VoiceTrackingState>,
+    session_id: String,
+) -> Result<bool, String> {
+    let uuid = uuid::Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
+    let mut t = tracker.lock().unwrap();
+    Ok(t.drain_typed(uuid))
 }

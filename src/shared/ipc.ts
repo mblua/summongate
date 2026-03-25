@@ -105,6 +105,10 @@ export function onSessionRenamed(
 export const VoiceAPI = {
   transcribe: (audio: number[], mimeType: string) =>
     invoke<string>("voice_transcribe", { audio, mimeType }),
+  markRecording: (sessionId: string, recording: boolean) =>
+    invoke<void>("voice_mark_recording", { sessionId, recording }),
+  hadTyping: (sessionId: string) =>
+    invoke<boolean>("voice_had_typing", { sessionId }),
 };
 
 // Debug API

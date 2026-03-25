@@ -53,10 +53,15 @@ html, body, #root {
 }
 
 .titlebar-version {
-  font-size: 9px;
-  opacity: 0.35;
-  font-weight: 400;
-  letter-spacing: 0.3px;
+  display: inline-block;
+  padding: 1px 5px;
+  background: rgba(0, 180, 255, 0.15);
+  color: #00b4ff;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  border-radius: 3px;
+  vertical-align: middle;
 }
 
 .titlebar-dev-badge {
@@ -193,9 +198,12 @@ html, body, #root {
   flex: 1;
 }
 
-.team-filter .toolbar-gear-btn {
-  flex-shrink: 0;
+.team-filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 .team-filter-wrapper {
@@ -1035,6 +1043,18 @@ html, body, #root {
 
 .session-item-mic-cancel:hover {
   background: rgba(239, 68, 68, 0.3);
+}
+
+/* Warning state — typing detected during recording */
+.session-item-voice-indicator.warning .voice-warning-text {
+  font-size: 10px;
+  color: #f59e0b;
+  animation: voice-warning-fade 5s ease-out forwards;
+}
+
+@keyframes voice-warning-fade {
+  0%, 80% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 /* Error state */
