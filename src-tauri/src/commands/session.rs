@@ -67,12 +67,14 @@ pub async fn create_session_inner(
         let config_path = std::path::Path::new(&cwd_for_init)
             .join(".agentscommander")
             .join("config.json");
-        let has_teams = config_path
-            .to_str()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
-            .and_then(|v| v.get("teams")?.as_array().map(|a| !a.is_empty()))
-            .unwrap_or(false);
+        let has_teams = if let Ok(content) = tokio::fs::read_to_string(&config_path).await {
+            serde_json::from_str::<serde_json::Value>(&content)
+                .ok()
+                .and_then(|v| v.get("teams")?.as_array().map(|a| !a.is_empty()))
+                .unwrap_or(false)
+        } else {
+            false
+        };
 
         if !has_teams {
             return;
