@@ -9,6 +9,7 @@ export interface Session {
   waitingForInput: boolean;
   lastPrompt: string | null;
   gitBranch: string | null;
+  token: string;
 }
 
 export type SessionStatus = "active" | "running" | "idle" | { exited: number };
