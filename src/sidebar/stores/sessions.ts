@@ -121,6 +121,9 @@ export const sessionsStore = {
   get showInactive() {
     return state.showInactive;
   },
+  get repos() {
+    return state.repos;
+  },
   get filteredSessions() {
     return filteredSessionsMemo();
   },

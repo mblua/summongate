@@ -3,6 +3,7 @@ import type { Session, SessionStatus, TelegramBotConfig } from "../../shared/typ
 import { SessionAPI, TelegramAPI, SettingsAPI, WindowAPI } from "../../shared/ipc";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { bridgesStore } from "../stores/bridges";
+import { sessionsStore } from "../stores/sessions";
 import { settingsStore } from "../../shared/stores/settings";
 import { voiceRecorder, formatRecordingTime } from "../../shared/voice-recorder";
 
@@ -10,6 +11,13 @@ function statusClass(status: SessionStatus): string {
   if (typeof status === "string") return status;
   return "exited";
 }
+
+const AGENT_BADGES: Record<string, string> = {
+  Claude: "CC",
+  Codex: "CX",
+  OpenCode: "OC",
+  Cursor: "CU",
+};
 
 const SessionItem: Component<{
   session: Session;
@@ -22,6 +30,13 @@ const SessionItem: Component<{
   let inputRef!: HTMLInputElement;
 
   const bridge = () => bridgesStore.getBridge(props.session.id);
+  const agentBadges = () => {
+    const np = props.session.workingDirectory.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+    const repo = sessionsStore.repos.find((r) =>
+      r.path.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "") === np
+    );
+    return repo?.agents ?? [];
+  };
   const isRecording = () => voiceRecorder.recordingSessionId() === props.session.id;
   const isProcessing = () => voiceRecorder.processingSessionId() === props.session.id;
   const isAutoExecuting = () => voiceRecorder.autoExecuteSessionId() === props.session.id;
@@ -197,12 +212,23 @@ const SessionItem: Component<{
         </Show>
 
         <Show when={!isRecording() && !isProcessing() && !isAutoExecuting() && !voiceRecorder.micError()}>
-          <Show when={props.session.gitBranch}>
-            <div class="session-item-branch" title={props.session.gitBranch!}>
-              {props.session.gitBranch}
+          <Show when={isInactive()}>
+            <div class="session-item-agent-badges">
+              <For each={agentBadges()}>
+                {(agent) => (
+                  <span class="agent-badge">{AGENT_BADGES[agent] || agent}</span>
+                )}
+              </For>
             </div>
           </Show>
-          <div class="session-item-shell">{props.session.shell}</div>
+          <Show when={!isInactive()}>
+            <Show when={props.session.gitBranch}>
+              <div class="session-item-branch" title={props.session.gitBranch!}>
+                {props.session.gitBranch}
+              </div>
+            </Show>
+            <div class="session-item-shell">{props.session.shell}</div>
+          </Show>
         </Show>
       </div>
       <Show when={!isInactive()}>

@@ -9,6 +9,7 @@ use crate::config::settings::SettingsState;
 const AGENT_DETECTORS: &[(&str, &[&str])] = &[
     ("Claude", &[".claude", "CLAUDE.md"]),
     ("Codex", &[".codex"]),
+    ("OpenCode", &[".opencode", "opencode.json"]),
     ("Cursor", &[".cursor", ".cursorrules"]),
 ];
 
