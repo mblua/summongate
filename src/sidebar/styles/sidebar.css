@@ -380,8 +380,14 @@ html, body, #root {
   letter-spacing: 0.5px;
   padding: 1px 4px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
   color: var(--sidebar-fg-dim);
+  opacity: 0.4;
+}
+.agent-badge.running {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--sidebar-fg);
 }
 
 /* Show inactive toggle */
