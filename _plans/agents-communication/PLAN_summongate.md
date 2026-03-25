@@ -66,7 +66,7 @@ Content-Type: application/json
 
 {
   "shell": "claude.cmd",
-  "shellArgs": ["-p", "--output-format", "text", "--dangerously-skip-permissions"],
+  "shellArgs": ["-p", "--output-format", "text", "--enable-auto-mode"],
   "cwd": "C:\\Users\\maria\\0_repos\\amp-backend",
   "sessionName": "backend@wg1",
   "stdinPayload": "...activation payload..."

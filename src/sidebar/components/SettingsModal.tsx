@@ -24,7 +24,7 @@ const GEMINI_MODELS = [
 const AGENT_PRESETS: Record<string, Omit<AgentConfig, "id">> = {
   claude: {
     label: "Claude Code",
-    command: "claude --dangerously-skip-permissions",
+    command: "claude --enable-auto-mode",
     color: "#d97706",
     gitPullBefore: true,
   },

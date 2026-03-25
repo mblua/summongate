@@ -204,6 +204,11 @@ export const PhoneAPI = {
     invoke<void>("phone_ack_messages", { agentName, messageIds }),
 };
 
+// Guide window
+export const GuideAPI = {
+  open: () => invoke<void>("open_guide_window"),
+};
+
 export function onTelegramIncoming(
   callback: (data: { sessionId: string; text: string; from: string }) => void
 ): Promise<UnlistenFn> {

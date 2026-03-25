@@ -285,7 +285,7 @@ npx tsc --noEmit               # TypeScript check
 
 ### 3. Diagnostic Artifacts
 - Save relevant logs, screenshots, or command outputs in the logbook
-- For Telegram bridge: check `~/.summongate/diag-raw.log` and `diag-sent.log`
+- For Telegram bridge: check `~/.agentscommander/diag-raw.log` and `diag-sent.log`
 - For general issues: capture before/after state
 
 ### 4. Rules

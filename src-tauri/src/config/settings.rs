@@ -129,31 +129,8 @@ fn settings_path() -> Option<PathBuf> {
     super::config_dir().map(|d| d.join("settings.json"))
 }
 
-/// Migrate settings from old ~/.summongate/ to ~/.agentscommander/ if needed
-fn migrate_from_summongate() {
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => return,
-    };
-    let old_path = home.join(".summongate").join("settings.json");
-    let new_dir = home.join(".agentscommander");
-    let new_path = new_dir.join("settings.json");
-
-    if old_path.exists() && !new_path.exists() {
-        log::info!("Migrating settings from {:?} to {:?}", old_path, new_path);
-        if let Err(e) = std::fs::create_dir_all(&new_dir) {
-            log::error!("Failed to create new settings dir: {}", e);
-            return;
-        }
-        if let Err(e) = std::fs::copy(&old_path, &new_path) {
-            log::error!("Failed to copy settings: {}", e);
-        }
-    }
-}
-
 /// Load settings from the app config directory (see config_dir()), falling back to defaults
 pub fn load_settings() -> AppSettings {
-    migrate_from_summongate();
 
     let path = match settings_path() {
         Some(p) => p,

@@ -9,7 +9,7 @@ const ZOOM_MAX = 3.0;
 let currentZoom = 1.0;
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
-type WindowType = "sidebar" | "terminal";
+type WindowType = "sidebar" | "terminal" | "guide";
 
 function clampZoom(value: number): number {
   return Math.round(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value)) * 100) / 100;
