@@ -152,7 +152,7 @@ export interface SessionsState {
   teams: Team[];
   teamFilter: string | null;
   showInactive: boolean;
-  repoPaths: string[];
+  repos: RepoMatch[];
 }
 
 // Phone communication types

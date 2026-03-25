@@ -1,7 +1,7 @@
 import { createMemo } from "solid-js";
 import { createStore } from "solid-js/store";
 import { NO_TEAM } from "../../shared/constants";
-import type { Session, SessionsState, Team } from "../../shared/types";
+import type { RepoMatch, Session, SessionsState, Team } from "../../shared/types";
 
 const [state, setState] = createStore<SessionsState>({
   sessions: [],
@@ -9,19 +9,11 @@ const [state, setState] = createStore<SessionsState>({
   teams: [],
   teamFilter: null,
   showInactive: false,
-  repoPaths: [],
+  repos: [],
 });
 
 function normalizePath(p: string): string {
   return p.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
-}
-
-/** Extract display name from a repo path: "parent/repo" */
-function nameFromPath(p: string): string {
-  const normalized = p.replace(/\\/g, "/").replace(/\/+$/, "");
-  const parts = normalized.split("/").filter(Boolean);
-  if (parts.length >= 2) return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
-  return parts[parts.length - 1] || p;
 }
 
 const allTeamPathsMemo = createMemo(() => {
@@ -88,16 +80,16 @@ const filteredSessionsMemo = createMemo(() => {
   };
 
   if (!state.teamFilter) {
-    // "All" — show inactive from all repo_paths
-    for (const rp of state.repoPaths) {
-      addInactive(nameFromPath(rp), rp);
+    // "All" — show inactive from all discovered repos
+    for (const repo of state.repos) {
+      addInactive(repo.name, repo.path);
     }
   } else if (state.teamFilter === NO_TEAM) {
     // "No team" — show inactive repos NOT in any team
     const teamPaths = allTeamPathsMemo();
-    for (const rp of state.repoPaths) {
-      if (!teamPaths.has(normalizePath(rp))) {
-        addInactive(nameFromPath(rp), rp);
+    for (const repo of state.repos) {
+      if (!teamPaths.has(normalizePath(repo.path))) {
+        addInactive(repo.name, repo.path);
       }
     }
   } else {
@@ -181,8 +173,8 @@ export const sessionsStore = {
     }
   },
 
-  setRepoPaths(paths: string[]) {
-    setState("repoPaths", paths);
+  setRepos(repos: RepoMatch[]) {
+    setState("repos", repos);
   },
 
   setTeamFilter(teamId: string | null) {
