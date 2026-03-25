@@ -924,6 +924,18 @@ html, body, #root {
   background: rgba(239, 68, 68, 0.3);
 }
 
+/* Warning state — typing detected during recording */
+.session-item-voice-indicator.warning .voice-warning-text {
+  font-size: 10px;
+  color: #f59e0b;
+  animation: voice-warning-fade 5s ease-out forwards;
+}
+
+@keyframes voice-warning-fade {
+  0%, 80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 /* Error state */
 .session-item-voice-indicator.error .voice-error-text {
   font-size: 10px;

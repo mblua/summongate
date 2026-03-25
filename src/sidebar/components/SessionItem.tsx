@@ -25,6 +25,7 @@ const SessionItem: Component<{
   const isRecording = () => voiceRecorder.recordingSessionId() === props.session.id;
   const isProcessing = () => voiceRecorder.processingSessionId() === props.session.id;
   const isAutoExecuting = () => voiceRecorder.autoExecuteSessionId() === props.session.id;
+  const isTypingWarning = () => voiceRecorder.typingWarnSessionId() === props.session.id;
 
   const handleMicClick = (e: MouseEvent) => {
     e.stopPropagation();
@@ -174,13 +175,19 @@ const SessionItem: Component<{
           </div>
         </Show>
 
+        <Show when={isTypingWarning()}>
+          <div class="session-item-voice-indicator warning">
+            <span class="voice-warning-text">Typed during recording</span>
+          </div>
+        </Show>
+
         <Show when={voiceRecorder.micError()}>
           <div class="session-item-voice-indicator error">
             <span class="voice-error-text">{voiceRecorder.micError()}</span>
           </div>
         </Show>
 
-        <Show when={!isRecording() && !isProcessing() && !isAutoExecuting() && !voiceRecorder.micError()}>
+        <Show when={!isRecording() && !isProcessing() && !isAutoExecuting() && !isTypingWarning() && !voiceRecorder.micError()}>
           <Show when={props.session.gitBranch}>
             <div class="session-item-branch" title={props.session.gitBranch!}>
               {props.session.gitBranch}

@@ -10,6 +10,7 @@ const [recordingSeconds, setRecordingSeconds] = createSignal(0);
 const [audioLevel, setAudioLevel] = createSignal(0);
 const [autoExecuteSessionId, setAutoExecuteSessionId] = createSignal<string | null>(null);
 const [autoExecuteCountdown, setAutoExecuteCountdown] = createSignal(0);
+const [typingWarnSessionId, setTypingWarnSessionId] = createSignal<string | null>(null);
 
 // Internal state (not reactive, not exported)
 let recorder: MediaRecorder | null = null;
@@ -21,6 +22,7 @@ let mimeType = "";
 let recordingTimer: ReturnType<typeof setInterval> | null = null;
 let levelTimer: ReturnType<typeof setInterval> | null = null;
 let autoExecTimer: ReturnType<typeof setInterval> | null = null;
+let typingWarnTimer: ReturnType<typeof setTimeout> | null = null;
 
 function startAudioLevelMonitor(stream: MediaStream) {
   try {
@@ -76,8 +78,9 @@ function cleanupRecording() {
 }
 
 async function start(sessionId: string) {
-  // Cancel any pending auto-execute from a previous session
+  // Cancel any pending state from a previous session
   cancelAutoExecute();
+  cancelTypingWarning();
 
   // Stop any existing recording first
   if (recordingSessionId()) {
@@ -121,11 +124,15 @@ async function start(sessionId: string) {
 
     rec.onstop = async () => {
       console.log("[Voice] Recording stopped, chunks:", chunks.length);
+      const stoppedSessionId = recordingSessionId();
+
+      // Stop tracking IMMEDIATELY — must await to guarantee the backend
+      // clears the flag before the transcription's own pty_write executes.
+      if (stoppedSessionId) await VoiceAPI.markRecording(stoppedSessionId, false);
+
       stream.getTracks().forEach((t) => t.stop());
       currentStream = null;
       clearTimers();
-
-      const stoppedSessionId = recordingSessionId();
       setRecordingSessionId(null);
       recorder = null;
 
@@ -147,15 +154,22 @@ async function start(sessionId: string) {
           await PtyAPI.write(stoppedSessionId, encoder.encode(text));
           console.log("[Voice] Text written to PTY");
 
-          // Auto-execute: send Enter after configurable delay
-          try {
-            const settings = await SettingsAPI.get();
-            if (settings.voiceAutoExecute) {
-              const delay = settings.voiceAutoExecuteDelay || 15;
-              startAutoExecuteCountdown(stoppedSessionId, delay);
+          // Check if user typed during recording
+          const hadTyping = await VoiceAPI.hadTyping(stoppedSessionId);
+          if (hadTyping) {
+            console.log("[Voice] Typing detected during recording — skipping auto-execute");
+            showTypingWarning(stoppedSessionId);
+          } else {
+            // Auto-execute: send Enter after configurable delay
+            try {
+              const settings = await SettingsAPI.get();
+              if (settings.voiceAutoExecute) {
+                const delay = settings.voiceAutoExecuteDelay || 15;
+                startAutoExecuteCountdown(stoppedSessionId, delay);
+              }
+            } catch {
+              // Settings fetch failed, skip auto-execute
             }
-          } catch {
-            // Settings fetch failed, skip auto-execute
           }
         }
       } catch (err: any) {
@@ -168,6 +182,9 @@ async function start(sessionId: string) {
         setProcessingSessionId(null);
       }
     };
+
+    // Tell backend to start tracking PTY writes for this session
+    void VoiceAPI.markRecording(sessionId, true);
 
     console.log("[Voice] Recording started");
     rec.start();
@@ -192,7 +209,9 @@ function stop() {
 
 /** Cancel recording — discard audio without processing */
 function cancel() {
+  const sid = recordingSessionId();
   cancelAutoExecute();
+  cancelTypingWarning();
   if (recorder) {
     // Detach onstop so it doesn't trigger transcription
     recorder.onstop = null;
@@ -200,6 +219,8 @@ function cancel() {
       recorder.stop();
     }
   }
+  // Stop tracking before cleanup to prevent permanent leak
+  if (sid) void VoiceAPI.markRecording(sid, false);
   cleanupRecording();
   console.log("[Voice] Recording cancelled");
 }
@@ -238,6 +259,23 @@ function startAutoExecuteCountdown(sessionId: string, delay: number) {
   }, 1000);
 }
 
+function showTypingWarning(sessionId: string) {
+  cancelTypingWarning();
+  setTypingWarnSessionId(sessionId);
+  typingWarnTimer = setTimeout(() => {
+    setTypingWarnSessionId(null);
+    typingWarnTimer = null;
+  }, 5000);
+}
+
+function cancelTypingWarning() {
+  if (typingWarnTimer) {
+    clearTimeout(typingWarnTimer);
+    typingWarnTimer = null;
+  }
+  setTypingWarnSessionId(null);
+}
+
 function cancelAutoExecute() {
   if (autoExecTimer) {
     clearInterval(autoExecTimer);
@@ -262,6 +300,7 @@ export const voiceRecorder = {
   audioLevel,
   autoExecuteSessionId,
   autoExecuteCountdown,
+  typingWarnSessionId,
 
   // Actions
   start,

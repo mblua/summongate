@@ -5,6 +5,7 @@ pub mod phone;
 pub mod pty;
 pub mod session;
 pub mod telegram;
+pub mod voice;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -17,6 +18,7 @@ use pty::idle_detector::IdleDetector;
 use pty::manager::PtyManager;
 use session::manager::SessionManager;
 use telegram::manager::{OutputSenderMap, TelegramBridgeManager, TelegramBridgeState};
+use voice::tracker::{VoiceTracker, VoiceTrackingState};
 
 /// Tracks which sessions are currently detached into their own windows.
 pub type DetachedSessionsState = Arc<Mutex<HashSet<uuid::Uuid>>>;
@@ -57,10 +59,12 @@ pub fn run() {
 
     let settings: SettingsState = Arc::new(tokio::sync::RwLock::new(config::settings::load_settings()));
     let detached_sessions: DetachedSessionsState = Arc::new(Mutex::new(HashSet::new()));
+    let voice_tracking: VoiceTrackingState = Arc::new(Mutex::new(VoiceTracker::new()));
 
     tauri::Builder::default()
         .manage(session_mgr)
         .manage(tg_mgr)
+        .manage(voice_tracking)
         .manage(settings)
         .manage(detached_sessions.clone())
         .setup(move |app| {
@@ -247,6 +251,8 @@ pub fn run() {
             commands::phone::phone_list_agents,
             commands::phone::phone_ack_messages,
             commands::voice::voice_transcribe,
+            commands::voice::voice_mark_recording,
+            commands::voice::voice_had_typing,
             commands::config::save_debug_logs,
         ])
         .run(tauri::generate_context!())
