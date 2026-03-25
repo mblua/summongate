@@ -53,10 +53,15 @@ html, body, #root {
 }
 
 .titlebar-version {
-  font-size: 9px;
-  opacity: 0.35;
-  font-weight: 400;
-  letter-spacing: 0.3px;
+  display: inline-block;
+  padding: 1px 5px;
+  background: rgba(0, 180, 255, 0.15);
+  color: #00b4ff;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  border-radius: 3px;
+  vertical-align: middle;
 }
 
 .titlebar-dev-badge {
