@@ -93,16 +93,13 @@ async function start(sessionId: string) {
   setRecordingSeconds(0);
 
   try {
-    console.log("[Voice] Requesting microphone access...");
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    console.log("[Voice] Microphone access granted, tracks:", stream.getAudioTracks().length);
     currentStream = stream;
     chunks = [];
 
     const preferredMime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
       ? "audio/webm;codecs=opus"
       : undefined;
-    console.log("[Voice] MediaRecorder mimeType:", preferredMime || "default");
     const rec = new MediaRecorder(stream, preferredMime ? { mimeType: preferredMime } : undefined);
     recorder = rec;
     mimeType = rec.mimeType || "audio/webm";
@@ -123,7 +120,6 @@ async function start(sessionId: string) {
     };
 
     rec.onstop = async () => {
-      console.log("[Voice] Recording stopped, chunks:", chunks.length);
       const stoppedSessionId = recordingSessionId();
 
       // Stop tracking IMMEDIATELY — must await to guarantee the backend
@@ -141,23 +137,18 @@ async function start(sessionId: string) {
       setProcessingSessionId(stoppedSessionId);
 
       const blob = new Blob(chunks, { type: mimeType });
-      console.log("[Voice] Audio blob size:", blob.size, "type:", blob.type);
       const buffer = await blob.arrayBuffer();
       const bytes = Array.from(new Uint8Array(buffer));
-      console.log("[Voice] Sending", bytes.length, "bytes to Gemini...");
 
       try {
         const text = await VoiceAPI.transcribe(bytes, mimeType);
-        console.log("[Voice] Transcription result:", text);
         if (text) {
           const encoder = new TextEncoder();
           await PtyAPI.write(stoppedSessionId, encoder.encode(text));
-          console.log("[Voice] Text written to PTY");
 
           // Check if user typed during recording
           const hadTyping = await VoiceAPI.hadTyping(stoppedSessionId);
           if (hadTyping) {
-            console.log("[Voice] Typing detected during recording — skipping auto-execute");
             showTypingWarning(stoppedSessionId);
           } else {
             // Auto-execute: send Enter after configurable delay
@@ -185,8 +176,6 @@ async function start(sessionId: string) {
 
     // Tell backend to start tracking PTY writes for this session
     void VoiceAPI.markRecording(sessionId, true);
-
-    console.log("[Voice] Recording started");
     rec.start();
   } catch (err: any) {
     const msg = err?.message || err?.name || "Microphone access failed";
@@ -222,7 +211,6 @@ function cancel() {
   // Stop tracking before cleanup to prevent permanent leak
   if (sid) void VoiceAPI.markRecording(sid, false);
   cleanupRecording();
-  console.log("[Voice] Recording cancelled");
 }
 
 function toggle(sessionId: string) {
@@ -239,7 +227,6 @@ function startAutoExecuteCountdown(sessionId: string, delay: number) {
   let remaining = delay;
   setAutoExecuteSessionId(sessionId);
   setAutoExecuteCountdown(remaining);
-  console.log(`[Voice] Auto-execute in ${delay}s for session ${sessionId}`);
 
   autoExecTimer = setInterval(async () => {
     remaining--;
@@ -251,7 +238,6 @@ function startAutoExecuteCountdown(sessionId: string, delay: number) {
       setAutoExecuteCountdown(0);
       try {
         await PtyAPI.write(sessionId, new TextEncoder().encode("\r"));
-        console.log("[Voice] Auto-execute: Enter sent");
       } catch (err) {
         console.error("[Voice] Auto-execute failed:", err);
       }
