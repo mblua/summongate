@@ -61,7 +61,7 @@ pub async fn create_session_inner(
 
     // Schedule delayed injection of session token + CLI instructions into PTY
     let pty_mgr_clone = Arc::clone(pty_mgr);
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         // Wait for the agent CLI to boot (3s covers most agents)
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 

@@ -51,7 +51,7 @@ impl MailboxPoller {
 
     /// Start the poller as a background task.
     pub fn start(self, app: tauri::AppHandle) {
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             loop {
                 if let Err(e) = self.poll(&app).await {
                     log::warn!("MailboxPoller error: {}", e);
@@ -275,7 +275,7 @@ impl MailboxPoller {
                     // Schedule cleanup: wait for idle then destroy session
                     let app_clone = app.clone();
                     let session_id_clone = session_id;
-                    tokio::spawn(async move {
+                    tauri::async_runtime::spawn(async move {
                         // Wait up to 10 minutes for the agent to finish
                         let timeout = std::time::Duration::from_secs(600);
                         let poll = std::time::Duration::from_secs(2);
