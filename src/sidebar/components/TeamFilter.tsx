@@ -1,5 +1,6 @@
 import { Component, For, Show, createSignal } from "solid-js";
 import { NO_TEAM } from "../../shared/constants";
+import { GuideAPI } from "../../shared/ipc";
 import { sessionsStore } from "../stores/sessions";
 import SettingsModal from "./SettingsModal";
 
@@ -32,6 +33,13 @@ const TeamFilter: Component = () => {
             </svg>
           </div>
         </Show>
+        <button
+          class="toolbar-gear-btn"
+          onClick={() => GuideAPI.open()}
+          title="Hints"
+        >
+          &#x1F4A1;
+        </button>
         <button
           class="toolbar-gear-btn"
           onClick={() => setShowSettings(true)}

@@ -118,6 +118,9 @@ export const WindowAPI = {
 
   closeDetached: (sessionId: string) =>
     invoke<void>("close_detached_terminal", { sessionId }),
+
+  openInExplorer: (path: string) =>
+    invoke<void>("open_in_explorer", { path }),
 };
 
 // Telegram Bridge API
@@ -199,6 +202,11 @@ export const PhoneAPI = {
   listAgents: () => invoke<AgentInfo[]>("phone_list_agents"),
   ackMessages: (agentName: string, messageIds: string[]) =>
     invoke<void>("phone_ack_messages", { agentName, messageIds }),
+};
+
+// Guide window
+export const GuideAPI = {
+  open: () => invoke<void>("open_guide_window"),
 };
 
 export function onTelegramIncoming(

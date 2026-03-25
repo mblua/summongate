@@ -2,6 +2,7 @@ import "./shared/console-capture";
 import { render } from "solid-js/web";
 import SidebarApp from "./sidebar/App";
 import TerminalApp from "./terminal/App";
+import GuideApp from "./guide/App";
 
 const params = new URLSearchParams(window.location.search);
 const windowType = params.get("window") || "sidebar";
@@ -18,6 +19,8 @@ if (windowType === "terminal") {
     ),
     root
   );
+} else if (windowType === "guide") {
+  render(() => <GuideApp />, root);
 } else {
   render(() => <SidebarApp />, root);
 }
