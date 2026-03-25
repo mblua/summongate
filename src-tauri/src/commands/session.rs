@@ -5,7 +5,6 @@ use uuid::Uuid;
 
 use crate::config::sessions_persistence::persist_current_state;
 use crate::config::settings::SettingsState;
-use crate::phone::agent_registry::AgentRegistryState;
 use crate::pty::manager::PtyManager;
 use crate::session::manager::SessionManager;
 use crate::session::session::SessionInfo;
@@ -47,11 +46,6 @@ pub async fn create_session_inner(
 
     let info = SessionInfo::from(&session);
     let _ = app.emit("session_created", info.clone());
-
-    // Register session in agent registry
-    if let Some(registry) = app.try_state::<AgentRegistryState>() {
-        registry.register_session(&cwd, id).await;
-    }
 
     Ok(info)
 }
@@ -173,11 +167,6 @@ pub async fn destroy_session(
 
     // Persist after destruction
     persist_current_state(&mgr).await;
-
-    // Unregister from agent registry
-    if let Some(registry) = app.try_state::<AgentRegistryState>() {
-        registry.unregister_session(uuid).await;
-    }
 
     let _ = app.emit("session_destroyed", serde_json::json!({ "id": id }));
 

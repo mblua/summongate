@@ -9,10 +9,6 @@ import type {
   DarkFactoryConfig,
   PhoneMessage,
   AgentInfo,
-  AgentEntry,
-  InboxMessage,
-  InboxEventPayload,
-  UndeliverablePayload,
 } from "./types";
 
 export interface CreateSessionOptions {
@@ -206,14 +202,6 @@ export const PhoneAPI = {
   listAgents: () => invoke<AgentInfo[]>("phone_list_agents"),
   ackMessages: (agentName: string, messageIds: string[]) =>
     invoke<void>("phone_ack_messages", { agentName, messageIds }),
-  listActiveAgents: () =>
-    invoke<AgentEntry[]>("phone_list_active_agents"),
-  refreshRegistry: () =>
-    invoke<void>("phone_refresh_registry"),
-  scanInboxes: () =>
-    invoke<InboxMessage[]>("phone_scan_inboxes"),
-  ackInboxMessage: (sessionId: string, msgId: string) =>
-    invoke<void>("phone_ack_inbox_message", { sessionId, msgId }),
 };
 
 // Guide window
@@ -227,22 +215,5 @@ export function onTelegramIncoming(
   return listen<{ sessionId: string; text: string; from: string }>(
     "telegram_incoming",
     (e) => callback(e.payload)
-  );
-}
-
-// Agent mailbox events
-export function onAgentInboxMessage(
-  callback: (data: InboxEventPayload) => void
-): Promise<UnlistenFn> {
-  return listen<InboxEventPayload>("agent_inbox_message", (e) =>
-    callback(e.payload)
-  );
-}
-
-export function onAgentMessageUndeliverable(
-  callback: (data: UndeliverablePayload) => void
-): Promise<UnlistenFn> {
-  return listen<UndeliverablePayload>("agent_message_undeliverable", (e) =>
-    callback(e.payload)
   );
 }

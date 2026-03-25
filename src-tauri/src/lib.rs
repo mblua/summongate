@@ -12,8 +12,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use config::sessions_persistence;
 use tauri::Manager;
 use config::settings::SettingsState;
-use phone::agent_registry::AgentRegistry;
-use phone::mailbox::MailboxPoller;
 use pty::git_watcher::GitWatcher;
 use pty::idle_detector::IdleDetector;
 use pty::manager::PtyManager;
@@ -57,20 +55,14 @@ pub fn run() {
     let tg_mgr: TelegramBridgeState =
         Arc::new(tokio::sync::Mutex::new(TelegramBridgeManager::new(output_senders)));
 
-    let loaded_settings = config::settings::load_settings();
-    let settings: SettingsState = Arc::new(tokio::sync::RwLock::new(loaded_settings.clone()));
+    let settings: SettingsState = Arc::new(tokio::sync::RwLock::new(config::settings::load_settings()));
     let detached_sessions: DetachedSessionsState = Arc::new(Mutex::new(HashSet::new()));
-
-    // Agent registry: build from settings, scans repo_paths for known agents
-    let agent_registry = AgentRegistry::build_from_settings(&loaded_settings);
-    let mailbox_poller = MailboxPoller::new(Arc::clone(&agent_registry));
 
     tauri::Builder::default()
         .manage(session_mgr)
         .manage(tg_mgr)
         .manage(settings)
         .manage(detached_sessions.clone())
-        .manage(agent_registry)
         .setup(move |app| {
             use tauri::WebviewWindowBuilder;
             use tauri::WebviewUrl;
@@ -89,9 +81,6 @@ pub fn run() {
                 git_watcher,
             )));
             app.manage(pty_mgr);
-
-            // Mailbox poller: routes outbox messages between agents every 3s
-            mailbox_poller.start(app.handle().clone());
 
             let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
                 .expect("Failed to load app icon");
@@ -259,10 +248,6 @@ pub fn run() {
             commands::phone::phone_get_inbox,
             commands::phone::phone_list_agents,
             commands::phone::phone_ack_messages,
-            commands::phone::phone_list_active_agents,
-            commands::phone::phone_refresh_registry,
-            commands::phone::phone_scan_inboxes,
-            commands::phone::phone_ack_inbox_message,
             commands::voice::voice_transcribe,
             commands::config::save_debug_logs,
         ])
