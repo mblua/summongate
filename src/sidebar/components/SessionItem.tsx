@@ -1,4 +1,5 @@
 import { Component, createSignal, Show, For } from "solid-js";
+import { Portal } from "solid-js/web";
 import type { Session, SessionStatus, TelegramBotConfig, RepoMatch } from "../../shared/types";
 import { SessionAPI, TelegramAPI, SettingsAPI, WindowAPI } from "../../shared/ipc";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -284,10 +285,12 @@ const SessionItem: Component<{
         </button>
       </Show>
       {showAgentModal() && (
-        <OpenAgentModal
-          initialRepo={repoForModal()}
-          onClose={() => setShowAgentModal(false)}
-        />
+        <Portal>
+          <OpenAgentModal
+            initialRepo={repoForModal()}
+            onClose={() => setShowAgentModal(false)}
+          />
+        </Portal>
       )}
     </div>
   );
