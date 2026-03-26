@@ -1,6 +1,6 @@
 # PLAN: Direct Messaging + --root Flag + Master Token
 
-## Status: IN PROGRESS (branch: fix/mailbox-delivery-to-shipper)
+## Status: COMPLETE (branch: fix/mailbox-delivery-to-shipper)
 
 ## What's Already Done (committed + pushed)
 
