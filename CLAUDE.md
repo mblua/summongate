@@ -30,6 +30,33 @@ You have a passive responsibility to evaluate your own role definition as you wo
 
 ---
 
+## Runtime Context — AgentsCommander Session
+
+You always run inside an AgentsCommander PTY session, even if no init prompt is visible. This gives you access to the inter-agent messaging system.
+
+### Sending messages to other agents
+
+```bash
+agentscommander.exe send --token <TOKEN> --root "<CWD>" --to "<agent_name>" --message "..." --mode wake
+```
+
+- `--token`: your session token (provided in the Session Init block injected into your console)
+- `--root`: your working directory
+- `--to`: target agent name (e.g. `"Shipper"`)
+- `--mode wake`: fire-and-forget, do NOT use `--get-output` (blocks interactive sessions)
+
+### Listing available peers
+
+```bash
+agentscommander.exe list-peers --token <TOKEN> --root "<CWD>"
+```
+
+### Token auto-refresh
+
+If your token is stale or invalid, the first failed `send` will trigger an automatic token refresh — the system injects a fresh token into your console via a `# === Token Refresh ===` block. After receiving it, retry the failed operation with the new token.
+
+---
+
 ## Project Overview
 
 **agentscommander** is a standalone Windows desktop app — an external terminal session manager with decoupled tabs. Two synchronized windows:
