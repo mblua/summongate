@@ -295,8 +295,7 @@ impl MailboxPoller {
                 );
                 // Only deliver if session is active/running and NOT waiting for input
                 if !s.waiting_for_input && matches!(s.status, SessionStatus::Active | SessionStatus::Running) {
-                    let enter = Self::needs_explicit_enter(&s.shell);
-                    return self.inject_into_pty(app, session_id, msg, true, enter).await;
+                    return self.inject_into_pty(app, session_id, msg, true).await;
                 }
                 log::info!("[mailbox] active-only: conditions not met, falling back to queue");
             }
@@ -319,8 +318,7 @@ impl MailboxPoller {
                     session_id, s.status, s.waiting_for_input
                 );
                 if s.waiting_for_input {
-                    let enter = Self::needs_explicit_enter(&s.shell);
-                    return self.inject_into_pty(app, session_id, msg, true, enter).await;
+                    return self.inject_into_pty(app, session_id, msg, true).await;
                 }
                 log::info!("[mailbox] wake: session not idle, falling back to queue");
             } else {
@@ -343,8 +341,7 @@ impl MailboxPoller {
             if let Some(s) = session {
                 if s.waiting_for_input {
                     // Existing session is interactive — no response markers
-                    let enter = Self::needs_explicit_enter(&s.shell);
-                    return self.inject_into_pty(app, session_id, msg, true, enter).await;
+                    return self.inject_into_pty(app, session_id, msg, true).await;
                 }
             }
             // Session exists but is busy — queue instead
@@ -356,7 +353,6 @@ impl MailboxPoller {
         let agent_command = self.resolve_agent_command(app, msg).await;
 
         if let Some((shell, shell_args)) = agent_command {
-            let enter = Self::needs_explicit_enter(&shell);
             let dest_path = self.resolve_repo_path(&msg.to, app).await;
             let cwd = dest_path.unwrap_or_else(|| msg.to.clone());
 
@@ -383,7 +379,7 @@ impl MailboxPoller {
                     tokio::time::sleep(std::time::Duration::from_secs(6)).await;
 
                     // Inject the message — non-interactive one-shot, use markers if get_output
-                    self.inject_into_pty(app, session_id, msg, false, enter).await?;
+                    self.inject_into_pty(app, session_id, msg, false).await?;
 
                     // Schedule cleanup: wait for idle then destroy session
                     let app_clone = app.clone();
@@ -452,25 +448,17 @@ impl MailboxPoller {
         }
     }
 
-    /// Returns true if the given shell command requires an explicit Enter (\n) to submit input.
-    /// Codex waits for Enter; Claude auto-detects idle input.
-    fn needs_explicit_enter(shell_command: &str) -> bool {
-        shell_command.trim_start().starts_with("codex")
-    }
-
     /// Inject a message into a session's PTY stdin.
     /// `interactive` = true means the session is a live interactive agent (wake/active-only).
     ///   → plain message only, no response markers, no watcher.
     /// `interactive` = false means it's a non-interactive one-shot (wake-and-sleep).
     ///   → if get_output, include response marker instructions and register watcher.
-    /// `explicit_enter` = true appends \n after the payload to auto-submit (needed for Codex).
     async fn inject_into_pty(
         &self,
         app: &tauri::AppHandle,
         session_id: Uuid,
         msg: &OutboxMessage,
         interactive: bool,
-        explicit_enter: bool,
     ) -> Result<(), String> {
         let pty_mgr = app.state::<Arc<Mutex<PtyManager>>>();
 
@@ -516,23 +504,9 @@ impl MailboxPoller {
             }
         }
 
-        {
-            let mgr = pty_mgr.lock().map_err(|e| format!("PTY lock failed: {}", e))?;
-            mgr.write(session_id, payload.as_bytes())
-                .map_err(|e| format!("PTY write failed: {}", e))?;
-        }
+        crate::pty::inject::inject_text_into_session(app, session_id, &payload, true).await?;
 
-        // For agents that need explicit Enter (e.g. Codex), send \r after a short delay
-        // — mirrors the voice auto-execute pattern: write text, wait, then send Enter.
-        // Codex needs time to process the pasted text before receiving the Enter keystroke.
-        if explicit_enter {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let mgr = pty_mgr.lock().map_err(|e| format!("PTY lock failed: {}", e))?;
-            mgr.write(session_id, b"\r")
-                .map_err(|e| format!("PTY Enter write failed: {}", e))?;
-        }
-
-        log::info!("Injected message {} into session {} PTY (explicit_enter={})", msg.id, session_id, explicit_enter);
+        log::info!("Injected message {} into session {} PTY", msg.id, session_id);
         let _ = tauri::Emitter::emit(
             app,
             "message_delivered",
@@ -778,12 +752,9 @@ impl MailboxPoller {
             // SessionManager read-lock dropped here
         };
 
-        let pty_mgr = app.state::<Arc<Mutex<PtyManager>>>();
-        let result = pty_mgr.lock().map(|mgr| mgr.write(session_id, notice.as_bytes()));
-        match result {
-            Ok(Ok(())) => log::info!("[mailbox] Fresh token injected into session {}", session_id),
-            Ok(Err(e)) => log::warn!("[mailbox] Failed to inject fresh token into session {}: {}", session_id, e),
-            Err(_) => log::warn!("[mailbox] PtyManager lock poisoned while injecting token for {}", session_id),
+        match crate::pty::inject::inject_text_into_session(app, session_id, &notice, false).await {
+            Ok(()) => log::info!("[mailbox] Fresh token injected into session {}", session_id),
+            Err(e) => log::warn!("[mailbox] Failed to inject fresh token into session {}: {}", session_id, e),
         }
     }
 }

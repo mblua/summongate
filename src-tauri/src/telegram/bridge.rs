@@ -654,7 +654,7 @@ async fn poll_task(
     chat_id: i64,
     session_id: Uuid,
     session_id_str: String,
-    pty_mgr: Arc<Mutex<PtyManager>>,
+    _pty_mgr: Arc<Mutex<PtyManager>>,
     cancel: CancellationToken,
     app: tauri::AppHandle,
 ) {
@@ -704,12 +704,9 @@ async fn poll_task(
 
                             logger.log("RECV_TG", &session_id_str, &format!("from={} text={}", update.from_name, update.text));
 
-                            let input = format!("{}\r", update.text);
-                            if let Ok(mgr) = pty_mgr.lock() {
-                                if let Err(e) = mgr.write(session_id, input.as_bytes()) {
-                                    logger.log("PTY_ERR", &session_id_str, &e.to_string());
-                                    log::error!("Failed to write Telegram input to PTY: {}", e);
-                                }
+                            if let Err(e) = crate::pty::inject::inject_text_into_session(&app, session_id, &update.text, true).await {
+                                logger.log("PTY_ERR", &session_id_str, &e.to_string());
+                                log::error!("Failed to write Telegram input to PTY: {}", e);
                             }
 
                             let _ = app.emit(

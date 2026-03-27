@@ -142,6 +142,10 @@ impl SessionManager {
         *self.active_session.read().await
     }
 
+    pub async fn get_shell(&self, id: Uuid) -> Option<String> {
+        self.sessions.read().await.get(&id).map(|s| s.shell.clone())
+    }
+
     pub async fn mark_exited(&self, id: Uuid, code: i32) {
         let mut sessions = self.sessions.write().await;
         if let Some(s) = sessions.get_mut(&id) {

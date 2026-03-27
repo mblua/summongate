@@ -67,7 +67,7 @@ pub async fn create_session_inner(
         .any(|s| shell_lower == *s || shell_lower.ends_with(&format!("/{}", s)) || shell_lower.ends_with(&format!("\\{}", s)));
 
     let cwd_for_init = cwd.clone();
-    let pty_mgr_clone = Arc::clone(pty_mgr);
+    let app_clone = app.clone();
     if is_interactive_shell {
         log::debug!("Skipping init prompt for interactive shell '{}'", shell);
     }
@@ -104,10 +104,8 @@ pub async fn create_session_inner(
             root = cwd_for_init,
         );
 
-        if let Ok(mgr) = pty_mgr_clone.lock() {
-            if let Err(e) = mgr.write(id, init_prompt.as_bytes()) {
-                log::warn!("Failed to inject init prompt for session {}: {}", id, e);
-            }
+        if let Err(e) = crate::pty::inject::inject_text_into_session(&app_clone, id, &init_prompt, true).await {
+            log::warn!("Failed to inject init prompt for session {}: {}", id, e);
         }
     });
 
