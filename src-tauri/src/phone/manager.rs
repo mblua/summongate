@@ -8,9 +8,9 @@ fn conversations_dir() -> Option<PathBuf> {
     crate::config::config_dir().map(|d| d.join("conversations"))
 }
 
-/// Check if two agents can communicate based on team routing rules
-/// Check if two agents can communicate. Only agents in the same team can talk.
-/// Within a team with a coordinator, only the coordinator can talk to members and vice versa.
+/// Check if two agents can communicate based on team routing rules.
+/// Intra-team: agents in the same team can talk (with coordinator gating).
+/// Cross-team: coordinators linked via CoordinatorLink can talk.
 pub fn can_communicate(from: &str, to: &str, config: &DarkFactoryConfig) -> bool {
     // Find all teams where both are members
     let shared_teams: Vec<&Team> = config
@@ -23,21 +23,38 @@ pub fn can_communicate(from: &str, to: &str, config: &DarkFactoryConfig) -> bool
         })
         .collect();
 
-    // Must share at least one team — no cross-team communication
-    if shared_teams.is_empty() {
-        return false;
+    // Intra-team check
+    if !shared_teams.is_empty() {
+        for team in &shared_teams {
+            match &team.coordinator_name {
+                None => return true,
+                Some(coord) => {
+                    if coord == from || coord == to {
+                        return true;
+                    }
+                }
+            }
+        }
     }
 
-    // If any shared team allows it
-    for team in &shared_teams {
-        match &team.coordinator_name {
-            None => return true, // No coordinator = free communication within team
-            Some(coord) => {
-                // Allow if either party is the coordinator
-                if coord == from || coord == to {
-                    return true;
-                }
-                // Otherwise blocked in this team, check others
+    // Cross-team coordinator links check
+    for link in &config.coordinator_links {
+        let sup_team = config.teams.iter().find(|t| t.id == link.supervisor_team_id);
+        let sub_team = config.teams.iter().find(|t| t.id == link.subordinate_team_id);
+        if let (Some(sup), Some(sub)) = (sup_team, sub_team) {
+            let from_is_sup_coord = sup.coordinator_name.as_deref() == Some(from)
+                && sup.members.iter().any(|m| m.name == from);
+            let from_is_sub_coord = sub.coordinator_name.as_deref() == Some(from)
+                && sub.members.iter().any(|m| m.name == from);
+            let to_is_sup_coord = sup.coordinator_name.as_deref() == Some(to)
+                && sup.members.iter().any(|m| m.name == to);
+            let to_is_sub_coord = sub.coordinator_name.as_deref() == Some(to)
+                && sub.members.iter().any(|m| m.name == to);
+            // Bidirectional: supervisor coord <-> subordinate coord
+            if (from_is_sup_coord && to_is_sub_coord)
+                || (from_is_sub_coord && to_is_sup_coord)
+            {
+                return true;
             }
         }
     }
@@ -128,7 +145,7 @@ pub fn send_message(
     // Validate routing
     if !can_communicate(from, to, config) {
         return Err(format!(
-            "Agent '{}' cannot communicate with '{}' — not in the same team or must go through coordinator",
+            "Agent '{}' cannot communicate with '{}' — no shared team, no coordinator link, or must go through coordinator",
             from, to
         ));
     }

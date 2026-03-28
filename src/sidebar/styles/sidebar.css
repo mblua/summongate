@@ -1443,6 +1443,57 @@ html, body, #root {
   color: var(--status-exited);
 }
 
+.df-layer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.03);
+  margin-bottom: 4px;
+}
+
+.df-layer-index {
+  font-size: 11px;
+  color: var(--sidebar-fg-dim);
+  min-width: 18px;
+  text-align: center;
+}
+
+.df-layer-name {
+  flex: 1;
+  font-size: 13px;
+}
+
+.df-layer-edit-input {
+  flex: 1;
+}
+
+.df-layer-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.df-layer-btn {
+  background: none;
+  border: none;
+  color: var(--sidebar-fg-dim);
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 13px;
+  border-radius: 3px;
+}
+
+.df-layer-btn:hover:not(:disabled) {
+  color: var(--sidebar-fg);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.df-layer-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
 /* Empty state */
 .empty-state {
   display: flex;

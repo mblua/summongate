@@ -135,15 +135,28 @@ export interface TeamMember {
   path: string;
 }
 
+export interface DarkFactoryLayer {
+  id: string;
+  name: string;
+}
+
+export interface CoordinatorLink {
+  supervisorTeamId: string;
+  subordinateTeamId: string;
+}
+
 export interface Team {
   id: string;
   name: string;
   members: TeamMember[];
   coordinatorName?: string;
+  layerId?: string;
 }
 
 export interface DarkFactoryConfig {
   teams: Team[];
+  layers: DarkFactoryLayer[];
+  coordinatorLinks: CoordinatorLink[];
 }
 
 // Sidebar store state

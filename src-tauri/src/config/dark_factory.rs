@@ -11,22 +11,42 @@ pub struct TeamMember {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DarkFactoryLayer {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoordinatorLink {
+    pub supervisor_team_id: String,
+    pub subordinate_team_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Team {
     pub id: String,
     pub name: String,
     pub members: Vec<TeamMember>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coordinator_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DarkFactoryConfig {
     pub teams: Vec<Team>,
+    #[serde(default)]
+    pub layers: Vec<DarkFactoryLayer>,
+    #[serde(default)]
+    pub coordinator_links: Vec<CoordinatorLink>,
 }
 
 /// Per-agent config written to <agent-path>/.agentscommander/config.json
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentLocalConfig {
     pub teams: Vec<String>,
@@ -36,6 +56,10 @@ pub struct AgentLocalConfig {
     /// Used as fallback for --agent auto in wake-and-sleep.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_coding_agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supervises: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reports_to: Vec<String>,
 }
 
 /// Update lastCodingAgent in a repo's .agentscommander/config.json.
@@ -51,17 +75,9 @@ pub fn set_last_coding_agent(repo_path: &str, agent_id: &str) -> Result<(), Stri
     let mut config: AgentLocalConfig = if config_path.exists() {
         let content = std::fs::read_to_string(&config_path)
             .map_err(|e| format!("Failed to read config: {}", e))?;
-        serde_json::from_str(&content).unwrap_or(AgentLocalConfig {
-            teams: vec![],
-            is_coordinator_of: vec![],
-            last_coding_agent: None,
-        })
+        serde_json::from_str(&content).unwrap_or_default()
     } else {
-        AgentLocalConfig {
-            teams: vec![],
-            is_coordinator_of: vec![],
-            last_coding_agent: None,
-        }
+        AgentLocalConfig::default()
     };
 
     config.last_coding_agent = Some(agent_id.to_string());
@@ -119,13 +135,30 @@ pub fn load_dark_factory() -> DarkFactoryConfig {
 
 /// Save teams config to ~/.agentscommander/teams.json
 pub fn save_dark_factory(config: &DarkFactoryConfig) -> Result<(), String> {
+    // Validate coordinator_name membership
+    let mut config = config.clone();
+    for team in &mut config.teams {
+        if let Some(ref coord) = team.coordinator_name {
+            if !team.members.iter().any(|m| &m.name == coord) {
+                log::warn!(
+                    "coordinator_name '{}' is not a member of team '{}', clearing",
+                    coord, team.name
+                );
+                team.coordinator_name = None;
+            }
+        }
+    }
+
+    // Validate no cycles in coordinator_links
+    validate_no_cycles(&config)?;
+
     let dir = dark_factory_dir().ok_or("Could not determine home directory")?;
     let path = dir.join("teams.json");
 
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("Failed to create .agentscommander directory: {}", e))?;
 
-    let json = serde_json::to_string_pretty(config)
+    let json = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize dark factory config: {}", e))?;
 
     std::fs::write(&path, json)
@@ -135,25 +168,108 @@ pub fn save_dark_factory(config: &DarkFactoryConfig) -> Result<(), String> {
     Ok(())
 }
 
-/// Sync per-agent .agentscommander/config.json for all members across all teams
-pub fn sync_agent_configs(config: &DarkFactoryConfig) -> Result<(), String> {
-    // Build a map: agent_path -> (teams, coordinator_of)
-    let mut agent_map: HashMap<String, (Vec<String>, Vec<String>)> = HashMap::new();
+/// Check that coordinator_links form a DAG (no cycles)
+fn validate_no_cycles(config: &DarkFactoryConfig) -> Result<(), String> {
+    use std::collections::{HashSet, VecDeque};
 
-    for team in &config.teams {
-        for member in &team.members {
-            let entry = agent_map
-                .entry(member.path.clone())
-                .or_insert_with(|| (Vec::new(), Vec::new()));
-            entry.0.push(team.name.clone());
+    // Build adjacency: supervisor -> [subordinates]
+    let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+    for link in &config.coordinator_links {
+        adj.entry(link.supervisor_team_id.clone())
+            .or_default()
+            .push(link.subordinate_team_id.clone());
+    }
 
-            if team.coordinator_name.as_deref() == Some(&member.name) {
-                entry.1.push(team.name.clone());
+    // BFS from each node to detect cycles
+    for start in adj.keys() {
+        let mut visited: HashSet<String> = HashSet::new();
+        let mut queue: VecDeque<String> = VecDeque::new();
+        for next in adj.get(start).unwrap_or(&vec![]) {
+            queue.push_back(next.clone());
+        }
+        while let Some(node) = queue.pop_front() {
+            if &node == start {
+                let team_name = config.teams.iter()
+                    .find(|t| t.id == *start)
+                    .map(|t| t.name.as_str())
+                    .unwrap_or(&start);
+                return Err(format!(
+                    "Cycle detected in coordinator links involving team '{}'",
+                    team_name
+                ));
+            }
+            if visited.insert(node.clone()) {
+                for next in adj.get(&node).unwrap_or(&vec![]) {
+                    queue.push_back(next.clone());
+                }
             }
         }
     }
 
-    for (agent_path, (teams, coordinator_of)) in &agent_map {
+    Ok(())
+}
+
+/// Intermediate struct for building per-agent config
+#[derive(Default)]
+struct AgentSyncData {
+    teams: Vec<String>,
+    coordinator_of: Vec<String>,
+    supervises: Vec<String>,
+    reports_to: Vec<String>,
+}
+
+/// Sync per-agent .agentscommander/config.json for all members across all teams
+pub fn sync_agent_configs(config: &DarkFactoryConfig) -> Result<(), String> {
+    let mut agent_map: HashMap<String, AgentSyncData> = HashMap::new();
+
+    // First pass: teams and coordinator_of
+    for team in &config.teams {
+        for member in &team.members {
+            let entry = agent_map.entry(member.path.clone()).or_default();
+            entry.teams.push(team.name.clone());
+
+            if team.coordinator_name.as_deref() == Some(&member.name) {
+                entry.coordinator_of.push(team.name.clone());
+            }
+        }
+    }
+
+    // Second pass: coordinator links → supervises / reports_to
+    for link in &config.coordinator_links {
+        let sup_team = config.teams.iter().find(|t| t.id == link.supervisor_team_id);
+        let sub_team = config.teams.iter().find(|t| t.id == link.subordinate_team_id);
+
+        let (sup, sub) = match (sup_team, sub_team) {
+            (Some(s), Some(t)) => (s, t),
+            _ => continue,
+        };
+        let sup_coord = match &sup.coordinator_name {
+            Some(name) if sup.members.iter().any(|m| &m.name == name) => name,
+            _ => continue,
+        };
+        let sub_coord = match &sub.coordinator_name {
+            Some(name) if sub.members.iter().any(|m| &m.name == name) => name,
+            _ => {
+                log::warn!("CoordinatorLink skip: team '{}' has no valid coordinator", sub.name);
+                continue;
+            }
+        };
+
+        let sup_path = sup.members.iter().find(|m| &m.name == sup_coord).map(|m| &m.path);
+        let sub_path = sub.members.iter().find(|m| &m.name == sub_coord).map(|m| &m.path);
+
+        if let Some(path) = sup_path {
+            agent_map.entry(path.clone()).or_default()
+                .supervises.push(sub.name.clone());
+        }
+        if let Some(path) = sub_path {
+            agent_map.entry(path.clone()).or_default()
+                .reports_to.push(sup.name.clone());
+        }
+    }
+
+    // Write per-agent configs
+    for (agent_path, data) in &agent_map {
         let config_dir = Path::new(agent_path).join(".agentscommander");
 
         // Preserve existing lastCodingAgent if present
@@ -165,9 +281,11 @@ pub fn sync_agent_configs(config: &DarkFactoryConfig) -> Result<(), String> {
             .and_then(|c| c.last_coding_agent);
 
         let agent_config = AgentLocalConfig {
-            teams: teams.clone(),
-            is_coordinator_of: coordinator_of.clone(),
+            teams: data.teams.clone(),
+            is_coordinator_of: data.coordinator_of.clone(),
             last_coding_agent: existing_last_agent,
+            supervises: data.supervises.clone(),
+            reports_to: data.reports_to.clone(),
         };
         if let Err(e) = std::fs::create_dir_all(&config_dir) {
             log::warn!(
