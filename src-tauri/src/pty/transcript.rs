@@ -319,8 +319,8 @@ fn is_tui_chrome(line: &str) -> bool {
         return true;
     }
 
-    // Lines that START with box chars (╭───, ╰───, │) — TUI frame boundaries
-    if trimmed.starts_with('╭') || trimmed.starts_with('╰') {
+    // Lines that START with box chars (╭───, ╰───, │) — TUI frame boundaries/content
+    if trimmed.starts_with('╭') || trimmed.starts_with('╰') || trimmed.starts_with('│') {
         return true;
     }
 
@@ -354,6 +354,22 @@ fn is_tui_chrome(line: &str) -> bool {
         return true;
     }
     if trimmed.starts_with("Claude in Chrome") {
+        return true;
+    }
+
+    // Prompt line (❯) — often has huge inline content from terminal repaints
+    if trimmed.starts_with('❯') {
+        return true;
+    }
+
+    // Short fragments (≤5 chars) — broken spinner animation frames from chunked PTY reads
+    // Real agent content is always longer than this
+    if trimmed.chars().count() <= 5 {
+        return true;
+    }
+
+    // "[Pasted text #N +M lines]" paste indicator
+    if trimmed.starts_with("[Pasted text") || trimmed.starts_with("[Pastedtext") {
         return true;
     }
 
