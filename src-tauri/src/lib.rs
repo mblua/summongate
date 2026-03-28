@@ -236,6 +236,13 @@ pub fn run() {
             let _ = &sidebar;
             let _ = &terminal;
 
+            // Sync per-agent configs from teams.json so local config.json
+            // files stay up to date (team membership, coordinator roles).
+            let teams_config = config::dark_factory::load_dark_factory();
+            if let Err(e) = config::dark_factory::sync_agent_configs(&teams_config) {
+                log::warn!("Failed to sync agent configs on startup: {}", e);
+            }
+
             // Restore sessions from last run
             let persisted = sessions_persistence::load_sessions();
             if !persisted.is_empty() {
