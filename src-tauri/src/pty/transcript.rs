@@ -240,6 +240,10 @@ fn claude_pty_filter(speaker: &Speaker, raw_line: &str) -> Option<String> {
             if is_tui_chrome(trimmed) {
                 return None;
             }
+            // Agent echoing the init prompt paste — already captured as INJECT
+            if trimmed.starts_with('#') && (trimmed.contains("agentscommander") || trimmed.contains("Session Init") || trimmed.contains("session token") || trimmed.contains("agent root")) {
+                return None;
+            }
             Some(trimmed.to_string())
         }
         _ => Some(trimmed.to_string()),
@@ -403,6 +407,37 @@ fn is_tui_chrome(line: &str) -> bool {
 
     // "running stop hook" fragments
     if trimmed.contains("running stop hook") {
+        return true;
+    }
+
+    // Lines ending with "(thinking with high effort)" or similar parenthetical status
+    // that are just spinner fragments + status (e.g. "ti(thinking with high effort)")
+    if trimmed.ends_with(')') {
+        if let Some(paren_start) = trimmed.rfind('(') {
+            let before_paren = trimmed[..paren_start].trim();
+            let paren_content = &trimmed[paren_start..];
+            // If the parenthetical is a status indicator and the text before it is short
+            if (paren_content.contains("thinking") || paren_content.contains("running"))
+                && before_paren.chars().count() <= 20
+                && is_spinner_line(before_paren)
+            {
+                return true;
+            }
+        }
+    }
+
+    // Lines starting with "… " — truncated status fragments
+    if trimmed.starts_with("… ") || trimmed.starts_with("…") && trimmed.chars().count() < 60 {
+        return true;
+    }
+
+    // "Bash(" tool invocation display lines
+    if trimmed.starts_with("Bash(") {
+        return true;
+    }
+
+    // "skills that work in any project" and similar menu/tip text
+    if trimmed.contains("skills that") || trimmed.contains("Tip: ") {
         return true;
     }
 
