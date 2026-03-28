@@ -196,3 +196,33 @@ export interface AgentInfo {
   teams: string[];
   isCoordinatorOf: string[];
 }
+
+// Dark Factory component props
+
+export interface OrgChartProps {
+  config: DarkFactoryConfig;
+}
+
+export interface LayerColumnProps {
+  layer: DarkFactoryLayer;
+  teams: Team[];
+  hoveredTeamId: string | null;
+  onHoverTeam: (id: string | null) => void;
+  onNodeRect: (teamId: string, rect: DOMRect) => void;
+  wrapperRef: HTMLDivElement | undefined;
+}
+
+export interface TeamNodeProps {
+  team: Team;
+  highlighted: boolean;
+  onHover: (hovering: boolean) => void;
+  onNodeRect: (teamId: string, rect: DOMRect) => void;
+  wrapperRef: HTMLDivElement | undefined;
+}
+
+export interface ConnectionLinesProps {
+  links: CoordinatorLink[];
+  teams: Team[];
+  nodeRects: Map<string, DOMRect>;
+  hoveredTeamId: string | null;
+}

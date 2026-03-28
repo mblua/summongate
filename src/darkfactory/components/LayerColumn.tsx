@@ -1,15 +1,6 @@
 import { Component, For } from "solid-js";
-import type { DarkFactoryLayer, Team } from "../../shared/types";
+import type { LayerColumnProps } from "../../shared/types";
 import TeamNode from "./TeamNode";
-
-interface LayerColumnProps {
-  layer: DarkFactoryLayer;
-  teams: Team[];
-  hoveredTeamId: string | null;
-  onHoverTeam: (id: string | null) => void;
-  onNodeRect: (teamId: string, rect: DOMRect) => void;
-  wrapperRef: HTMLDivElement | undefined;
-}
 
 const LayerColumn: Component<LayerColumnProps> = (props) => {
   return (

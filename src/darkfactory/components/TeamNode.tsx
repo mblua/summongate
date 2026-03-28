@@ -1,13 +1,5 @@
 import { Component, Show, onMount, onCleanup } from "solid-js";
-import type { Team } from "../../shared/types";
-
-interface TeamNodeProps {
-  team: Team;
-  highlighted: boolean;
-  onHover: (hovering: boolean) => void;
-  onNodeRect: (teamId: string, rect: DOMRect) => void;
-  wrapperRef: HTMLDivElement | undefined;
-}
+import type { TeamNodeProps } from "../../shared/types";
 
 const TeamNode: Component<TeamNodeProps> = (props) => {
   let nodeRef: HTMLDivElement | undefined;

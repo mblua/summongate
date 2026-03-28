@@ -1,11 +1,7 @@
 import { Component, createSignal, For, onMount, onCleanup } from "solid-js";
-import type { DarkFactoryConfig } from "../../shared/types";
+import type { OrgChartProps } from "../../shared/types";
 import LayerColumn from "./LayerColumn";
 import ConnectionLines from "./ConnectionLines";
-
-interface OrgChartProps {
-  config: DarkFactoryConfig;
-}
 
 const OrgChart: Component<OrgChartProps> = (props) => {
   const [hoveredTeamId, setHoveredTeamId] = createSignal<string | null>(null);
@@ -22,10 +18,9 @@ const OrgChart: Component<OrgChartProps> = (props) => {
   };
 
   const recalculateAll = () => {
-    // Force recalculation by clearing and letting nodes re-report
+    // Clear first, then dispatch after SolidJS flushes the setter
     setNodeRects(new Map());
-    // Dispatch a custom event that TeamNodes listen for
-    wrapperRef?.dispatchEvent(new CustomEvent("df-recalc"));
+    queueMicrotask(() => wrapperRef?.dispatchEvent(new CustomEvent("df-recalc")));
   };
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;

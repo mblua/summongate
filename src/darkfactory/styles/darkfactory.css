@@ -228,7 +228,7 @@ html, body, #root {
 }
 
 .df-team-node.no-members {
-  opacity: 0.5;
+  animation: df-fade-in-dim 150ms ease-out forwards;
 }
 
 .df-team-coordinator {
@@ -300,6 +300,17 @@ html, body, #root {
   }
   to {
     opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes df-fade-in-dim {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 0.5;
     transform: translateY(0);
   }
 }

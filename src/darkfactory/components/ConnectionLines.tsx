@@ -1,12 +1,5 @@
-import { Component, For, Show } from "solid-js";
-import type { CoordinatorLink, Team } from "../../shared/types";
-
-interface ConnectionLinesProps {
-  links: CoordinatorLink[];
-  teams: Team[];
-  nodeRects: Map<string, DOMRect>;
-  hoveredTeamId: string | null;
-}
+import { Component, createMemo, For, Show } from "solid-js";
+import type { CoordinatorLink, ConnectionLinesProps } from "../../shared/types";
 
 const ConnectionLines: Component<ConnectionLinesProps> = (props) => {
   const isHighlighted = (link: CoordinatorLink) => {
@@ -36,7 +29,7 @@ const ConnectionLines: Component<ConnectionLinesProps> = (props) => {
     <svg class="df-connections">
       <For each={props.links}>
         {(link) => {
-          const path = () => getPath(link);
+          const path = createMemo(() => getPath(link));
           return (
             <Show when={path()}>
               <path
