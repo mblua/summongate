@@ -1,13 +1,19 @@
 import { Component, Show } from "solid-js";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { terminalStore } from "../stores/terminal";
 import iconUrl from "../../assets/icon-16.png";
+import { isTauri } from "../../shared/platform";
 declare const __APP_VERSION__: string;
 const APP_VERSION = __APP_VERSION__;
 
 const Titlebar: Component<{ detached?: boolean }> = (props) => {
-  const handleMinimize = () => getCurrentWindow().minimize();
+  const handleMinimize = async () => {
+    if (!isTauri) return;
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    getCurrentWindow().minimize();
+  };
   const handleMaximize = async () => {
+    if (!isTauri) return;
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
     const win = getCurrentWindow();
     if (await win.isMaximized()) {
       win.unmaximize();
@@ -15,7 +21,11 @@ const Titlebar: Component<{ detached?: boolean }> = (props) => {
       win.maximize();
     }
   };
-  const handleClose = () => getCurrentWindow().close();
+  const handleClose = async () => {
+    if (!isTauri) return;
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    getCurrentWindow().close();
+  };
 
   return (
     <div class="titlebar" data-tauri-drag-region>
@@ -45,21 +55,23 @@ const Titlebar: Component<{ detached?: boolean }> = (props) => {
           </Show>
         </Show>
       </div>
-      <div class="titlebar-controls">
-        <button class="titlebar-btn" onClick={handleMinimize} title="Minimize">
-          &#x2014;
-        </button>
-        <button class="titlebar-btn" onClick={handleMaximize} title="Maximize">
-          &#x25A1;
-        </button>
-        <button
-          class="titlebar-btn titlebar-btn-close"
-          onClick={handleClose}
-          title="Close"
-        >
-          &#x2715;
-        </button>
-      </div>
+      <Show when={isTauri}>
+        <div class="titlebar-controls">
+          <button class="titlebar-btn" onClick={handleMinimize} title="Minimize">
+            &#x2014;
+          </button>
+          <button class="titlebar-btn" onClick={handleMaximize} title="Maximize">
+            &#x25A1;
+          </button>
+          <button
+            class="titlebar-btn titlebar-btn-close"
+            onClick={handleClose}
+            title="Close"
+          >
+            &#x2715;
+          </button>
+        </div>
+      </Show>
     </div>
   );
 };

@@ -7,6 +7,7 @@ pub mod pty;
 pub mod session;
 pub mod telegram;
 pub mod voice;
+pub mod web;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -20,6 +21,8 @@ use pty::manager::PtyManager;
 use session::manager::SessionManager;
 use telegram::manager::{OutputSenderMap, TelegramBridgeManager, TelegramBridgeState};
 use voice::tracker::{VoiceTracker, VoiceTrackingState};
+use web::auth::WebAccessToken;
+use web::broadcast::WsBroadcaster;
 
 /// Returns just the exe filename when running from an installed location (in PATH),
 /// or the full path when running in dev mode (target/debug or target/release).
@@ -112,10 +115,23 @@ pub fn run() {
     std::fs::create_dir_all(&app_outbox_path).expect("Failed to create app outbox directory");
     let app_outbox = AppOutbox::new(app_outbox_path.to_string_lossy().to_string());
 
+    // Generate web access token — separate from master token for limited blast radius
+    let web_access_token = Arc::new(WebAccessToken::new(uuid::Uuid::new_v4().to_string()));
+
     println!("[master-token] {}", master_token.value());
+    println!("[web-token] {}", web_access_token.value());
     println!("[app-outbox] {}", app_outbox.path());
     log::info!("[master-token] Generated (see stdout)");
+    log::info!("[web-token] Generated (see stdout)");
     log::info!("[app-outbox] {} (see stdout)", app_outbox.path());
+
+    // Write web token to a file so external tools can read it
+    if let Some(token_path) = config::config_dir().map(|d| d.join("web-token.txt")) {
+        let _ = std::fs::write(&token_path, web_access_token.value());
+    }
+
+    // Create WS broadcaster (shared between Tauri commands and web server)
+    let broadcaster = WsBroadcaster::new();
 
     let session_mgr = Arc::new(tokio::sync::RwLock::new(SessionManager::new()));
 
@@ -155,13 +171,18 @@ pub fn run() {
     idle_detector.start();
 
     let session_mgr_for_git = Arc::clone(&session_mgr);
+    let session_mgr_for_web = Arc::clone(&session_mgr);
     let output_senders_for_pty = output_senders.clone();
     let idle_detector_for_pty = Arc::clone(&idle_detector);
+    let broadcaster_for_pty = broadcaster.clone();
+    let broadcaster_for_web = broadcaster.clone();
+    let web_token_for_server = Arc::clone(&web_access_token);
 
     let tg_mgr: TelegramBridgeState =
         Arc::new(tokio::sync::Mutex::new(TelegramBridgeManager::new(output_senders)));
 
     let settings: SettingsState = Arc::new(tokio::sync::RwLock::new(config::settings::load_settings()));
+    let settings_for_web = Arc::clone(&settings);
     let detached_sessions: DetachedSessionsState = Arc::new(Mutex::new(HashSet::new()));
     let voice_tracking: VoiceTrackingState = Arc::new(Mutex::new(VoiceTracker::new()));
 
@@ -189,8 +210,30 @@ pub fn run() {
                 output_senders_for_pty,
                 idle_detector_for_pty,
                 git_watcher,
+                Some(broadcaster_for_pty),
             )));
-            app.manage(pty_mgr);
+            app.manage(pty_mgr.clone());
+
+            // Start web server if enabled in settings
+            {
+                let web_settings = config::settings::load_settings();
+                if web_settings.web_server_enabled {
+                    let bind = web_settings.web_server_bind.clone();
+                    let port = web_settings.web_server_port;
+                    println!("[web-token] Remote URL: http://{}:{}/?window=sidebar&remoteToken={}", bind, port, web_access_token.value());
+
+                    web::start_server(
+                        bind,
+                        port,
+                        web_token_for_server,
+                        session_mgr_for_web,
+                        pty_mgr.clone(),
+                        settings_for_web,
+                        broadcaster_for_web,
+                        app.handle().clone(),
+                    );
+                }
+            }
 
             // Start the mailbox poller for inter-agent message delivery
             let mailbox_poller = phone::mailbox::MailboxPoller::new();

@@ -1,12 +1,16 @@
-import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
+import { isTauri } from "./platform";
 
 const SIDEBAR_WIDTH_RATIO = 0.3;
 
 export type LayoutSide = "left" | "right";
 
 export async function applyWindowLayout(side: LayoutSide): Promise<void> {
+  if (!isTauri) return; // No window layout in browser mode
+
+  const { getCurrentWindow, currentMonitor } = await import("@tauri-apps/api/window");
+  const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+  const { LogicalPosition, LogicalSize } = await import("@tauri-apps/api/dpi");
+
   const sidebarWin = getCurrentWindow();
   const monitor = await currentMonitor();
   if (!monitor) return;

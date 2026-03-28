@@ -1,6 +1,6 @@
-import { Component, createSignal, onMount, onCleanup } from "solid-js";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { Component, createSignal, onMount, onCleanup, Show } from "solid-js";
 import { initZoom } from "../shared/zoom";
+import { isTauri } from "../shared/platform";
 import HintsTab from "./components/HintsTab";
 import TutorialTab from "./components/TutorialTab";
 import iconUrl from "../assets/icon-16.png";
@@ -14,12 +14,19 @@ const tabs: { id: Tab; label: string }[] = [
 ];
 
 const GuideApp: Component = () => {
-  const appWindow = getCurrentWindow();
   const [activeTab, setActiveTab] = createSignal<Tab>("hints");
   let cleanupZoom: (() => void) | null = null;
 
-  const handleMinimize = () => appWindow.minimize();
-  const handleClose = () => appWindow.close();
+  const handleMinimize = async () => {
+    if (!isTauri) return;
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    getCurrentWindow().minimize();
+  };
+  const handleClose = async () => {
+    if (!isTauri) return;
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    getCurrentWindow().close();
+  };
 
   onMount(async () => {
     cleanupZoom = await initZoom("guide");
@@ -36,14 +43,16 @@ const GuideApp: Component = () => {
           <img src={iconUrl} class="titlebar-icon" alt="" draggable={false} />
           <span class="titlebar-title" data-tauri-drag-region>guide</span>
         </div>
-        <div class="titlebar-controls">
-          <button class="titlebar-btn" onClick={handleMinimize} title="Minimize">
-            &#x2014;
-          </button>
-          <button class="titlebar-btn titlebar-btn-close" onClick={handleClose} title="Close">
-            &#x2715;
-          </button>
-        </div>
+        <Show when={isTauri}>
+          <div class="titlebar-controls">
+            <button class="titlebar-btn" onClick={handleMinimize} title="Minimize">
+              &#x2014;
+            </button>
+            <button class="titlebar-btn titlebar-btn-close" onClick={handleClose} title="Close">
+              &#x2715;
+            </button>
+          </div>
+        </Show>
       </div>
 
       <div class="guide-tabs">

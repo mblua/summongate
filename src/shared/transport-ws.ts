@@ -1,0 +1,221 @@
+import type { Transport, UnlistenFn } from "./transport";
+
+interface PendingRequest {
+  resolve: (value: unknown) => void;
+  reject: (reason: string) => void;
+}
+
+/// Transport implementation using WebSocket.
+/// Connects to the embedded axum server for remote browser access.
+export class WsTransport implements Transport {
+  private ws: WebSocket | null = null;
+  private nextId = 1;
+  private pending = new Map<number, PendingRequest>();
+  private listeners = new Map<string, Set<(payload: unknown) => void>>();
+  private reconnectDelay = 1000;
+  private maxReconnectDelay = 10000;
+  private connected = false;
+  private url: string;
+
+  constructor() {
+    const token =
+      sessionStorage.getItem("remoteToken") || "";
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    this.url = `${proto}//${location.host}/ws?token=${token}`;
+    this.connect();
+  }
+
+  private connect() {
+    try {
+      this.ws = new WebSocket(this.url);
+      this.ws.binaryType = "arraybuffer";
+
+      this.ws.onopen = () => {
+        this.connected = true;
+        this.reconnectDelay = 1000;
+        console.log("[ws-transport] Connected");
+      };
+
+      this.ws.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+          this.handleBinary(new Uint8Array(event.data));
+        } else {
+          this.handleText(event.data as string);
+        }
+      };
+
+      this.ws.onclose = () => {
+        this.connected = false;
+        this.rejectAllPending("WebSocket closed");
+        this.scheduleReconnect();
+      };
+
+      this.ws.onerror = () => {
+        // onclose will fire after this
+      };
+    } catch {
+      this.scheduleReconnect();
+    }
+  }
+
+  private scheduleReconnect() {
+    setTimeout(() => {
+      console.log(
+        `[ws-transport] Reconnecting in ${this.reconnectDelay}ms...`
+      );
+      this.connect();
+      this.reconnectDelay = Math.min(
+        this.reconnectDelay * 2,
+        this.maxReconnectDelay
+      );
+    }, this.reconnectDelay);
+  }
+
+  private rejectAllPending(reason: string) {
+    for (const [, req] of this.pending) {
+      req.reject(reason);
+    }
+    this.pending.clear();
+  }
+
+  private handleText(text: string) {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return;
+    }
+
+    // Command response routed via __cmd_response event
+    if (parsed.event === "__cmd_response") {
+      const payload = parsed.payload as Record<string, unknown>;
+      const data = payload.data as Record<string, unknown>;
+      const id = data.id as number;
+      const pending = this.pending.get(id);
+      if (pending) {
+        this.pending.delete(id);
+        if ("error" in data && data.error) {
+          pending.reject(data.error as string);
+        } else {
+          pending.resolve(data.result);
+        }
+      }
+      return;
+    }
+
+    // Regular event
+    if (parsed.event && parsed.payload !== undefined) {
+      const eventName = parsed.event as string;
+      const callbacks = this.listeners.get(eventName);
+      if (callbacks) {
+        for (const cb of callbacks) {
+          try {
+            cb(parsed.payload);
+          } catch (e) {
+            console.error(`[ws-transport] Listener error for ${eventName}:`, e);
+          }
+        }
+      }
+    }
+  }
+
+  private handleBinary(data: Uint8Array) {
+    if (data.length < 36) return;
+
+    // First 36 bytes = session UUID ASCII
+    const sessionId = new TextDecoder().decode(data.slice(0, 36)).trim();
+    const ptyData = data.slice(36);
+
+    // Convert to number[] to match PtyOutputEvent.data contract
+    const dataArray = Array.from(ptyData);
+
+    const callbacks = this.listeners.get("pty_output");
+    if (callbacks) {
+      const payload = { sessionId, data: dataArray };
+      for (const cb of callbacks) {
+        try {
+          cb(payload);
+        } catch (e) {
+          console.error("[ws-transport] PTY output listener error:", e);
+        }
+      }
+    }
+  }
+
+  /** Wait for WebSocket to be connected, with timeout. */
+  private waitForConnection(timeoutMs = 5000): Promise<void> {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      const interval = setInterval(() => {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          clearInterval(interval);
+          clearTimeout(timeout);
+          resolve();
+        }
+      }, 50);
+      const timeout = setTimeout(() => {
+        clearInterval(interval);
+        reject(new Error("WebSocket connection timeout"));
+      }, timeoutMs);
+    });
+  }
+
+  async invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+    await this.waitForConnection();
+
+    const id = this.nextId++;
+    const msg = JSON.stringify({ id, cmd, args: args || {} });
+
+    return new Promise<T>((resolve, reject) => {
+      this.pending.set(id, {
+        resolve: resolve as (v: unknown) => void,
+        reject,
+      });
+      this.ws!.send(msg);
+
+      // Timeout after 30s
+      setTimeout(() => {
+        if (this.pending.has(id)) {
+          this.pending.delete(id);
+          reject(`Command timeout: ${cmd}`);
+        }
+      }, 30000);
+    });
+  }
+
+  async listen<T>(
+    event: string,
+    callback: (payload: T) => void
+  ): Promise<UnlistenFn> {
+    let callbacks = this.listeners.get(event);
+    if (!callbacks) {
+      callbacks = new Set();
+      this.listeners.set(event, callbacks);
+    }
+    const cb = callback as (payload: unknown) => void;
+    callbacks.add(cb);
+
+    return () => {
+      const set = this.listeners.get(event);
+      if (set) {
+        set.delete(cb);
+        if (set.size === 0) {
+          this.listeners.delete(event);
+        }
+      }
+    };
+  }
+
+  writePtyBinary(sessionId: string, data: Uint8Array): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+    // Binary frame: 36-byte UUID ASCII + raw bytes
+    const idBytes = new TextEncoder().encode(sessionId.padEnd(36));
+    const frame = new Uint8Array(36 + data.length);
+    frame.set(idBytes.slice(0, 36), 0);
+    frame.set(data, 36);
+    this.ws.send(frame.buffer);
+  }
+}

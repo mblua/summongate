@@ -43,7 +43,7 @@ pub fn derive_repo_name(path: &Path) -> Option<String> {
 }
 
 /// Add a repo to results if it matches the query and hasn't been seen yet
-fn try_add_repo(
+pub fn try_add_repo(
     path: &Path,
     query_lower: &str,
     seen_paths: &mut std::collections::HashSet<String>,

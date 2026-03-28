@@ -37,6 +37,10 @@ pub struct PtyManager {
     idle_detector: Arc<IdleDetector>,
     git_watcher: Arc<GitWatcher>,
     pub response_watchers: ResponseWatcherMap,
+    /// Optional WS broadcaster for remote access
+    ws_broadcaster: Option<crate::web::broadcast::WsBroadcaster>,
+    /// VT100 screen state per session for replay to late-joining WS clients
+    screen_parsers: Arc<Mutex<HashMap<Uuid, vt100::Parser>>>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -47,13 +51,20 @@ struct PtyOutputPayload {
 }
 
 impl PtyManager {
-    pub fn new(output_senders: OutputSenderMap, idle_detector: Arc<IdleDetector>, git_watcher: Arc<GitWatcher>) -> Self {
+    pub fn new(
+        output_senders: OutputSenderMap,
+        idle_detector: Arc<IdleDetector>,
+        git_watcher: Arc<GitWatcher>,
+        ws_broadcaster: Option<crate::web::broadcast::WsBroadcaster>,
+    ) -> Self {
         Self {
             ptys: Arc::new(Mutex::new(HashMap::new())),
             output_senders,
             idle_detector,
             git_watcher,
             response_watchers: Arc::new(Mutex::new(HashMap::new())),
+            ws_broadcaster,
+            screen_parsers: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -132,12 +143,20 @@ impl PtyManager {
 
         self.ptys.lock().unwrap().insert(id, instance);
 
+        // Initialize vt100 screen parser for this session (for WS replay)
+        {
+            let parser = vt100::Parser::new(rows, cols, 0);
+            self.screen_parsers.lock().unwrap().insert(id, parser);
+        }
+
         // Spawn read loop that emits PTY output to the frontend,
-        // feeds active Telegram bridges, and scans for response markers
+        // feeds active Telegram bridges, WS clients, and scans for response markers
         let session_id_str = id.to_string();
         let output_senders = self.output_senders.clone();
         let idle_detector = Arc::clone(&self.idle_detector);
         let response_watchers = Arc::clone(&self.response_watchers);
+        let ws_broadcaster = self.ws_broadcaster.clone();
+        let screen_parsers = Arc::clone(&self.screen_parsers);
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             loop {
@@ -159,6 +178,18 @@ impl PtyManager {
                             if let Some(tx) = senders.get(&id) {
                                 let _ = tx.try_send(data.clone());
                             }
+                        }
+
+                        // Feed vt100 screen parser for WS replay
+                        if let Ok(mut parsers) = screen_parsers.lock() {
+                            if let Some(parser) = parsers.get_mut(&id) {
+                                parser.process(&data);
+                            }
+                        }
+
+                        // Broadcast to WebSocket clients (non-blocking)
+                        if let Some(ref bc) = ws_broadcaster {
+                            bc.broadcast_pty_output(&session_id_str, &data);
                         }
 
                         let payload = PtyOutputPayload {
@@ -226,7 +257,22 @@ impl PtyManager {
             watchers.retain(|(sid, _), _| *sid != id);
         }
 
+        // Clean up vt100 screen parser
+        if let Ok(mut parsers) = self.screen_parsers.lock() {
+            parsers.remove(&id);
+        }
+
         Ok(())
+    }
+
+    /// Get a screen snapshot for replay to late-joining WS clients.
+    /// Returns the visible screen content as raw bytes that can be written to xterm.js.
+    pub fn get_screen_snapshot(&self, id: Uuid) -> Option<Vec<u8>> {
+        let parsers = self.screen_parsers.lock().ok()?;
+        let parser = parsers.get(&id)?;
+        let screen = parser.screen();
+        // contents_formatted returns ANSI escape sequences that reproduce the screen state
+        Some(screen.contents_formatted())
     }
 
     /// Register a watcher for response markers on a session's output.

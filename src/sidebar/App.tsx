@@ -1,6 +1,6 @@
 import { Component, onMount, onCleanup } from "solid-js";
-import type { UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow, Window } from "@tauri-apps/api/window";
+import { isTauri } from "../shared/platform";
+import type { UnlistenFn } from "../shared/transport";
 import {
   SessionAPI,
   SettingsAPI,
@@ -50,7 +50,10 @@ const SidebarApp: Component = () => {
     lastRaiseTime = now;
     try {
       await WindowAPI.ensureTerminal();
-      await getCurrentWindow().setFocus();
+      if (isTauri) {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        await getCurrentWindow().setFocus();
+      }
     } catch {}
   };
 
@@ -62,7 +65,8 @@ const SidebarApp: Component = () => {
     // Apply window settings
     const appSettings = await SettingsAPI.get();
     raiseTerminalEnabled = appSettings.raiseTerminalOnClick;
-    if (appSettings.sidebarAlwaysOnTop) {
+    if (appSettings.sidebarAlwaysOnTop && isTauri) {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
       await getCurrentWindow().setAlwaysOnTop(true);
     }
     document.addEventListener("mousedown", handleRaiseTerminal);

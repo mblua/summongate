@@ -23,6 +23,9 @@ strip-ansi-escapes = "0.2"
 tokio-util = "0.7"
 vt100 = "0.15"
 open = "5"
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+futures-util = "0.3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_System_Console"] }

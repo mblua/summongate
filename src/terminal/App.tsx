@@ -1,6 +1,6 @@
 import { Component, onMount, onCleanup, Show } from "solid-js";
-import type { UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { UnlistenFn } from "../shared/transport";
+import { isTauri } from "../shared/platform";
 import {
   SessionAPI,
   onSessionSwitched,
@@ -101,8 +101,10 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       await onSessionDestroyed(async ({ id }) => {
         if (props.lockedSessionId && id === props.lockedSessionId) {
           // Our locked session was destroyed, close this detached window
-          const appWindow = getCurrentWindow();
-          appWindow.close();
+          if (isTauri) {
+            const { getCurrentWindow } = await import("@tauri-apps/api/window");
+            getCurrentWindow().close();
+          }
           return;
         }
         if (!props.lockedSessionId) {

@@ -70,6 +70,15 @@ pub struct AppSettings {
     /// Saved geometry for the terminal window
     #[serde(default)]
     pub terminal_geometry: Option<WindowGeometry>,
+    /// Enable the embedded web server for remote browser access
+    #[serde(default)]
+    pub web_server_enabled: bool,
+    /// Port for the web server
+    #[serde(default = "default_web_port")]
+    pub web_server_port: u16,
+    /// Bind address: "127.0.0.1" (local only) or "0.0.0.0" (all interfaces)
+    #[serde(default = "default_web_bind")]
+    pub web_server_bind: String,
 }
 
 fn default_true() -> bool {
@@ -86,6 +95,14 @@ fn default_voice_delay() -> u32 {
 
 fn default_zoom() -> f64 {
     1.0
+}
+
+fn default_web_port() -> u16 {
+    9876
+}
+
+fn default_web_bind() -> String {
+    "127.0.0.1".to_string()
 }
 
 impl Default for AppSettings {
@@ -121,6 +138,9 @@ impl Default for AppSettings {
             terminal_zoom: default_zoom(),
             sidebar_geometry: None,
             terminal_geometry: None,
+            web_server_enabled: false,
+            web_server_port: default_web_port(),
+            web_server_bind: default_web_bind(),
         }
     }
 }

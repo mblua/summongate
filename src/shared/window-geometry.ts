@@ -1,12 +1,13 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { SettingsAPI } from "./ipc";
 import type { AppSettings, WindowGeometry } from "./types";
+import { isTauri } from "./platform";
 
 type WindowType = "sidebar" | "terminal";
 
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
 async function readGeometry(): Promise<WindowGeometry> {
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
   const win = getCurrentWindow();
   const pos = await win.outerPosition();
   const size = await win.outerSize();
@@ -40,6 +41,12 @@ function debouncedSave(windowType: WindowType) {
 export async function initWindowGeometry(
   windowType: WindowType
 ): Promise<() => void> {
+  if (!isTauri) {
+    // Browser: no window geometry tracking
+    return () => {};
+  }
+
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
   const win = getCurrentWindow();
 
   const unlistenMove = await win.onMoved(() => debouncedSave(windowType));

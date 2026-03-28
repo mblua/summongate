@@ -1,6 +1,6 @@
 import { Component, createSignal, For, Show, onMount } from "solid-js";
 import { createStore, produce } from "solid-js/store";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isTauri } from "../../shared/platform";
 import type {
   AppSettings,
   AgentConfig,
@@ -266,7 +266,10 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
       SettingsAPI.update(settings.data),
       DarkFactoryAPI.save({ teams: [...dfConfig.teams] }),
     ]);
-    await getCurrentWindow().setAlwaysOnTop(settings.data.sidebarAlwaysOnTop);
+    if (isTauri) {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().setAlwaysOnTop(settings.data.sidebarAlwaysOnTop);
+    }
     // Refresh settings store so mic button visibility updates
     settingsStore.refresh();
     // Refresh teams in sidebar dropdown immediately

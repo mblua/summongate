@@ -1,6 +1,6 @@
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { SettingsAPI } from "./ipc";
 import type { AppSettings } from "./types";
+import { isTauri } from "./platform";
 
 const ZOOM_STEP = 0.1;
 const ZOOM_MIN = 0.5;
@@ -17,7 +17,13 @@ function clampZoom(value: number): number {
 
 async function applyZoom(zoom: number) {
   currentZoom = clampZoom(zoom);
-  await getCurrentWebview().setZoom(currentZoom);
+  if (isTauri) {
+    const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+    await getCurrentWebview().setZoom(currentZoom);
+  } else {
+    // Browser fallback: CSS zoom
+    document.documentElement.style.zoom = String(currentZoom);
+  }
 }
 
 function debouncedSave(windowType: WindowType) {

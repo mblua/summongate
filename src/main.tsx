@@ -7,6 +7,12 @@ import GuideApp from "./guide/App";
 const params = new URLSearchParams(window.location.search);
 const windowType = params.get("window") || "sidebar";
 
+// Capture remote token from URL for WebSocket auth (browser mode)
+const remoteToken = params.get("remoteToken");
+if (remoteToken) {
+  sessionStorage.setItem("remoteToken", remoteToken);
+}
+
 const root = document.getElementById("root");
 if (!root) throw new Error("Root element not found");
 

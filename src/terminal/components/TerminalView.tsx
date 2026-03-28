@@ -9,7 +9,7 @@ import {
   onSessionDestroyed,
 } from "../../shared/ipc";
 import { terminalStore } from "../stores/terminal";
-import type { UnlistenFn } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "../../shared/transport";
 import "@xterm/xterm/css/xterm.css";
 
 interface SessionTerminal {

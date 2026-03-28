@@ -126,6 +126,9 @@ export interface AppSettings {
   terminalZoom: number;
   sidebarGeometry: WindowGeometry | null;
   terminalGeometry: WindowGeometry | null;
+  webServerEnabled: boolean;
+  webServerPort: number;
+  webServerBind: string;
 }
 
 // Dark Factory types

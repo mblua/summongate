@@ -1,0 +1,13 @@
+/// Transport abstraction over Tauri IPC or WebSocket.
+/// Both implementations must satisfy this interface.
+export interface Transport {
+  invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T>;
+  listen<T>(
+    event: string,
+    callback: (payload: T) => void
+  ): Promise<() => void>;
+  /** Efficient binary PTY write (optional — falls back to invoke if absent) */
+  writePtyBinary?(sessionId: string, data: Uint8Array): void;
+}
+
+export type UnlistenFn = () => void;

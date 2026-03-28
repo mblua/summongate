@@ -1,9 +1,9 @@
-import { Component, createSignal, onMount, onCleanup } from "solid-js";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { Component, Show, createSignal, onMount, onCleanup } from "solid-js";
 import iconUrl from "../../assets/icon-16.png";
 import { getConsoleText } from "../../shared/console-capture";
 import { DebugAPI } from "../../shared/ipc";
 import { applyWindowLayout } from "../../shared/window-layout";
+import { isTauri } from "../../shared/platform";
 
 declare const __APP_VERSION__: string;
 const APP_VERSION = __APP_VERSION__;
@@ -12,8 +12,16 @@ const Titlebar: Component = () => {
   const [copied, setCopied] = createSignal(false);
   const [layoutOpen, setLayoutOpen] = createSignal(false);
 
-  const handleMinimize = () => getCurrentWindow().minimize();
-  const handleClose = () => getCurrentWindow().close();
+  const handleMinimize = async () => {
+    if (!isTauri) return;
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    getCurrentWindow().minimize();
+  };
+  const handleClose = async () => {
+    if (!isTauri) return;
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    getCurrentWindow().close();
+  };
 
   const handleCopyLogs = async (e: MouseEvent) => {
     e.stopPropagation();
@@ -88,16 +96,18 @@ const Titlebar: Component = () => {
             {copied() ? "\u2713" : "\u2261"}
           </button>
         )}
-        <button class="titlebar-btn" onClick={handleMinimize} title="Minimize">
-          &#x2014;
-        </button>
-        <button
-          class="titlebar-btn titlebar-btn-close"
-          onClick={handleClose}
-          title="Close"
-        >
-          &#x2715;
-        </button>
+        <Show when={isTauri}>
+          <button class="titlebar-btn" onClick={handleMinimize} title="Minimize">
+            &#x2014;
+          </button>
+          <button
+            class="titlebar-btn titlebar-btn-close"
+            onClick={handleClose}
+            title="Close"
+          >
+            &#x2715;
+          </button>
+        </Show>
       </div>
     </div>
   );

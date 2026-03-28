@@ -2,7 +2,7 @@ import { Component, createSignal, Show, For } from "solid-js";
 import { Portal } from "solid-js/web";
 import type { Session, SessionStatus, TelegramBotConfig, RepoMatch } from "../../shared/types";
 import { SessionAPI, TelegramAPI, SettingsAPI, WindowAPI } from "../../shared/ipc";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { isTauri } from "../../shared/platform";
 import { bridgesStore } from "../stores/bridges";
 import { sessionsStore } from "../stores/sessions";
 import { settingsStore } from "../../shared/stores/settings";
@@ -93,10 +93,13 @@ const SessionItem: Component<{
 
   const handleClick = async () => {
     await SessionAPI.switch(props.session.id);
-    const detachedLabel = `terminal-${props.session.id.replace(/-/g, "")}`;
-    const detachedWin = await WebviewWindow.getByLabel(detachedLabel);
-    if (!detachedWin) {
-      await WindowAPI.ensureTerminal();
+    if (isTauri) {
+      const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+      const detachedLabel = `terminal-${props.session.id.replace(/-/g, "")}`;
+      const detachedWin = await WebviewWindow.getByLabel(detachedLabel);
+      if (!detachedWin) {
+        await WindowAPI.ensureTerminal();
+      }
     }
   };
 

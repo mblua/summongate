@@ -1,6 +1,7 @@
 import { Component, createMemo, onMount, onCleanup } from "solid-js";
 import { createStore } from "solid-js/store";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "../../shared/transport";
+import { onLastPrompt } from "../../shared/ipc";
 import { SessionAPI } from "../../shared/ipc";
 import { terminalStore } from "../stores/terminal";
 
@@ -28,12 +29,9 @@ const LastPrompt: Component<LastPromptProps> = (props) => {
       }
     }
 
-    unlisten = await listen<{ text: string; sessionId: string }>(
-      "last_prompt",
-      (event) => {
-        setPrompts(event.payload.sessionId, event.payload.text);
-      }
-    );
+    unlisten = await onLastPrompt((data) => {
+      setPrompts(data.sessionId, data.text);
+    });
   });
 
   onCleanup(() => {
