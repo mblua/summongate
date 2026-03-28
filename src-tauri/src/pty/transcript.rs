@@ -364,7 +364,7 @@ fn is_tui_chrome(line: &str) -> bool {
     if trimmed.starts_with("Found ") && trimmed.contains("settings issue") {
         return true;
     }
-    if trimmed.starts_with("Claude in Chrome") {
+    if trimmed.contains("Claude in Chrome") || trimmed.contains("/doctor") || trimmed.contains("/chrome") {
         return true;
     }
 
@@ -386,8 +386,9 @@ fn is_tui_chrome(line: &str) -> bool {
         }
     }
 
-    // Short fragments (≤5 chars) — broken spinner animation frames from chunked PTY reads
-    if trimmed.chars().count() <= 5 {
+    // Short fragments (≤8 chars) — broken spinner animation frames from chunked PTY reads
+    // Real agent content is longer than this
+    if trimmed.chars().count() <= 8 {
         return true;
     }
 
@@ -437,8 +438,9 @@ fn is_tui_chrome(line: &str) -> bool {
         return true;
     }
 
-    // "Bash(" tool invocation display lines
-    if trimmed.starts_with("Bash(") {
+    // Tool invocation display lines (with or without ● prefix)
+    let no_bullet = trimmed.strip_prefix('●').unwrap_or(trimmed).trim();
+    if no_bullet.starts_with("Bash(") || no_bullet.starts_with("Read(") || no_bullet.starts_with("Write(") || no_bullet.starts_with("Edit(") || no_bullet.starts_with("Glob(") || no_bullet.starts_with("Grep(") {
         return true;
     }
 
