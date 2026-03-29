@@ -602,10 +602,17 @@ html, body, #root {
 
 .modal-footer {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: var(--spacing-sm);
   padding: var(--spacing-md) var(--spacing-lg);
   border-top: 1px solid var(--sidebar-border);
+}
+
+.modal-save-error {
+  color: #ef4444;
+  font-size: var(--font-size-sm);
+  margin-right: auto;
 }
 
 .modal-btn {
