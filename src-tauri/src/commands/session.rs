@@ -3,20 +3,19 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
-use crate::config::dark_factory;
+use crate::config::dark_factory::{self, AgentLocalConfig};
 use crate::config::sessions_persistence::persist_current_state;
 use crate::config::settings::SettingsState;
 use crate::pty::manager::PtyManager;
 use crate::session::manager::SessionManager;
 use crate::session::session::SessionInfo;
 use crate::telegram::manager::TelegramBridgeState;
-use crate::telegram::types::RepoConfig;
 use crate::DetachedSessionsState;
 
 /// Core session creation logic shared by the Tauri command and the restore path.
 /// Creates a session record, spawns a PTY, and emits the session_created event.
 /// After spawn, schedules a delayed injection of the session token + CLI instructions.
-/// If `agent_id` is provided, saves it as lastCodingAgent in the repo's config.
+/// If `agent_id` is provided, saves it as lastCodingAgent and upserts codingAgents in the repo's config.
 pub async fn create_session_inner(
     app: &AppHandle,
     session_mgr: &Arc<tokio::sync::RwLock<SessionManager>>,
@@ -26,6 +25,7 @@ pub async fn create_session_inner(
     cwd: String,
     session_name: Option<String>,
     agent_id: Option<String>,
+    agent_label: Option<String>,
 ) -> Result<SessionInfo, String> {
     let mgr = session_mgr.read().await;
     let mut session = mgr
@@ -52,9 +52,11 @@ pub async fn create_session_inner(
     let info = SessionInfo::from(&session);
     let _ = app.emit("session_created", info.clone());
 
-    // Save lastCodingAgent if an agent_id was provided
+    // Save lastCodingAgent + codingAgents if an agent_id was provided
     if let Some(ref aid) = agent_id {
-        if let Err(e) = dark_factory::set_last_coding_agent(&cwd, aid) {
+        let label = agent_label.as_deref().unwrap_or("Unknown");
+        let session_id_str = id.to_string();
+        if let Err(e) = dark_factory::set_last_coding_agent(&cwd, aid, label, Some(&session_id_str)) {
             log::warn!("Failed to save lastCodingAgent: {}", e);
         }
     }
@@ -136,6 +138,11 @@ pub async fn create_session(
             .unwrap_or_else(|| "C:\\".to_string())
     });
 
+    // Resolve agent label before dropping cfg
+    let agent_label = agent_id.as_ref().and_then(|aid| {
+        cfg.agents.iter().find(|a| a.id == *aid).map(|a| a.label.clone())
+    });
+
     drop(cfg);
 
     let info = create_session_inner(
@@ -147,6 +154,7 @@ pub async fn create_session(
         cwd.clone(),
         session_name,
         agent_id,
+        agent_label,
     )
     .await?;
 
@@ -162,8 +170,8 @@ pub async fn create_session(
         .join(".agentscommander")
         .join("config.json");
     if let Ok(contents) = tokio::fs::read_to_string(&config_path).await {
-        if let Ok(repo_config) = serde_json::from_str::<RepoConfig>(&contents) {
-            if let Some(bot_label) = repo_config.telegram_bot {
+        if let Ok(local_config) = serde_json::from_str::<AgentLocalConfig>(&contents) {
+            if let Some(bot_label) = local_config.tooling.telegram_bot {
                 let cfg = settings.read().await;
                 let bot = cfg
                     .telegram_bots

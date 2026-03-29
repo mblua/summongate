@@ -247,6 +247,15 @@ Config export/import, session history, notifications, snippets, cross-platform.
 - xterm.js must use WebGL addon, canvas renderer as fallback only
 - Config persisted to `~/.agentscommander/*.toml` — no localStorage, no databases
 
+### Change Validation Protocol (feature-dev)
+
+**MANDATORY for every code change.** Use `feature-dev:code-reviewer` agents to validate changes in two passes:
+
+1. **Before executing**: Once you have a plan/design but before writing code, launch a `code-reviewer` agent to review the proposed approach against the existing codebase. Focus: does the change fit existing patterns, are there conflicts, is the scope correct?
+2. **After executing**: Once all edits are done and compilation passes, launch a `code-reviewer` agent to review the actual diff. Focus: bugs, logic errors, missed edge cases, convention violations, DRY violations.
+
+Both passes are non-negotiable. If a reviewer flags high-severity issues, fix them before considering the change complete.
+
 ---
 
 ## CRITICAL — Running the App

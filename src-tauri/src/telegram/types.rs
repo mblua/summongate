@@ -28,9 +28,3 @@ pub enum BridgeStatus {
     Detaching,
 }
 
-/// Per-repo config read from .agentscommander/config.json
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RepoConfig {
-    pub telegram_bot: Option<String>,
-}

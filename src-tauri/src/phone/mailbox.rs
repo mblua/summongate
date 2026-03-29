@@ -438,6 +438,7 @@ impl MailboxPoller {
                 cwd,
                 Some(format!("[temp] {}", msg.to)),
                 None, // Temp session — don't update lastCodingAgent
+                None, // No agent label for temp sessions
             )
             .await
             {
@@ -709,8 +710,8 @@ impl MailboxPoller {
                 .join(".agentscommander")
                 .join("config.json");
             if let Ok(content) = std::fs::read_to_string(&config_path) {
-                if let Ok(local_config) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if let Some(last_agent) = local_config.get("lastCodingAgent").and_then(|v| v.as_str()) {
+                if let Ok(local_config) = serde_json::from_str::<crate::config::dark_factory::AgentLocalConfig>(&content) {
+                    if let Some(last_agent) = local_config.tooling.last_coding_agent.as_deref() {
                         if let Some(agent) = cfg.agents.iter().find(|a| a.id == last_agent) {
                             return Some((agent.command.clone(), vec![]));
                         }

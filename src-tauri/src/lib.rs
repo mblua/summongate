@@ -282,6 +282,7 @@ pub fn run() {
                             ps.working_directory.clone(),
                             Some(ps.name.clone()),
                             None, // No agent_id on restore
+                            None, // No agent label on restore
                         ).await {
                             Ok(info) => {
                                 if ps.was_active {
