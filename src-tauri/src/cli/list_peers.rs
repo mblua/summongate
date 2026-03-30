@@ -1,6 +1,9 @@
 use clap::Args;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+use crate::config::dark_factory::{AgentLocalConfig, CodingAgentEntry};
 
 #[derive(Args)]
 pub struct ListPeersArgs {
@@ -13,17 +16,6 @@ pub struct ListPeersArgs {
     pub root: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentLocalConfig {
-    #[serde(default)]
-    teams: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    is_coordinator_of: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    last_coding_agent: Option<String>,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PeerInfo {
@@ -33,6 +25,8 @@ struct PeerInfo {
     role: String,
     teams: Vec<String>,
     last_coding_agent: Option<String>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    coding_agents: HashMap<String, CodingAgentEntry>,
 }
 
 /// Get the agent name (parent/repo) from a path.
@@ -128,15 +122,11 @@ pub fn execute(args: ListPeersArgs) -> i32 {
     let my_config: AgentLocalConfig = std::fs::read_to_string(&config_path)
         .ok()
         .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or(AgentLocalConfig {
-            teams: vec![],
-            is_coordinator_of: vec![],
-            last_coding_agent: None,
-        });
+        .unwrap_or_default();
 
     let mut peers: Vec<PeerInfo> = Vec::new();
 
-    if my_config.teams.is_empty() {
+    if my_config.dark_factory.teams.is_empty() {
         // No teams → no peers. Only team members can communicate.
         println!("[]");
         return 0;
@@ -147,7 +137,7 @@ pub fn execute(args: ListPeersArgs) -> i32 {
         if let Some(teams) = teams_json.get("teams").and_then(|t| t.as_array()) {
             for team in teams {
                 let team_name = team.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                if !my_config.teams.contains(&team_name.to_string()) {
+                if !my_config.dark_factory.teams.contains(&team_name.to_string()) {
                     continue;
                 }
 
@@ -183,11 +173,7 @@ pub fn execute(args: ListPeersArgs) -> i32 {
                             .to_str()
                             .and_then(|p| std::fs::read_to_string(p).ok())
                             .and_then(|c| serde_json::from_str(&c).ok())
-                            .unwrap_or(AgentLocalConfig {
-                                teams: vec![],
-                                is_coordinator_of: vec![],
-                                last_coding_agent: None,
-                            });
+                            .unwrap_or_default();
 
                         peers.push(PeerInfo {
                             name: peer_name,
@@ -195,7 +181,8 @@ pub fn execute(args: ListPeersArgs) -> i32 {
                             status: status.to_string(),
                             role: read_role(member_path),
                             teams: vec![team_name.to_string()],
-                            last_coding_agent: peer_config.last_coding_agent,
+                            last_coding_agent: peer_config.tooling.last_coding_agent,
+                            coding_agents: peer_config.tooling.coding_agents,
                         });
                     }
                 }

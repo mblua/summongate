@@ -191,6 +191,9 @@ impl MailboxPoller {
         // Prune tracker entries for files that no longer exist
         self.retry_tracker.retain(|path, _| path.exists());
 
+        // Poll session-requests directory (from create-agent CLI)
+        self.poll_session_requests(app).await;
+
         Ok(())
     }
 
@@ -438,6 +441,8 @@ impl MailboxPoller {
                 cwd,
                 Some(format!("[temp] {}", msg.to)),
                 None, // Temp session — don't update lastCodingAgent
+                None, // No agent label for temp sessions
+                true, // Skip tooling save for temp sessions
             )
             .await
             {
@@ -709,8 +714,8 @@ impl MailboxPoller {
                 .join(".agentscommander")
                 .join("config.json");
             if let Ok(content) = std::fs::read_to_string(&config_path) {
-                if let Ok(local_config) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if let Some(last_agent) = local_config.get("lastCodingAgent").and_then(|v| v.as_str()) {
+                if let Ok(local_config) = serde_json::from_str::<crate::config::dark_factory::AgentLocalConfig>(&content) {
+                    if let Some(last_agent) = local_config.tooling.last_coding_agent.as_deref() {
                         if let Some(agent) = cfg.agents.iter().find(|a| a.id == last_agent) {
                             return Some((agent.command.clone(), vec![]));
                         }
@@ -818,6 +823,86 @@ impl MailboxPoller {
 
         log::warn!("Rejected raw file {:?}: {}", path, reason);
         Ok(())
+    }
+
+    /// Poll ~/.agentscommander/session-requests/ for launch requests from the CLI.
+    async fn poll_session_requests(&self, app: &tauri::AppHandle) {
+        let config_dir = match crate::config::config_dir() {
+            Some(d) => d,
+            None => return,
+        };
+        let requests_dir = config_dir.join("session-requests");
+        if !requests_dir.is_dir() {
+            return;
+        }
+
+        let entries: Vec<PathBuf> = match std::fs::read_dir(&requests_dir) {
+            Ok(rd) => rd
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
+                .collect(),
+            Err(_) => return,
+        };
+
+        for path in entries {
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    log::warn!("[session-requests] Failed to read {:?}: {}", path, e);
+                    continue;
+                }
+            };
+
+            let request: crate::cli::create_agent::SessionRequest = match serde_json::from_str(&content) {
+                Ok(r) => r,
+                Err(e) => {
+                    log::warn!("[session-requests] Failed to parse {:?}: {}", path, e);
+                    // Delete malformed file
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+            };
+
+            log::info!(
+                "[session-requests] Processing: name='{}' cwd='{}' agent='{}'",
+                request.session_name, request.cwd, request.agent_id
+            );
+
+            let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
+            let pty_mgr = app.state::<Arc<Mutex<PtyManager>>>();
+
+            match crate::commands::session::create_session_inner(
+                app,
+                session_mgr.inner(),
+                pty_mgr.inner(),
+                request.shell.clone(),
+                request.shell_args.clone(),
+                request.cwd.clone(),
+                Some(request.session_name.clone()),
+                Some(request.agent_id.clone()),
+                None,  // No agent label — auto-detected from shell
+                false, // Persist tooling
+            )
+            .await
+            {
+                Ok(info) => {
+                    log::info!(
+                        "[session-requests] Created session '{}' (id={})",
+                        request.session_name, info.id
+                    );
+                }
+                Err(e) => {
+                    log::error!(
+                        "[session-requests] Failed to create session '{}': {}",
+                        request.session_name, e
+                    );
+                }
+            }
+
+            // Delete processed request file regardless of success/failure
+            let _ = std::fs::remove_file(&path);
+        }
     }
 
     /// Inject the current valid token into a session's PTY so the agent can update its credentials.

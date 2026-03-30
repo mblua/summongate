@@ -57,6 +57,24 @@ agentscommander.exe list-peers --token <TOKEN> --root "<CWD>"
 
 If your token is stale or invalid, the first failed `send` will trigger an automatic token refresh — the system injects a fresh token into your console via a `# === Token Refresh ===` block. After receiving it, retry the failed operation with the new token.
 
+### Coordinator protocol
+
+When this agent belongs to a team with a coordinator, the coordinator is the primary interface — not the user. This means:
+- **Confirmations, questions, and status updates go to the coordinator**, not to the user
+- **When you need a decision**, ask the coordinator via `send --mode wake`
+- **When you finish a task**, report completion to the coordinator
+- **When you are blocked**, escalate to the coordinator
+- Only fall back to the user when the coordinator is unreachable or the user explicitly intervenes
+- The coordinator delegates work to you and to other agents — respect the chain of command
+
+### Environment: PROD only
+
+This agent does NOT run tests and does NOT use the DEV environment. All operations are strictly **PROD**:
+- Config directory: `~/.agentscommander/` (NEVER `~/.agentscommander-dev/`)
+- Binary: `C:\Users\maria\AppData\Local\Agents Commander\agentscommander.exe`
+- Settings, teams, session-requests, and all file-based IPC use the PROD paths
+- Never read, write, or reference `~/.agentscommander-dev/` under any circumstance
+
 ---
 
 ## Project Overview
@@ -232,11 +250,12 @@ Config export/import, session history, notifications, snippets, cross-platform.
   3. `src/sidebar/components/Titlebar.tsx` → `APP_VERSION`
 - Bump at minimum the patch version on every compilable change set
 
-### Git Branching
+### Git Branching — MANDATORY
 - **NUNCA hacer cambios directamente en `main`**. Todo cambio debe realizarse en un branch dedicado con prefijo segun el tipo:
   - `feature/` — nueva funcionalidad
   - `fix/` — correccion de bug
   - `bug/` — investigacion/fix de bug
+- **ENFORCEMENT: Antes de escribir, editar, o crear CUALQUIER archivo del proyecto (código, config, docs, CLAUDE.md, README, CSS, etc.), verificar que NO estás en `main`. Si estás en `main`, crear el branch PRIMERO. No hay excepciones. Esto incluye cambios "pequeños" o "rápidos".**
 - Merge a `main` solo via PR o merge explícito del usuario
 - **SIEMPRE hacer `git fetch origin` antes de cualquier operación contra `main`**. Nunca operar contra un `main` local que puede estar desactualizado. Esto aplica a: merge, rebase, diff, log comparativo, o cualquier referencia a main. Usar `origin/main` después del fetch.
 
@@ -246,6 +265,15 @@ Config export/import, session history, notifications, snippets, cross-platform.
 - Every IPC type must have matching Rust struct + TS interface
 - xterm.js must use WebGL addon, canvas renderer as fallback only
 - Config persisted to `~/.agentscommander/*.toml` — no localStorage, no databases
+
+### Change Validation Protocol (feature-dev)
+
+**MANDATORY for every code change.** Use `feature-dev:code-reviewer` agents to validate changes in two passes:
+
+1. **Before executing**: Once you have a plan/design but before writing code, launch a `code-reviewer` agent to review the proposed approach against the existing codebase. Focus: does the change fit existing patterns, are there conflicts, is the scope correct?
+2. **After executing**: Once all edits are done and compilation passes, launch a `code-reviewer` agent to review the actual diff. Focus: bugs, logic errors, missed edge cases, convention violations, DRY violations.
+
+Both passes are non-negotiable. If a reviewer flags high-severity issues, fix them before considering the change complete.
 
 ---
 

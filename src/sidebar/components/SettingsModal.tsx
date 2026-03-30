@@ -76,6 +76,7 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
   const [layerNameError, setLayerNameError] = createSignal("");
   const [editingLayerId, setEditingLayerId] = createSignal<string | null>(null);
   const [editingLayerName, setEditingLayerName] = createSignal("");
+  const [saveError, setSaveError] = createSignal("");
 
   const s = () => settings.data;
 
@@ -352,9 +353,30 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
     );
   };
 
+  // ── Validation ──
+  const validateAgents = (): string | null => {
+    if (!settings.data) return null;
+    for (const agent of settings.data.agents) {
+      const cmd = agent.command.toLowerCase();
+      if (cmd.includes("claude")) {
+        const flags = cmd.split(/\s+/);
+        if (flags.includes("--continue") || flags.includes("-c")) {
+          return `Agent "${agent.label || "Unnamed"}": Claude commands must not include --continue or -c`;
+        }
+      }
+    }
+    return null;
+  };
+
   // ── Save ──
   const handleSave = async () => {
     if (!settings.data) return;
+    const validationError = validateAgents();
+    if (validationError) {
+      setSaveError(validationError);
+      return;
+    }
+    setSaveError("");
     setSaving(true);
     await Promise.all([
       SettingsAPI.update(settings.data),
@@ -1090,6 +1112,9 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
         )}
 
         <div class="modal-footer">
+          <Show when={saveError()}>
+            <span class="modal-save-error">{saveError()}</span>
+          </Show>
           <button class="modal-btn modal-btn-cancel" onClick={props.onClose}>
             Cancel
           </button>
