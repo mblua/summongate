@@ -92,27 +92,26 @@ pub async fn create_session_inner(
         }
     }
 
-    // Auto-inject --append-system-prompt-file for Claude sessions
+    // Auto-inject --append-system-prompt-file for Claude sessions (global static file)
     let context_file_injected = if is_claude {
-        let binary_path = crate::resolve_bin_label();
-        match crate::config::session_context::write_session_context(&cwd, &token.to_string(), &binary_path) {
-            Ok(rel_path) => {
+        match crate::config::session_context::ensure_global_context() {
+            Ok(context_path) => {
                 if executable_basename(&shell) == "cmd" {
                     if let Some(last) = shell_args.last_mut() {
                         if last.to_lowercase().contains("claude") {
-                            *last = format!("{} --append-system-prompt-file {}", last, rel_path);
+                            *last = format!("{} --append-system-prompt-file \"{}\"", last, context_path);
                             log::info!("Injected --append-system-prompt-file for Claude (cmd path)");
                         }
                     }
                 } else {
                     shell_args.push("--append-system-prompt-file".to_string());
-                    shell_args.push(rel_path);
+                    shell_args.push(context_path);
                     log::info!("Injected --append-system-prompt-file for Claude session");
                 }
                 true
             }
             Err(e) => {
-                log::warn!("Failed to write AgentsCommanderContext.md: {}. Falling back to PTY injection.", e);
+                log::warn!("Failed to ensure AgentsCommanderContext.md: {}. Falling back to PTY injection.", e);
                 false
             }
         }

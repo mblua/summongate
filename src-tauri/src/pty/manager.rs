@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
 use crate::errors::AppError;
@@ -32,6 +32,9 @@ pub struct ResponseWatcher {
     pub capturing: bool,
 }
 
+/// Tracks sessions with a pending %%ACRC%% credential injection to prevent duplicates.
+pub type AcrcPendingSet = Arc<Mutex<std::collections::HashSet<Uuid>>>;
+
 pub struct PtyManager {
     ptys: Arc<Mutex<HashMap<Uuid, PtyInstance>>>,
     output_senders: OutputSenderMap,
@@ -39,6 +42,7 @@ pub struct PtyManager {
     git_watcher: Arc<GitWatcher>,
     pub response_watchers: ResponseWatcherMap,
     transcript: TranscriptWriter,
+    acrc_pending: AcrcPendingSet,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -57,6 +61,7 @@ impl PtyManager {
             git_watcher,
             response_watchers: Arc::new(Mutex::new(HashMap::new())),
             transcript,
+            acrc_pending: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -145,8 +150,11 @@ impl PtyManager {
         let idle_detector = Arc::clone(&self.idle_detector);
         let response_watchers = Arc::clone(&self.response_watchers);
         let transcript = self.transcript.clone();
+        let acrc_pending = Arc::clone(&self.acrc_pending);
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
+            // Trailing buffer for detecting %%ACRC%% split across reads (marker is 8 bytes)
+            let mut acrc_tail = String::new();
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break, // EOF
@@ -159,9 +167,36 @@ impl PtyManager {
                         // Record PTY activity for idle detection
                         idle_detector.record_activity_with_bytes(id, n);
 
-                        // Scan for response markers
+                        // Scan for response markers and credential requests
                         if let Ok(text) = std::str::from_utf8(&data) {
                             scan_response_markers(id, text, &response_watchers);
+
+                            // Detect %%ACRC%% with cross-buffer support and debounce
+                            let scan_text = format!("{}{}", acrc_tail, text);
+                            if scan_text.contains("%%ACRC%%") {
+                                let already_pending = acrc_pending.lock()
+                                    .map(|mut set| !set.insert(id))
+                                    .unwrap_or(false);
+                                if !already_pending {
+                                    let app = app_handle.clone();
+                                    let pending = Arc::clone(&acrc_pending);
+                                    tauri::async_runtime::spawn(async move {
+                                        inject_credentials(&app, id).await;
+                                        if let Ok(mut set) = pending.lock() {
+                                            set.remove(&id);
+                                        }
+                                    });
+                                }
+                            }
+                            // Keep last 7 chars for next iteration (marker len - 1)
+                            // Use char_indices to avoid panicking on multi-byte UTF-8 boundaries
+                            let tail_start_byte = text
+                                .char_indices()
+                                .rev()
+                                .nth(6)
+                                .map(|(i, _)| i)
+                                .unwrap_or(0);
+                            acrc_tail = text[tail_start_byte..].to_string();
                         }
 
                         // Feed Telegram bridge if active (non-blocking)
@@ -231,6 +266,9 @@ impl PtyManager {
         self.idle_detector.remove_session(id);
         self.git_watcher.remove_session(id);
         self.transcript.close_session(id);
+        if let Ok(mut set) = self.acrc_pending.lock() {
+            set.remove(&id);
+        }
 
         // Clean up any response watchers for this session
         if let Ok(mut watchers) = self.response_watchers.lock() {
@@ -376,5 +414,53 @@ fn scan_response_markers(session_id: Uuid, text: &str, watchers: &ResponseWatche
                 watcher.buffer = Some(after_start.to_string());
             }
         }
+    }
+}
+
+/// Inject session credentials into a PTY in response to a %%ACRC%% marker.
+async fn inject_credentials(app: &AppHandle, session_id: Uuid) {
+    let session_mgr = app.state::<Arc<tokio::sync::RwLock<crate::session::manager::SessionManager>>>();
+    let mgr = session_mgr.read().await;
+    let sessions: Vec<crate::session::session::SessionInfo> = mgr.list_sessions().await;
+
+    let session = match sessions.iter().find(|s| s.id == session_id.to_string()) {
+        Some(s) => s,
+        None => {
+            log::warn!("[ACRC] session {} not found", session_id);
+            return;
+        }
+    };
+
+    let cred_block = format!(
+        concat!(
+            "\n",
+            "# === Session Credentials ===\n",
+            "# Token: {token}\n",
+            "# Root: {root}\n",
+            "# === End Credentials ===\n",
+        ),
+        token = session.token,
+        root = session.working_directory,
+    );
+
+    drop(mgr);
+
+    if let Err(e) = crate::pty::inject::inject_text_into_session(
+        app,
+        session_id,
+        &cred_block,
+        false,
+        crate::pty::transcript::InjectReason::TokenRefresh,
+        None,
+    )
+    .await
+    {
+        log::warn!(
+            "[ACRC] failed to inject credentials for session {}: {}",
+            session_id,
+            e
+        );
+    } else {
+        log::info!("[ACRC] credentials injected for session {}", session_id);
     }
 }
