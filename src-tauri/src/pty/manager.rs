@@ -171,9 +171,16 @@ impl PtyManager {
                         if let Ok(text) = std::str::from_utf8(&data) {
                             scan_response_markers(id, text, &response_watchers);
 
-                            // Detect %%ACRC%% with cross-buffer support and debounce
+                            // Detect %%ACRC%% with cross-buffer support and debounce.
+                            // Use line-based matching: only trigger when %%ACRC%% is a
+                            // standalone line (trimmed). This prevents false positives
+                            // from rendered text that mentions the marker in prose,
+                            // search queries, or code references.
                             let scan_text = format!("{}{}", acrc_tail, text);
-                            if scan_text.contains("%%ACRC%%") {
+                            let has_standalone_marker = scan_text
+                                .lines()
+                                .any(|line| line.trim() == "%%ACRC%%");
+                            if has_standalone_marker {
                                 let already_pending = acrc_pending.lock()
                                     .map(|mut set| !set.insert(id))
                                     .unwrap_or(false);
