@@ -195,15 +195,20 @@ impl PtyManager {
                                     });
                                 }
                             }
-                            // Keep last 7 chars for next iteration (marker len - 1)
-                            // Use char_indices to avoid panicking on multi-byte UTF-8 boundaries
-                            let tail_start_byte = text
-                                .char_indices()
-                                .rev()
-                                .nth(6)
-                                .map(|(i, _)| i)
-                                .unwrap_or(0);
-                            acrc_tail = text[tail_start_byte..].to_string();
+                            // Keep everything after the last newline so that
+                            // line-based detection works across buffer splits.
+                            // Cap at 512 bytes to bound memory if no newline arrives.
+                            acrc_tail = match text.rfind('\n') {
+                                Some(i) => text[i..].to_string(),
+                                None => {
+                                    let combined = format!("{}{}", acrc_tail, text);
+                                    if combined.len() > 512 {
+                                        combined[combined.len() - 512..].to_string()
+                                    } else {
+                                        combined
+                                    }
+                                }
+                            };
                         }
 
                         // Feed Telegram bridge if active (non-blocking)
