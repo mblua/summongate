@@ -924,6 +924,19 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
                 />
               </label>
 
+              {/* Visible in sidebar */}
+              <label class="settings-field settings-field-inline">
+                <input
+                  type="checkbox"
+                  class="settings-checkbox"
+                  checked={team.visible !== false}
+                  onChange={(e) =>
+                    setDfConfig("teams", (t) => t.id === team.id, "visible", e.currentTarget.checked)
+                  }
+                />
+                <span class="settings-label">Visible in sidebar</span>
+              </label>
+
               {/* Layer assignment */}
               <label class="settings-field">
                 <span class="settings-label">Layer</span>

@@ -161,6 +161,7 @@ export interface Team {
   members: TeamMember[];
   coordinatorName?: string;
   layerId?: string;
+  visible?: boolean;
 }
 
 export interface DarkFactoryConfig {

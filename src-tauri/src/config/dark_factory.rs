@@ -33,6 +33,16 @@ pub struct Team {
     pub coordinator_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layer_id: Option<String>,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub visible: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(v: &bool) -> bool {
+    *v
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

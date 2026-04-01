@@ -18,8 +18,10 @@ function normalizePath(p: string): string {
 
 const allTeamPathsMemo = createMemo(() => {
   const paths = new Set<string>();
-  for (const t of state.teams)
+  for (const t of state.teams) {
+    if (t.visible === false) continue;
     for (const m of t.members) paths.add(normalizePath(m.path));
+  }
   return paths;
 });
 
@@ -126,6 +128,8 @@ const groupedSessionsMemo = createMemo((): { groups: TeamSessionGroup[]; ungroup
   const assignedPaths = new Set<string>();
 
   for (const team of teams) {
+    // Skip hidden teams — their sessions will appear as ungrouped
+    if (team.visible === false) continue;
     const memberPaths = new Set(team.members.map((m) => normalizePath(m.path)));
 
     // Find sessions belonging to this team
@@ -265,7 +269,7 @@ export const sessionsStore = {
     if (
       state.teamFilter &&
       state.teamFilter !== NO_TEAM &&
-      !teams.some((t) => t.id === state.teamFilter)
+      !teams.some((t) => t.id === state.teamFilter && t.visible !== false)
     ) {
       setState("teamFilter", null);
     }

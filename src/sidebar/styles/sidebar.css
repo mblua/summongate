@@ -754,6 +754,17 @@ html, body, #root {
   gap: 2px;
 }
 
+.settings-field-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-field-inline .settings-checkbox {
+  width: 14px;
+  height: 14px;
+}
+
 .settings-label {
   font-size: 10px;
   color: var(--sidebar-fg-dim);

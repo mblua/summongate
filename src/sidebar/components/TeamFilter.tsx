@@ -24,7 +24,7 @@ const TeamFilter: Component = () => {
             >
               <option value="">All</option>
               <option value={NO_TEAM}>No team</option>
-              <For each={sessionsStore.teams}>
+              <For each={sessionsStore.teams.filter((t) => t.visible !== false)}>
                 {(team) => <option value={team.id}>{team.name}</option>}
               </For>
             </select>
