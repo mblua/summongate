@@ -28,6 +28,14 @@ const DEFAULT_CONTEXT: &str = r#"# AgentsCommander Context
 
 You are running inside an AgentsCommander session — a terminal session manager that coordinates multiple AI agents.
 
+## CLI executable
+
+`agentscommander.exe` is **not** in PATH. Use the full path via the `LOCALAPPDATA` environment variable (the directory name contains a space, so always quote):
+
+```
+"$LOCALAPPDATA/Agents Commander/agentscommander.exe"
+```
+
 ## Session credentials
 
 Your session token and agent root are provided on demand. To request them, output the marker:
