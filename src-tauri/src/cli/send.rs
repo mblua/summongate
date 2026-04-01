@@ -16,9 +16,14 @@ pub struct SendArgs {
     #[arg(long)]
     pub to: String,
 
-    /// Message body (required unless --command is used)
+    /// Message body (required unless --command or --message-file is used)
     #[arg(long, default_value = "")]
     pub message: String,
+
+    /// Path to a file containing the message body. Alternative to --message
+    /// that avoids shell quoting issues. Takes priority over --message.
+    #[arg(long)]
+    pub message_file: Option<String>,
 
     /// Delivery mode: active-only, wake, wake-and-sleep
     #[arg(long, default_value = "wake")]
@@ -128,9 +133,22 @@ pub fn execute(args: SendArgs) -> i32 {
         return 1;
     }
 
-    // Require at least --message or --command
-    if args.message.is_empty() && args.command.is_none() {
-        eprintln!("Error: --message or --command is required");
+    // Resolve message body: --message-file takes priority over --message
+    let message_body = if let Some(ref file_path) = args.message_file {
+        match std::fs::read_to_string(file_path) {
+            Ok(content) => content.trim_end().to_string(),
+            Err(e) => {
+                eprintln!("Error: failed to read message file '{}': {}", file_path, e);
+                return 1;
+            }
+        }
+    } else {
+        args.message.clone()
+    };
+
+    // Require at least --message/--message-file or --command
+    if message_body.is_empty() && args.command.is_none() {
+        eprintln!("Error: --message, --message-file, or --command is required");
         return 1;
     }
 
@@ -159,7 +177,7 @@ pub fn execute(args: SendArgs) -> i32 {
         token: args.token,
         from: sender.clone(),
         to: args.to.clone(),
-        body: args.message,
+        body: message_body,
         mode: args.mode,
         get_output: args.get_output,
         request_id: request_id.clone(),
