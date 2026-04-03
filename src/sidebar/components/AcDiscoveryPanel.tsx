@@ -31,13 +31,8 @@ const AcDiscoveryPanel: Component = () => {
   };
 
   const handleReplicaClick = (replica: AcAgentReplica, wg: AcWorkgroup) => {
-    // Use the repo path as CWD when exactly 1 repo is assigned,
-    // so the agent launches directly in its working repo
-    const cwd = replica.repoPaths.length === 1
-      ? replica.repoPaths[0]
-      : replica.path;
     SessionAPI.create({
-      cwd,
+      cwd: replica.path,
       sessionName: `${wg.name}/${replica.name}`,
       agentId: replica.preferredAgentId,
     });
