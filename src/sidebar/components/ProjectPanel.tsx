@@ -4,6 +4,7 @@ import { SessionAPI, WindowAPI } from "../../shared/ipc";
 import { isTauri } from "../../shared/platform";
 import { projectStore } from "../stores/project";
 import { sessionsStore } from "../stores/sessions";
+import SessionItem from "./SessionItem";
 
 /** Build the session name used to link a replica to its session */
 function replicaSessionName(wg: AcWorkgroup, replica: AcAgentReplica): string {
@@ -113,30 +114,47 @@ const ProjectPanel: Component = () => {
                       <Show when={!wgCollapsed()}>
                         <For each={wg.agents}>
                           {(replica) => {
-                            const repoCount = () => replica.repoPaths.length;
-                            const branchLabel = () => {
-                              if (repoCount() === 1) return replica.repoBranch ?? "1 repo";
-                              if (repoCount() > 1) return "multi-repo";
-                              return null;
-                            };
-                            const dotClass = () => replicaDotClass(wg, replica);
+                            const session = () => replicaSession(wg, replica);
                             return (
-                              <div
-                                class="ac-discovery-item"
-                                onClick={() => handleReplicaClick(replica, wg)}
-                                title={replica.path}
+                              <Show
+                                when={session()}
+                                fallback={
+                                  (() => {
+                                    const repoCount = () => replica.repoPaths.length;
+                                    const branchLabel = () => {
+                                      if (repoCount() === 1) return replica.repoBranch ?? "1 repo";
+                                      if (repoCount() > 1) return "multi-repo";
+                                      return null;
+                                    };
+                                    const dotClass = () => replicaDotClass(wg, replica);
+                                    return (
+                                      <div
+                                        class="ac-discovery-item"
+                                        onClick={() => handleReplicaClick(replica, wg)}
+                                        title={replica.path}
+                                      >
+                                        <div class={`session-item-status ${dotClass()}`} />
+                                        <div class="ac-discovery-item-info">
+                                          <span class="ac-discovery-item-name">{replica.name}</span>
+                                          <div class="ac-discovery-badges">
+                                            <Show when={branchLabel()}>
+                                              <span class="ac-discovery-badge branch">{branchLabel()}</span>
+                                            </Show>
+                                            <span class="ac-discovery-badge team">replica</span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })()
+                                }
                               >
-                                <div class={`session-item-status ${dotClass()}`} />
-                                <div class="ac-discovery-item-info">
-                                  <span class="ac-discovery-item-name">{replica.name}</span>
-                                  <div class="ac-discovery-badges">
-                                    <Show when={branchLabel()}>
-                                      <span class="ac-discovery-badge branch">{branchLabel()}</span>
-                                    </Show>
-                                    <span class="ac-discovery-badge team">replica</span>
-                                  </div>
-                                </div>
-                              </div>
+                                {(s) => (
+                                  <SessionItem
+                                    session={s()}
+                                    isActive={s().id === sessionsStore.activeId}
+                                  />
+                                )}
+                              </Show>
                             );
                           }}
                         </For>
