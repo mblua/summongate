@@ -32,7 +32,7 @@ const AcDiscoveryPanel: Component = () => {
 
   const handleReplicaClick = (replica: AcAgentReplica, wg: AcWorkgroup) => {
     SessionAPI.create({
-      cwd: wg.repoPath || wg.path,
+      cwd: replica.path,
       sessionName: `${wg.name}/${replica.name}`,
       agentId: replica.preferredAgentId,
     });
