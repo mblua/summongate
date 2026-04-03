@@ -201,14 +201,24 @@ const TerminalView: Component = () => {
     next.terminal.focus();
 
     if (isBrowser) {
-      // Browser mode: fit xterm to fill the container, resize the PTY
-      // to match. Claude Code redraws for the new size — content fills
-      // the terminal naturally with zero black space.
-      requestAnimationFrame(() => {
-        syncViewport(sessionId);
+      // Browser mode: match xterm to PTY dimensions first so the
+      // screen snapshot renders correctly, then fit to container.
+      requestAnimationFrame(async () => {
+        if (sessionId !== activeSessionId) return;
+        // 1. Get current PTY size (no snapshot yet)
+        const size = await PtyAPI.getPtySize(sessionId).catch(() => null);
+        if (size && sessionId === activeSessionId) {
+          next.terminal.resize(size.cols, size.rows);
+        }
+        // 2. Subscribe — snapshot arrives via pty_output with matching dimensions
+        if (sessionId === activeSessionId) {
+          await PtyAPI.subscribe(sessionId);
+        }
+        // 3. Now fit to container — PTY resize triggers program redraw
         requestAnimationFrame(() => {
-          if (sessionId !== activeSessionId) return;
-          PtyAPI.subscribe(sessionId);
+          if (sessionId === activeSessionId) {
+            syncViewport(sessionId);
+          }
         });
       });
     } else {
