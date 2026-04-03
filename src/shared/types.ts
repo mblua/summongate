@@ -209,6 +209,25 @@ export interface AgentInfo {
   isCoordinatorOf: string[];
 }
 
+// AC-new discovery types
+
+export interface AcAgentMatrix {
+  name: string;
+  path: string;
+  roleExists: boolean;
+}
+
+export interface AcTeam {
+  name: string;
+  agents: string[];
+  coordinator: string | null;
+}
+
+export interface AcDiscoveryResult {
+  agents: AcAgentMatrix[];
+  teams: AcTeam[];
+}
+
 // Dark Factory component props
 
 export interface OrgChartProps {

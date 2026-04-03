@@ -29,6 +29,7 @@ import { settingsStore } from "../shared/stores/settings";
 import Titlebar from "./components/Titlebar";
 import TeamFilter from "./components/TeamFilter";
 import SessionList from "./components/SessionList";
+import AcDiscoveryPanel from "./components/AcDiscoveryPanel";
 import Toolbar from "./components/Toolbar";
 import "./styles/sidebar.css";
 
@@ -182,6 +183,7 @@ const SidebarApp: Component = () => {
       <Titlebar />
       <TeamFilter />
       <SessionList />
+      <AcDiscoveryPanel />
       <Toolbar />
     </div>
   );

@@ -11,6 +11,7 @@ import type {
   DarkFactoryConfig,
   PhoneMessage,
   AgentInfo,
+  AcDiscoveryResult,
 } from "./types";
 
 // Select transport based on runtime environment
@@ -241,6 +242,11 @@ export const PhoneAPI = {
   listAgents: () => transport.invoke<AgentInfo[]>("phone_list_agents"),
   ackMessages: (agentName: string, messageIds: string[]) =>
     transport.invoke<void>("phone_ack_messages", { agentName, messageIds }),
+};
+
+// AC Discovery API
+export const AcDiscoveryAPI = {
+  discover: () => transport.invoke<AcDiscoveryResult>("discover_ac_agents"),
 };
 
 // Agent Creator API

@@ -2014,3 +2014,118 @@ html, body, #root {
   opacity: 0.35;
   cursor: not-allowed;
 }
+
+/* AC Discovery Panel */
+.ac-discovery-panel {
+  border-top: 1px solid var(--sidebar-border);
+  margin-top: var(--spacing-xs);
+}
+
+.ac-discovery-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px var(--spacing-md);
+  border: none;
+  background: transparent;
+  color: var(--sidebar-fg-dim);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+  text-align: left;
+}
+
+.ac-discovery-header:hover {
+  color: var(--sidebar-fg);
+}
+
+.ac-discovery-chevron {
+  font-size: 10px;
+  transition: transform var(--transition-fast);
+  display: inline-block;
+}
+
+.ac-discovery-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.ac-discovery-title {
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-size: 9px;
+}
+
+.ac-discovery-count {
+  margin-left: auto;
+  font-size: 9px;
+  opacity: 0.5;
+}
+
+.ac-discovery-list {
+  padding: 0 0 var(--spacing-xs) 0;
+}
+
+.ac-discovery-item {
+  display: flex;
+  align-items: center;
+  padding: 4px var(--spacing-md) 4px calc(var(--spacing-md) + 6px);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.ac-discovery-item:hover {
+  background: var(--sidebar-hover);
+}
+
+.ac-discovery-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.ac-discovery-item-name {
+  font-size: var(--font-size-sm);
+  color: var(--sidebar-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ac-discovery-prefix {
+  color: var(--sidebar-fg-dim);
+}
+
+.ac-discovery-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.ac-discovery-badge {
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.ac-discovery-badge.team {
+  background: rgba(0, 212, 255, 0.12);
+  color: var(--sidebar-accent);
+}
+
+.ac-discovery-badge.coord {
+  background: rgba(234, 179, 8, 0.15);
+  color: #eab308;
+}
+
+.ac-discovery-badge.no-role {
+  background: rgba(255, 59, 92, 0.12);
+  color: var(--status-exited);
+}

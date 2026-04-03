@@ -1,3 +1,4 @@
+pub mod ac_discovery;
 pub mod agent_creator;
 pub mod config;
 pub mod dark_factory;
