@@ -28,7 +28,7 @@ import { bridgesStore } from "./stores/bridges";
 import { projectStore } from "./stores/project";
 import { settingsStore } from "../shared/stores/settings";
 import Titlebar from "./components/Titlebar";
-import Toolbar from "./components/Toolbar";
+import ActionBar from "./components/ActionBar";
 import ProjectPanel from "./components/ProjectPanel";
 import TeamFilter from "./components/TeamFilter";
 import SessionList from "./components/SessionList";
@@ -187,7 +187,7 @@ const SidebarApp: Component = () => {
   return (
     <div class="sidebar-layout">
       <Titlebar />
-      <Toolbar />
+      <ActionBar />
       <div class="sidebar-scrollable">
         <ProjectPanel />
         <div class="sidebar-section-header">Sesiones de Agentes</div>
