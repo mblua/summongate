@@ -6,7 +6,6 @@ import {
   PtyAPI,
   SessionAPI,
   onPtyOutput,
-  onPtyResized,
   onSessionDestroyed,
 } from "../../shared/ipc";
 import { isBrowser } from "../../shared/platform";
@@ -19,8 +18,6 @@ interface SessionTerminal {
   terminal: Terminal;
   fitAddon: FitAddon;
   inputBuffer: string;
-  ptyRows?: number;
-  ptyCols?: number;
 }
 
 const TerminalView: Component = () => {
@@ -28,7 +25,6 @@ const TerminalView: Component = () => {
   let activeSessionId: string | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let unlistenPtyOutput: UnlistenFn | null = null;
-  let unlistenPtyResized: UnlistenFn | null = null;
   let unlistenSessionDestroyed: UnlistenFn | null = null;
 
   const terminals = new Map<string, SessionTerminal>();
@@ -47,28 +43,19 @@ const TerminalView: Component = () => {
   };
 
   const scheduleViewportSync = (sessionId: string) => {
-    if (isBrowser) {
-      // Browser mode: recalculate font size for locked PTY dimensions
-      requestAnimationFrame(() => {
-        if (sessionId !== activeSessionId) return;
-        const entry = terminals.get(sessionId);
-        if (entry?.ptyRows && entry?.ptyCols) {
-          lockToPtyDimensions(entry, entry.ptyRows, entry.ptyCols);
-        }
-      });
-      return;
-    }
-
+    // In browser mode, never resize the PTY — the Tauri terminal controls it.
+    // The browser is a read-only mirror; only fit xterm locally.
+    const skip = isBrowser;
     requestAnimationFrame(() => {
       if (sessionId !== activeSessionId) {
         return;
       }
 
-      syncViewport(sessionId);
+      syncViewport(sessionId, skip);
 
       requestAnimationFrame(() => {
         if (sessionId === activeSessionId) {
-          syncViewport(sessionId);
+          syncViewport(sessionId, skip);
         }
       });
     });
@@ -205,33 +192,6 @@ const TerminalView: Component = () => {
     return entry;
   };
 
-  /**
-   * Lock the browser xterm.js to exact PTY columns, scaling font size
-   * so ptyCols fill the container width. Rows are set to ptyRows but
-   * if they don't fit vertically that's fine — excess goes to scrollback,
-   * which is normal terminal behavior.
-   */
-  const lockToPtyDimensions = (entry: SessionTerminal, ptyRows: number, ptyCols: number) => {
-    const rect = entry.container.getBoundingClientRect();
-    if (rect.height === 0 || rect.width === 0) return;
-
-    // Use fitAddon to measure how many cols fit at the current font size
-    const dims = entry.fitAddon.proposeDimensions();
-    if (!dims || dims.cols === 0) return;
-
-    const currentFontSize = entry.terminal.options.fontSize || 14;
-
-    // Scale font so that ptyCols exactly fill the container width.
-    // Height adjusts naturally — rows that don't fit go to scrollback.
-    const scale = dims.cols / ptyCols;
-    const newFontSize = Math.max(Math.floor(currentFontSize * scale), 6);
-    entry.terminal.options.fontSize = newFontSize;
-    entry.terminal.resize(ptyCols, ptyRows);
-
-    entry.ptyRows = ptyRows;
-    entry.ptyCols = ptyCols;
-  };
-
   const showSessionTerminal = (sessionId: string) => {
     const next = createSessionTerminal(sessionId);
 
@@ -247,14 +207,14 @@ const TerminalView: Component = () => {
     next.terminal.focus();
 
     if (isBrowser) {
-      // Browser mode: dimension-locked mirror. Get PTY size and lock
-      // xterm dimensions BEFORE subscribing, so the snapshot renders
-      // at the correct size (the broadcast arrives before the response).
+      // Browser mode: fit xterm to fill the container naturally, then
+      // subscribe for the screen snapshot. The snapshot is compacted
+      // server-side (leading empty rows stripped) so content renders
+      // from the top regardless of PTY cursor position.
       requestAnimationFrame(() => {
-        if (sessionId !== activeSessionId) return;
-        PtyAPI.getPtySize(sessionId).then((size) => {
-          if (sessionId !== activeSessionId || !size) return;
-          lockToPtyDimensions(next, size.rows, size.cols);
+        syncViewport(sessionId, true); // fit only, no PTY resize
+        requestAnimationFrame(() => {
+          if (sessionId !== activeSessionId) return;
           PtyAPI.subscribe(sessionId);
         });
       });
@@ -283,9 +243,7 @@ const TerminalView: Component = () => {
       }
 
       entry.terminal.write(new Uint8Array(data), () => {
-        // Browser mode: dimension-locked mirror has no scrollback to manage.
-        // scrollToBottom would push content off-screen if called before resize.
-        if (sessionId === activeSessionId && !isBrowser) {
+        if (sessionId === activeSessionId) {
           entry.terminal.scrollToBottom();
         }
       });
@@ -294,15 +252,6 @@ const TerminalView: Component = () => {
     unlistenSessionDestroyed = await onSessionDestroyed(({ id }) => {
       disposeSessionTerminal(id);
     });
-
-    if (isBrowser) {
-      unlistenPtyResized = await onPtyResized(({ sessionId, rows, cols }) => {
-        const entry = terminals.get(sessionId);
-        if (entry) {
-          lockToPtyDimensions(entry, rows, cols);
-        }
-      });
-    }
   });
 
   createEffect(() => {
@@ -324,7 +273,6 @@ const TerminalView: Component = () => {
 
   onCleanup(() => {
     unlistenPtyOutput?.();
-    unlistenPtyResized?.();
     unlistenSessionDestroyed?.();
     resizeObserver?.disconnect();
 

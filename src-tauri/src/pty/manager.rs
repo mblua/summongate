@@ -457,12 +457,14 @@ impl PtyManager {
 
     /// Get a screen snapshot for replay to late-joining WS clients.
     /// Returns the visible screen content as raw bytes that can be written to xterm.js.
+    /// Leading empty rows are stripped so content renders from the top in browser
+    /// terminals that may have more rows than the PTY viewport.
     pub fn get_screen_snapshot(&self, id: Uuid) -> Option<Vec<u8>> {
         let parsers = self.screen_parsers.lock().ok()?;
         let parser = parsers.get(&id)?;
         let screen = parser.screen();
-        // contents_formatted returns ANSI escape sequences that reproduce the screen state
-        Some(screen.contents_formatted())
+        let raw = screen.contents_formatted();
+        Some(compact_snapshot(screen, &raw))
     }
 
     /// Get the current PTY dimensions (rows, cols) from the vt100 parser.
@@ -658,4 +660,111 @@ async fn inject_credentials(app: &AppHandle, session_id: Uuid) {
     } else {
         log::info!("[ACRC] credentials injected for session {}", session_id);
     }
+}
+
+/// Strip leading empty rows from a vt100 screen snapshot by offsetting
+/// absolute cursor positioning (CUP/VPA) sequences. Preserves all SGR
+/// formatting. The input is the output of `Screen::contents_formatted()`.
+fn compact_snapshot(screen: &vt100::Screen, raw: &[u8]) -> Vec<u8> {
+    if raw.is_empty() {
+        return Vec::new();
+    }
+
+    let (rows, cols) = screen.size();
+
+    // Find first row with non-whitespace content
+    let mut first_row: u16 = 0;
+    let mut found = false;
+    for row in 0..rows {
+        for col in 0..cols {
+            if let Some(cell) = screen.cell(row, col) {
+                if cell.has_contents() {
+                    first_row = row;
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if found {
+            break;
+        }
+    }
+
+    if !found || first_row == 0 {
+        return raw.to_vec();
+    }
+
+    // Rewrite CUP (ESC[row;colH) and VPA (ESC[rowd) sequences,
+    // subtracting first_row from the row parameter.
+    let mut out = Vec::with_capacity(raw.len());
+    let mut i = 0;
+
+    while i < raw.len() {
+        if raw[i] == 0x1b && i + 1 < raw.len() && raw[i + 1] == b'[' {
+            let seq_start = i;
+            i += 2;
+
+            // Collect parameter bytes (0x30-0x3F: digits, semicolons)
+            let params_start = i;
+            while i < raw.len() && (0x30..=0x3F).contains(&raw[i]) {
+                i += 1;
+            }
+            let params_end = i;
+
+            // Skip intermediate bytes (0x20-0x2F)
+            while i < raw.len() && (0x20..=0x2F).contains(&raw[i]) {
+                i += 1;
+            }
+
+            if i >= raw.len() {
+                out.extend_from_slice(&raw[seq_start..i]);
+                break;
+            }
+
+            let final_byte = raw[i];
+            i += 1;
+
+            if final_byte == b'H' || final_byte == b'f' {
+                // CUP — offset the row parameter
+                if let Ok(params_str) = std::str::from_utf8(&raw[params_start..params_end]) {
+                    let mut parts = params_str.splitn(2, ';');
+                    let row: u16 = parts
+                        .next()
+                        .and_then(|s| if s.is_empty() { Some(1) } else { s.parse().ok() })
+                        .unwrap_or(1);
+                    let col: u16 = parts
+                        .next()
+                        .and_then(|s| if s.is_empty() { Some(1) } else { s.parse().ok() })
+                        .unwrap_or(1);
+                    let new_row = if row > first_row { row - first_row } else { 1 };
+                    use std::io::Write as _;
+                    write!(out, "\x1b[{};{}H", new_row, col).ok();
+                } else {
+                    out.extend_from_slice(&raw[seq_start..i]);
+                }
+            } else if final_byte == b'd' {
+                // VPA — offset the row parameter
+                if let Ok(params_str) = std::str::from_utf8(&raw[params_start..params_end]) {
+                    let row: u16 = if params_str.is_empty() {
+                        1
+                    } else {
+                        params_str.parse().unwrap_or(1)
+                    };
+                    let new_row = if row > first_row { row - first_row } else { 1 };
+                    use std::io::Write as _;
+                    write!(out, "\x1b[{}d", new_row).ok();
+                } else {
+                    out.extend_from_slice(&raw[seq_start..i]);
+                }
+            } else {
+                // Other CSI sequences pass through unchanged
+                out.extend_from_slice(&raw[seq_start..i]);
+            }
+        } else {
+            out.push(raw[i]);
+            i += 1;
+        }
+    }
+
+    out
 }

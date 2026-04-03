@@ -82,14 +82,6 @@
   min-height: 0;
 }
 
-/* Dimension-locked mirror: xterm canvas may be shorter than the container
-   due to aspect ratio constraints. Let it size to content (top-aligned),
-   so the gap falls below the terminal, not above. */
-.browser-terminal .terminal-instance .xterm {
-  height: auto !important;
-  padding: 2px 0 0 4px;
-}
-
 /* xterm.js requires content-box for correct cell measurements.
    The global `* { box-sizing: border-box }` in terminal.css breaks this.
    The existing override targets .terminal-container which doesn't exist
@@ -97,6 +89,10 @@
 .browser-terminal .xterm,
 .browser-terminal .xterm * {
   box-sizing: content-box;
+}
+
+.browser-terminal .terminal-instance .xterm {
+  padding: 2px 0 0 4px;
 }
 
 /* Mobile: stack vertically with horizontal divider */
