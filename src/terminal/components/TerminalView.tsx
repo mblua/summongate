@@ -206,25 +206,24 @@ const TerminalView: Component = () => {
   };
 
   /**
-   * Lock the browser xterm.js to exact PTY dimensions, scaling font size
-   * so the terminal fills the container. This makes the browser a true
-   * 1:1 mirror — all absolute cursor positioning works correctly.
+   * Lock the browser xterm.js to exact PTY columns, scaling font size
+   * so ptyCols fill the container width. Rows are set to ptyRows but
+   * if they don't fit vertically that's fine — excess goes to scrollback,
+   * which is normal terminal behavior.
    */
   const lockToPtyDimensions = (entry: SessionTerminal, ptyRows: number, ptyCols: number) => {
     const rect = entry.container.getBoundingClientRect();
     if (rect.height === 0 || rect.width === 0) return;
 
-    // Use fitAddon to measure how many cells fit at the current font size
+    // Use fitAddon to measure how many cols fit at the current font size
     const dims = entry.fitAddon.proposeDimensions();
-    if (!dims || dims.cols === 0 || dims.rows === 0) return;
+    if (!dims || dims.cols === 0) return;
 
     const currentFontSize = entry.terminal.options.fontSize || 14;
 
-    // Scale font so that ptyCols/ptyRows fill the container
-    const scaleCols = dims.cols / ptyCols;
-    const scaleRows = dims.rows / ptyRows;
-    const scale = Math.min(scaleCols, scaleRows);
-
+    // Scale font so that ptyCols exactly fill the container width.
+    // Height adjusts naturally — rows that don't fit go to scrollback.
+    const scale = dims.cols / ptyCols;
     const newFontSize = Math.max(Math.floor(currentFontSize * scale), 6);
     entry.terminal.options.fontSize = newFontSize;
     entry.terminal.resize(ptyCols, ptyRows);
