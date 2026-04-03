@@ -199,6 +199,117 @@ pub fn execute(args: ListPeersArgs) -> i32 {
         }
     }
 
+    // ── WG replica discovery ──────────────────────────────────────────────
+    // Scan repo_paths for .ac-new/wg-*/__agent_* replicas
+    let settings = crate::config::settings::load_settings();
+    for base_path in &settings.repo_paths {
+        let base = Path::new(base_path);
+        if !base.is_dir() {
+            continue;
+        }
+        // Check base and its immediate children (same pattern as ac_discovery)
+        let mut dirs_to_check = vec![base.to_path_buf()];
+        if let Ok(entries) = std::fs::read_dir(base) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if !name.starts_with('.') {
+                        dirs_to_check.push(p);
+                    }
+                }
+            }
+        }
+        for repo_dir in dirs_to_check {
+            let ac_new_dir = repo_dir.join(".ac-new");
+            if !ac_new_dir.is_dir() {
+                continue;
+            }
+            let wg_entries = match std::fs::read_dir(&ac_new_dir) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            for wg_entry in wg_entries.flatten() {
+                let wg_path = wg_entry.path();
+                if !wg_path.is_dir() {
+                    continue;
+                }
+                let wg_name = match wg_path.file_name().and_then(|n| n.to_str()) {
+                    Some(n) if n.starts_with("wg-") => n.to_string(),
+                    _ => continue,
+                };
+                // Derive team name from WG name: "wg-1-ac-devs" → "ac-devs"
+                let wg_team = wg_name
+                    .strip_prefix("wg-")
+                    .and_then(|s| s.split_once('-').map(|(_, rest)| rest))
+                    .unwrap_or(&wg_name)
+                    .to_string();
+
+                let agent_entries = match std::fs::read_dir(&wg_path) {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                for agent_entry in agent_entries.flatten() {
+                    let agent_path = agent_entry.path();
+                    if !agent_path.is_dir() {
+                        continue;
+                    }
+                    let agent_dir = match agent_path.file_name().and_then(|n| n.to_str()) {
+                        Some(n) if n.starts_with("__agent_") => n.to_string(),
+                        _ => continue,
+                    };
+                    let agent_short = agent_dir
+                        .strip_prefix("__agent_")
+                        .unwrap_or(&agent_dir)
+                        .to_string();
+                    let peer_name = format!("{}/{}", wg_name, agent_short);
+
+                    // Skip self
+                    if peer_name == my_name {
+                        continue;
+                    }
+                    // Skip duplicates
+                    if peers.iter().any(|p| p.name == peer_name) {
+                        continue;
+                    }
+
+                    // Ensure .agentscommander runtime dirs exist
+                    let replica_ac = agent_path.join(".agentscommander");
+                    let _ = std::fs::create_dir_all(replica_ac.join("inbox"));
+                    let _ = std::fs::create_dir_all(replica_ac.join("outbox"));
+
+                    let status = if replica_ac.join("active").exists() {
+                        "active"
+                    } else {
+                        "unknown"
+                    };
+
+                    // Read role from the identity matrix's Role.md
+                    let role = agent_path.join("config.json")
+                        .to_str()
+                        .and_then(|_| std::fs::read_to_string(agent_path.join("config.json")).ok())
+                        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                        .and_then(|v| v.get("identity")?.as_str().map(String::from))
+                        .map(|identity_ref| {
+                            let matrix_dir = agent_path.join(&identity_ref);
+                            read_role(&matrix_dir.to_string_lossy())
+                        })
+                        .unwrap_or_else(|| "WG replica agent.".to_string());
+
+                    peers.push(PeerInfo {
+                        name: peer_name,
+                        path: agent_path.to_string_lossy().to_string(),
+                        status: status.to_string(),
+                        role,
+                        teams: vec![wg_team.clone()],
+                        last_coding_agent: None,
+                        coding_agents: HashMap::new(),
+                    });
+                }
+            }
+        }
+    }
+
     // Output as JSON
     match serde_json::to_string_pretty(&peers) {
         Ok(json) => {

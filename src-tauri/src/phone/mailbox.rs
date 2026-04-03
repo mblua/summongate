@@ -774,6 +774,34 @@ impl MailboxPoller {
             }
         }
 
+        // Check WG replicas: "wg-name/agent" → scan repo_paths for .ac-new/wg-name/__agent_agent/
+        if agent_name.starts_with("wg-") {
+            if let Some((wg_name, agent_short)) = agent_name.split_once('/') {
+                let replica_dir = format!("__agent_{}", agent_short);
+                for rp in &cfg.repo_paths {
+                    let base = std::path::Path::new(rp);
+                    if !base.is_dir() {
+                        continue;
+                    }
+                    let mut dirs_to_check = vec![base.to_path_buf()];
+                    if let Ok(entries) = std::fs::read_dir(base) {
+                        for entry in entries.flatten() {
+                            let p = entry.path();
+                            if p.is_dir() {
+                                dirs_to_check.push(p);
+                            }
+                        }
+                    }
+                    for dir in dirs_to_check {
+                        let candidate = dir.join(".ac-new").join(wg_name).join(&replica_dir);
+                        if candidate.is_dir() {
+                            return Some(candidate.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+
         None
     }
 

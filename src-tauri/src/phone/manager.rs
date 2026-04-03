@@ -37,6 +37,16 @@ pub fn can_communicate(from: &str, to: &str, config: &DarkFactoryConfig) -> bool
         }
     }
 
+    // WG-scoped check: agents in the same workgroup can communicate
+    // WG names follow the pattern "wg-X-name/agent"
+    if from.starts_with("wg-") && to.starts_with("wg-") {
+        let from_wg = from.split('/').next().unwrap_or("");
+        let to_wg = to.split('/').next().unwrap_or("");
+        if !from_wg.is_empty() && from_wg == to_wg {
+            return true;
+        }
+    }
+
     // Cross-team coordinator links check
     for link in &config.coordinator_links {
         let sup_team = config.teams.iter().find(|t| t.id == link.supervisor_team_id);
