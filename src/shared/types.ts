@@ -228,6 +228,7 @@ export interface AcAgentReplica {
   name: string;
   path: string;
   identityPath?: string;
+  preferredAgentId?: string;
 }
 
 export interface AcWorkgroup {

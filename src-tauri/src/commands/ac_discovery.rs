@@ -37,6 +37,8 @@ pub struct AcAgentReplica {
     pub path: String,
     /// Resolved identity path from config.json "identity" field
     pub identity_path: Option<String>,
+    /// Preferred coding agent ID inherited from the identity matrix
+    pub preferred_agent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -202,17 +204,29 @@ pub async fn discover_ac_agents(
                                     .unwrap_or(&wg_dir_name)
                                     .to_string();
 
-                                let identity_path = wg_path.join("config.json")
+                                let replica_config = wg_path.join("config.json")
                                     .exists()
                                     .then(|| std::fs::read_to_string(wg_path.join("config.json")).ok())
                                     .flatten()
-                                    .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+                                    .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok());
+
+                                let identity_path = replica_config.as_ref()
                                     .and_then(|v| v.get("identity")?.as_str().map(String::from));
+
+                                // Resolve identity to matrix dir and read its lastCodingAgent
+                                let preferred_agent_id = identity_path.as_ref().and_then(|rel| {
+                                    let matrix_dir = wg_path.join(rel);
+                                    let matrix_config = matrix_dir.join("config.json");
+                                    std::fs::read_to_string(&matrix_config).ok()
+                                        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                                        .and_then(|v| v.get("tooling")?.get("lastCodingAgent")?.as_str().map(String::from))
+                                });
 
                                 wg_agents.push(AcAgentReplica {
                                     name: replica_name,
                                     path: wg_path.to_string_lossy().to_string(),
                                     identity_path,
+                                    preferred_agent_id,
                                 });
                             }
                         }

@@ -34,6 +34,7 @@ const AcDiscoveryPanel: Component = () => {
     SessionAPI.create({
       cwd: wg.repoPath || wg.path,
       sessionName: `${wg.name}/${replica.name}`,
+      agentId: replica.preferredAgentId,
     });
   };
 
