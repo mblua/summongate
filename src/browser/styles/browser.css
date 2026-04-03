@@ -61,6 +61,8 @@
 /* --- Terminal pane --- */
 .browser-terminal {
   flex: 1;
+  display: flex;
+  min-height: 0;
   height: 100%;
   min-width: 0;
   overflow: hidden;
@@ -72,14 +74,19 @@
 }
 
 .browser-terminal .terminal-layout {
+  display: flex;
+  flex-direction: column;
   height: 100% !important;
   width: 100% !important;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* Ensure xterm fills the terminal container */
 .browser-terminal .terminal-host {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
 }
 
 /* xterm.js requires content-box for correct cell measurements.
@@ -92,6 +99,7 @@
 }
 
 .browser-terminal .terminal-instance .xterm {
+  height: 100%;
   padding: 2px 0 0 4px;
 }
 

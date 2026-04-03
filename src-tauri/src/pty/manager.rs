@@ -347,16 +347,21 @@ impl PtyManager {
                             }
                         }
 
-                        // Feed vt100 screen parser for WS replay
+                        let mut ws_data = None;
+
+                        // Feed vt100 screen parser for WS replay and compact
+                        // absolute row positioning for browser mirrors.
                         if let Ok(mut parsers) = screen_parsers.lock() {
                             if let Some(parser) = parsers.get_mut(&id) {
                                 parser.process(&data);
+                                ws_data = Some(compact_live_output(parser.screen(), &data));
                             }
                         }
 
                         // Broadcast to WebSocket clients (non-blocking)
                         if let Some(ref bc) = ws_broadcaster {
-                            bc.broadcast_pty_output(&session_id_str, &data);
+                            let compacted = ws_data.as_deref().unwrap_or(&data);
+                            bc.broadcast_pty_output(&session_id_str, compacted);
                         }
 
                         let payload = PtyOutputPayload {
@@ -672,30 +677,48 @@ fn compact_snapshot(screen: &vt100::Screen, raw: &[u8]) -> Vec<u8> {
 
     let (rows, cols) = screen.size();
 
-    // Find first row with non-whitespace content
-    let mut first_row: u16 = 0;
-    let mut found = false;
+    let Some(first_row) = first_visible_row(screen, rows, cols) else {
+        return raw.to_vec();
+    };
+
+    if first_row == 0 {
+        return raw.to_vec();
+    }
+
+    rewrite_absolute_rows(raw, first_row)
+}
+
+/// Rewrite absolute row positioning in a live PTY chunk so browser mirrors
+/// can render content from the top even when the real PTY cursor lives near
+/// the bottom of a shorter viewport.
+fn compact_live_output(screen: &vt100::Screen, raw: &[u8]) -> Vec<u8> {
+    let (rows, cols) = screen.size();
+    let Some(first_row) = first_visible_row(screen, rows, cols) else {
+        return raw.to_vec();
+    };
+
+    if first_row == 0 {
+        return raw.to_vec();
+    }
+
+    rewrite_absolute_rows(raw, first_row)
+}
+
+fn first_visible_row(screen: &vt100::Screen, rows: u16, cols: u16) -> Option<u16> {
     for row in 0..rows {
         for col in 0..cols {
             if let Some(cell) = screen.cell(row, col) {
                 if cell.has_contents() {
-                    first_row = row;
-                    found = true;
-                    break;
+                    return Some(row);
                 }
             }
         }
-        if found {
-            break;
-        }
     }
 
-    if !found || first_row == 0 {
-        return raw.to_vec();
-    }
+    None
+}
 
-    // Rewrite CUP (ESC[row;colH) and VPA (ESC[rowd) sequences,
-    // subtracting first_row from the row parameter.
+fn rewrite_absolute_rows(raw: &[u8], first_row: u16) -> Vec<u8> {
     let mut out = Vec::with_capacity(raw.len());
     let mut i = 0;
 
