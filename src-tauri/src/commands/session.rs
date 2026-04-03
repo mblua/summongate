@@ -181,7 +181,9 @@ pub async fn create_session(
     // If agentId provided and shell not explicitly set, use that agent's command
     let (shell, shell_args, agent_label) = match (&shell, &agent_id) {
         (None, Some(aid)) => {
+            log::info!("[BUG#1] (None, Some(aid)) branch hit. aid={:?}", aid);
             if let Some(agent) = cfg.agents.iter().find(|a| a.id == *aid) {
+                log::info!("[BUG#1] Agent FOUND: id={:?}, label={:?}, command={:?}", agent.id, agent.label, agent.command);
                 let parts: Vec<String> = agent.command.split_whitespace().map(|s| s.to_string()).collect();
                 if let Some((cmd, args)) = parts.split_first() {
                     (cmd.clone(), args.to_vec(), Some(agent.label.clone()))
@@ -189,10 +191,12 @@ pub async fn create_session(
                     (cfg.default_shell.clone(), cfg.default_shell_args.clone(), Some(agent.label.clone()))
                 }
             } else {
+                log::info!("[BUG#1] Agent NOT found for aid={:?}. Falling back to default shell.", aid);
                 (cfg.default_shell.clone(), cfg.default_shell_args.clone(), None)
             }
         }
         _ => {
+            log::info!("[BUG#1] Catch-all branch hit. shell={:?}, agent_id={:?}", shell, agent_id);
             let s = shell.unwrap_or_else(|| cfg.default_shell.clone());
             let sa = shell_args.unwrap_or_else(|| cfg.default_shell_args.clone());
             let al = agent_id.as_ref().and_then(|aid| {
@@ -201,6 +205,8 @@ pub async fn create_session(
             (s, sa, al)
         }
     };
+
+    log::info!("[BUG#1] FINAL resolved: shell={:?}, args={:?}, label={:?}", shell, shell_args, agent_label);
 
     drop(cfg);
 

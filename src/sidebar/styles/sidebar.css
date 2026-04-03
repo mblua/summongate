@@ -620,7 +620,7 @@ html, body, #root {
 }
 
 .modal-container {
-  background: #0e0e18;
+  background: var(--sidebar-surface);
   border: 1px solid var(--sidebar-border);
   border-radius: 8px;
   width: 92%;
@@ -641,7 +641,7 @@ html, body, #root {
 .modal-title {
   font-weight: 600;
   font-size: var(--font-size-lg);
-  color: #ffffff;
+  color: var(--sidebar-fg);
 }
 
 .modal-close {
@@ -777,7 +777,7 @@ html, body, #root {
 }
 
 .settings-input {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--sidebar-hover);
   border: 1px solid var(--sidebar-border);
   border-radius: var(--radius-sm);
   color: var(--sidebar-fg);
@@ -798,7 +798,7 @@ html, body, #root {
 }
 
 .settings-button-card {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--sidebar-hover);
   border: 1px solid var(--sidebar-border);
   border-radius: var(--radius-md);
   padding: var(--spacing-sm);
@@ -813,7 +813,7 @@ html, body, #root {
   gap: var(--spacing-sm);
   font-weight: 600;
   font-size: var(--font-size-md);
-  color: #ffffff;
+  color: var(--sidebar-fg);
   margin-bottom: var(--spacing-xs);
 }
 
@@ -1407,14 +1407,14 @@ html, body, #root {
 }
 
 .settings-tab.active {
-  color: #ffffff;
+  color: var(--sidebar-fg);
   border-bottom-color: var(--sidebar-accent);
 }
 
 /* Settings select */
 .settings-select {
   appearance: none;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--sidebar-hover);
   border: 1px solid var(--sidebar-border);
   border-radius: var(--radius-sm);
   color: var(--sidebar-fg);

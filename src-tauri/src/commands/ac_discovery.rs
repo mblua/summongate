@@ -126,6 +126,8 @@ pub async fn discover_ac_agents(
                         .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
                         .and_then(|v| v.get("tooling")?.get("lastCodingAgent")?.as_str().map(String::from));
 
+                    log::info!("[BUG#1] AC Discovery agent: dir={:?}, preferred_agent_id={:?}", dir_name, preferred_agent_id);
+
                     agents.push(AcAgentMatrix {
                         name: display_name,
                         path: path.to_string_lossy().to_string(),
