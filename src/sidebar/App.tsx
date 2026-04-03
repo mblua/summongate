@@ -33,6 +33,7 @@ import ProjectPanel from "./components/ProjectPanel";
 import TeamFilter from "./components/TeamFilter";
 import SessionList from "./components/SessionList";
 import AcDiscoveryPanel from "./components/AcDiscoveryPanel";
+import CollapsibleSection from "./components/CollapsibleSection";
 import "./styles/sidebar.css";
 
 const SidebarApp: Component = () => {
@@ -190,9 +191,11 @@ const SidebarApp: Component = () => {
       <ActionBar />
       <div class="sidebar-scrollable">
         <ProjectPanel />
-        <div class="sidebar-section-header">Sesiones de Agentes</div>
-        <TeamFilter />
-        <SessionList />
+        <CollapsibleSection title="Projects" />
+        <CollapsibleSection title="Agent Sessions">
+          <TeamFilter />
+          <SessionList />
+        </CollapsibleSection>
         <AcDiscoveryPanel />
       </div>
     </div>

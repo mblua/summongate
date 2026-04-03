@@ -1761,6 +1761,29 @@ html, body, #root {
   margin-top: var(--spacing-xs);
 }
 
+.collapsible-section-header {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.collapsible-section-header:hover {
+  color: var(--sidebar-fg);
+}
+
+.collapsible-chevron {
+  font-size: 10px;
+  line-height: 1;
+  transition: transform 150ms ease-out;
+  display: inline-block;
+}
+
+.collapsible-chevron.expanded {
+  transform: rotate(90deg);
+}
+
 /* New session animation */
 @keyframes slide-in {
   from { opacity: 0; transform: translateY(-8px); }
