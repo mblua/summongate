@@ -2129,3 +2129,32 @@ html, body, #root {
   background: rgba(255, 59, 92, 0.12);
   color: var(--status-exited);
 }
+
+/* Workgroup styles */
+.ac-wg-group {
+  margin-bottom: 2px;
+}
+
+.ac-wg-header {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px var(--spacing-md) 4px calc(var(--spacing-md) + 6px);
+}
+
+.ac-wg-name {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--sidebar-fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ac-wg-brief {
+  font-size: 10px;
+  color: var(--sidebar-fg-dim);
+  opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

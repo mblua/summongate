@@ -30,9 +30,36 @@ pub struct AcTeam {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AcAgentReplica {
+    /// Display name: agent dir name with __agent_ prefix stripped
+    pub name: String,
+    /// Absolute path to the replica agent directory
+    pub path: String,
+    /// Resolved identity path from config.json "identity" field
+    pub identity_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcWorkgroup {
+    /// Workgroup name (wg-* dir name)
+    pub name: String,
+    /// Absolute path to the workgroup directory
+    pub path: String,
+    /// First line of BRIEF.md (if exists)
+    pub brief: Option<String>,
+    /// Replica agents inside this workgroup
+    pub agents: Vec<AcAgentReplica>,
+    /// Absolute path to the first repo-* directory found (for CWD)
+    pub repo_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AcDiscoveryResult {
     pub agents: Vec<AcAgentMatrix>,
     pub teams: Vec<AcTeam>,
+    pub workgroups: Vec<AcWorkgroup>,
 }
 
 /// Derive agent display name from its path.
@@ -62,6 +89,7 @@ pub async fn discover_ac_agents(
     let cfg = settings.read().await;
     let mut agents: Vec<AcAgentMatrix> = Vec::new();
     let mut teams: Vec<AcTeam> = Vec::new();
+    let mut workgroups: Vec<AcWorkgroup> = Vec::new();
 
     for base_path in &cfg.repo_paths {
         let base = Path::new(base_path);
@@ -136,6 +164,70 @@ pub async fn discover_ac_agents(
                     });
                 }
 
+                // Workgroups: wg-*
+                if dir_name.starts_with("wg-") {
+                    let brief = path.join("BRIEF.md")
+                        .exists()
+                        .then(|| std::fs::read_to_string(path.join("BRIEF.md")).ok())
+                        .flatten()
+                        .and_then(|content| content.lines().next().map(|l| l.trim_start_matches("# ").to_string()));
+
+                    // Find first repo-* directory for CWD
+                    let repo_path = std::fs::read_dir(&path)
+                        .ok()
+                        .and_then(|entries| {
+                            entries.flatten().find(|e| {
+                                let n = e.file_name();
+                                let name = n.to_string_lossy();
+                                name.starts_with("repo-") && e.path().is_dir()
+                            })
+                        })
+                        .map(|e| e.path().to_string_lossy().to_string());
+
+                    // Scan __agent_* replicas inside the WG
+                    let mut wg_agents: Vec<AcAgentReplica> = Vec::new();
+                    if let Ok(wg_entries) = std::fs::read_dir(&path) {
+                        for wg_entry in wg_entries.flatten() {
+                            let wg_path = wg_entry.path();
+                            if !wg_path.is_dir() {
+                                continue;
+                            }
+                            let wg_dir_name = match wg_path.file_name().and_then(|n| n.to_str()) {
+                                Some(n) => n.to_string(),
+                                None => continue,
+                            };
+                            if wg_dir_name.starts_with("__agent_") {
+                                let replica_name = wg_dir_name
+                                    .strip_prefix("__agent_")
+                                    .unwrap_or(&wg_dir_name)
+                                    .to_string();
+
+                                let identity_path = wg_path.join("config.json")
+                                    .exists()
+                                    .then(|| std::fs::read_to_string(wg_path.join("config.json")).ok())
+                                    .flatten()
+                                    .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+                                    .and_then(|v| v.get("identity")?.as_str().map(String::from));
+
+                                wg_agents.push(AcAgentReplica {
+                                    name: replica_name,
+                                    path: wg_path.to_string_lossy().to_string(),
+                                    identity_path,
+                                });
+                            }
+                        }
+                    }
+                    wg_agents.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+                    workgroups.push(AcWorkgroup {
+                        name: dir_name.clone(),
+                        path: path.to_string_lossy().to_string(),
+                        brief,
+                        agents: wg_agents,
+                        repo_path,
+                    });
+                }
+
                 // Teams: _team_*
                 if dir_name.starts_with("_team_") {
                     let team_name = dir_name
@@ -174,9 +266,10 @@ pub async fn discover_ac_agents(
         }
     }
 
-    // Sort agents alphabetically
+    // Sort alphabetically
     agents.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     teams.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    workgroups.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
-    Ok(AcDiscoveryResult { agents, teams })
+    Ok(AcDiscoveryResult { agents, teams, workgroups })
 }

@@ -1,11 +1,13 @@
 import { Component, createSignal, For, Show, onMount } from "solid-js";
-import type { AcAgentMatrix, AcTeam } from "../../shared/types";
+import type { AcAgentMatrix, AcTeam, AcWorkgroup, AcAgentReplica } from "../../shared/types";
 import { AcDiscoveryAPI, SessionAPI } from "../../shared/ipc";
 
 const AcDiscoveryPanel: Component = () => {
   const [agents, setAgents] = createSignal<AcAgentMatrix[]>([]);
   const [teams, setTeams] = createSignal<AcTeam[]>([]);
+  const [workgroups, setWorkgroups] = createSignal<AcWorkgroup[]>([]);
   const [collapsed, setCollapsed] = createSignal(false);
+  const [wgCollapsed, setWgCollapsed] = createSignal(false);
   const [loading, setLoading] = createSignal(true);
 
   /** Find which teams an agent belongs to */
@@ -28,11 +30,19 @@ const AcDiscoveryPanel: Component = () => {
     });
   };
 
+  const handleReplicaClick = (replica: AcAgentReplica, wg: AcWorkgroup) => {
+    SessionAPI.create({
+      cwd: wg.repoPath || wg.path,
+      sessionName: `${wg.name}/${replica.name}`,
+    });
+  };
+
   onMount(async () => {
     try {
       const result = await AcDiscoveryAPI.discover();
       setAgents(result.agents);
       setTeams(result.teams);
+      setWorkgroups(result.workgroups);
     } catch (e) {
       console.error("AC discovery failed:", e);
     } finally {
@@ -41,7 +51,7 @@ const AcDiscoveryPanel: Component = () => {
   });
 
   return (
-    <Show when={!loading() && agents().length > 0}>
+    <Show when={!loading() && (agents().length > 0 || workgroups().length > 0)}>
       <div class="ac-discovery-panel">
         <button
           class="ac-discovery-header"
@@ -91,6 +101,50 @@ const AcDiscoveryPanel: Component = () => {
               }}
             </For>
           </div>
+        </Show>
+        <Show when={workgroups().length > 0}>
+          <button
+            class="ac-discovery-header"
+            onClick={() => setWgCollapsed((c) => !c)}
+          >
+            <span class="ac-discovery-chevron" classList={{ collapsed: wgCollapsed() }}>
+              &#x25BE;
+            </span>
+            <span class="ac-discovery-title">Workgroups</span>
+            <span class="ac-discovery-count">{workgroups().length}</span>
+          </button>
+          <Show when={!wgCollapsed()}>
+            <div class="ac-discovery-list">
+              <For each={workgroups()}>
+                {(wg) => (
+                  <div class="ac-wg-group">
+                    <div class="ac-wg-header" title={wg.path}>
+                      <span class="ac-wg-name">{wg.name}</span>
+                      <Show when={wg.brief}>
+                        <span class="ac-wg-brief">{wg.brief}</span>
+                      </Show>
+                    </div>
+                    <For each={wg.agents}>
+                      {(replica) => (
+                        <div
+                          class="ac-discovery-item"
+                          onClick={() => handleReplicaClick(replica, wg)}
+                          title={replica.path}
+                        >
+                          <div class="ac-discovery-item-info">
+                            <span class="ac-discovery-item-name">{replica.name}</span>
+                            <div class="ac-discovery-badges">
+                              <span class="ac-discovery-badge team">replica</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
         </Show>
       </div>
     </Show>

@@ -224,9 +224,24 @@ export interface AcTeam {
   coordinator: string | null;
 }
 
+export interface AcAgentReplica {
+  name: string;
+  path: string;
+  identityPath?: string;
+}
+
+export interface AcWorkgroup {
+  name: string;
+  path: string;
+  brief?: string;
+  agents: AcAgentReplica[];
+  repoPath?: string;
+}
+
 export interface AcDiscoveryResult {
   agents: AcAgentMatrix[];
   teams: AcTeam[];
+  workgroups: AcWorkgroup[];
 }
 
 // Dark Factory component props
