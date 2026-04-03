@@ -67,21 +67,10 @@ pub async fn create_session_inner(
                 lower == "--continue" || lower == "-c"
             });
             if !already_has_continue {
-                let config_path = std::path::Path::new(&cwd)
-                    .join(".agentscommander")
-                    .join("config.json");
-                let has_prior_session = tokio::fs::read_to_string(&config_path).await
-                    .ok()
-                    .and_then(|c| serde_json::from_str::<AgentLocalConfig>(&c).ok())
-                    .map(|cfg| cfg.tooling.coding_agents.contains_key(aid))
-                    .unwrap_or(false);
-                let has_transcripts = std::path::Path::new(&cwd)
-                    .join(".agentscommander")
-                    .join("transcripts")
-                    .read_dir()
-                    .map(|mut d| d.next().is_some())
-                    .unwrap_or(false);
-                if has_prior_session && has_transcripts {
+                // Check the app's own session persistence for a prior session with this CWD
+                let persisted = crate::config::sessions_persistence::load_sessions();
+                let has_prior_app_session = persisted.iter().any(|s| s.working_directory == cwd);
+                if has_prior_app_session {
                     if executable_basename(&shell) == "cmd" {
                         if let Some(last) = shell_args.last_mut() {
                             if executable_basename(last) == "claude" || last.to_lowercase().contains("claude") {
