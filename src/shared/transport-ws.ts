@@ -18,8 +18,8 @@ export class WsTransport implements Transport {
   private url: string;
 
   constructor() {
-    const token =
-      sessionStorage.getItem("remoteToken") || "";
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("remoteToken") || sessionStorage.getItem("remoteToken") || "";
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     this.url = `${proto}//${location.host}/ws?token=${token}`;
     this.connect();
