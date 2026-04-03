@@ -71,6 +71,7 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
   const [repoResults, setRepoResults] = createSignal<RepoMatch[]>([]);
   const [repoQuery, setRepoQuery] = createSignal("");
   const [searchingRepos, setSearchingRepos] = createSignal(false);
+  const [webServerRunning, setWebServerRunning] = createSignal(false);
   const [addingMemberToTeam, setAddingMemberToTeam] = createSignal<string | null>(null);
   const [newTeamName, setNewTeamName] = createSignal("");
   const [teamNameError, setTeamNameError] = createSignal("");
@@ -83,9 +84,14 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
   const s = () => settings.data;
 
   onMount(async () => {
-    const [loaded, df] = await Promise.all([SettingsAPI.get(), DarkFactoryAPI.get()]);
+    const [loaded, df, wsRunning] = await Promise.all([
+      SettingsAPI.get(),
+      DarkFactoryAPI.get(),
+      SettingsAPI.getWebServerStatus().catch(() => false),
+    ]);
     setSettings("data", loaded);
     setDfConfig(df);
+    setWebServerRunning(wsRunning);
   });
 
   // ── Generic field updater ──
@@ -474,20 +480,45 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
               updateField("webServerEnabled", e.currentTarget.checked)
             }
           />
-          <span>Enable web server (requires restart)</span>
+          <span>Enable web server</span>
         </label>
         <Show when={settings.data!.webServerEnabled}>
-          <button
-            class="settings-add-btn"
-            style="margin-top: 6px"
-            onClick={() => {
-              SettingsAPI.openWebRemote().catch((err) =>
-                console.error("Failed to open web remote:", err)
-              );
-            }}
-          >
-            Open in Browser
-          </button>
+          <div style="display: flex; gap: 6px; margin-top: 6px; align-items: center;">
+            <button
+              class="settings-add-btn"
+              onClick={async () => {
+                try {
+                  const running = await SettingsAPI.getWebServerStatus();
+                  if (running) {
+                    await SettingsAPI.stopWebServer();
+                    setWebServerRunning(false);
+                  } else {
+                    await SettingsAPI.startWebServer();
+                    setWebServerRunning(true);
+                  }
+                } catch (err) {
+                  console.error("Web server toggle failed:", err);
+                }
+              }}
+            >
+              {webServerRunning() ? "Stop Server" : "Start Server"}
+            </button>
+            <button
+              class="settings-add-btn"
+              disabled={!webServerRunning()}
+              style={!webServerRunning() ? "opacity: 0.4; cursor: default;" : ""}
+              onClick={() => {
+                SettingsAPI.openWebRemote().catch((err) =>
+                  console.error("Failed to open web remote:", err)
+                );
+              }}
+            >
+              Open in Browser
+            </button>
+            <span style={`font-size: 11px; opacity: 0.6;`}>
+              {webServerRunning() ? "● Running" : "○ Stopped"}
+            </span>
+          </div>
         </Show>
       </div>
 

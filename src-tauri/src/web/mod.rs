@@ -12,6 +12,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
+use tauri::Manager;
 use tower_http::services::ServeDir;
 
 use crate::config::settings::SettingsState;
@@ -40,7 +41,10 @@ pub fn start_server(
     settings: SettingsState,
     broadcaster: WsBroadcaster,
     app_handle: tauri::AppHandle,
-) {
+) -> tauri::async_runtime::JoinHandle<()> {
+    // Resolve dist path BEFORE moving app_handle into WsState
+    let dist_path = resolve_dist_path(&app_handle);
+
     let ws_state = WsState {
         session_mgr,
         pty_mgr,
@@ -53,9 +57,6 @@ pub fn start_server(
         web_token,
         ws_state,
     };
-
-    // Resolve dist path for static file serving
-    let dist_path = resolve_dist_path();
 
     let mut app = Router::new()
         .route("/ws", get(ws_handler))
@@ -71,7 +72,7 @@ pub fn start_server(
         log::warn!("[web-server] No dist/ directory found — static file serving disabled");
     }
 
-    tauri::async_runtime::spawn(async move {
+    let handle = tauri::async_runtime::spawn(async move {
         let addr: SocketAddr = format!("{}:{}", bind, port)
             .parse()
             .expect("Invalid bind address");
@@ -87,6 +88,8 @@ pub fn start_server(
             .await
             .expect("Web server error");
     });
+
+    handle
 }
 
 /// WebSocket upgrade handler with token validation.
@@ -203,21 +206,30 @@ fn handle_binary_message(state: &WsState, data: &[u8]) {
 }
 
 /// Resolve the dist/ directory for static file serving.
-fn resolve_dist_path() -> Option<std::path::PathBuf> {
-    // Try relative to executable first (production)
+fn resolve_dist_path(app_handle: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    // 1. Tauri resource dir (production NSIS bundle)
+    if let Ok(resource_dir) = app_handle.path().resource_dir() {
+        let dist = resource_dir.join("dist");
+        if dist.exists() && dist.is_dir() {
+            log::info!("[web-server] Found dist via resource_dir: {:?}", dist);
+            return Some(dist);
+        }
+    }
+
+    // 2. Relative to executable
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
             let dist = parent.join("dist");
             if dist.exists() && dist.is_dir() {
+                log::info!("[web-server] Found dist next to exe: {:?}", dist);
                 return Some(dist);
             }
-            // Try one level up (dev mode: target/debug/exe → project root/dist)
+            // Dev mode: target/debug/exe → project root/dist
             if let Some(grandparent) = parent.parent() {
                 let dist = grandparent.join("dist");
                 if dist.exists() && dist.is_dir() {
                     return Some(dist);
                 }
-                // Two levels up (target/debug → target → project root)
                 if let Some(ggparent) = grandparent.parent() {
                     let dist = ggparent.join("dist");
                     if dist.exists() && dist.is_dir() {
@@ -228,16 +240,12 @@ fn resolve_dist_path() -> Option<std::path::PathBuf> {
         }
     }
 
-    // Try CWD/dist
-    let cwd_dist = std::path::PathBuf::from("dist");
-    if cwd_dist.exists() && cwd_dist.is_dir() {
-        return Some(cwd_dist);
-    }
-
-    // Try CWD/../dist (when CWD is src-tauri/)
-    let cwd_parent_dist = std::path::PathBuf::from("../dist");
-    if cwd_parent_dist.exists() && cwd_parent_dist.is_dir() {
-        return Some(cwd_parent_dist.canonicalize().unwrap_or(cwd_parent_dist));
+    // 3. CWD fallbacks (dev mode)
+    for path in &["dist", "../dist"] {
+        let p = std::path::PathBuf::from(path);
+        if p.exists() && p.is_dir() {
+            return Some(p.canonicalize().unwrap_or(p));
+        }
     }
 
     None

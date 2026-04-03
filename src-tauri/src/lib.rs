@@ -35,6 +35,9 @@ pub fn resolve_bin_label() -> String {
 /// Tracks which sessions are currently detached into their own windows.
 pub type DetachedSessionsState = Arc<Mutex<HashSet<uuid::Uuid>>>;
 
+/// Handle to the running web server task, allowing stop control.
+pub type WebServerHandle = Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>;
+
 /// Master token generated at app startup. Allows bypassing team validation (can_reach).
 /// Ephemeral: lives only in memory, never persisted to disk.
 /// Field is private — use `matches()` for constant-time comparison.
@@ -190,6 +193,9 @@ pub fn run() {
         .manage(settings)
         .manage(detached_sessions.clone())
         .manage(transcript_writer)
+        .manage(web_access_token.clone())
+        .manage(broadcaster.clone())
+        .manage(WebServerHandle::default())
         .setup(move |app| {
             use tauri::WebviewWindowBuilder;
             use tauri::WebviewUrl;
@@ -219,7 +225,7 @@ pub fn run() {
                     let port = web_settings.web_server_port;
                     println!("[web-token] Remote URL: http://{}:{}/?window=sidebar&remoteToken={}", bind, port, web_access_token.value());
 
-                    web::start_server(
+                    let join_handle = web::start_server(
                         bind,
                         port,
                         web_token_for_server,
@@ -229,6 +235,9 @@ pub fn run() {
                         broadcaster_for_web,
                         app.handle().clone(),
                     );
+
+                    let ws_handle = app.state::<WebServerHandle>();
+                    *ws_handle.lock().unwrap() = Some(join_handle);
                 }
             }
 
@@ -403,6 +412,9 @@ pub fn run() {
             commands::voice::voice_had_typing,
             commands::config::save_debug_logs,
             commands::config::open_web_remote,
+            commands::config::start_web_server,
+            commands::config::stop_web_server,
+            commands::config::get_web_server_status,
             commands::agent_creator::pick_folder,
             commands::agent_creator::create_agent_folder,
             commands::agent_creator::write_claude_settings_local,

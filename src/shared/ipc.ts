@@ -81,6 +81,9 @@ export const SettingsAPI = {
   update: (settings: AppSettings) =>
     transport.invoke<void>("update_settings", { newSettings: settings }),
   openWebRemote: () => transport.invoke<void>("open_web_remote"),
+  startWebServer: () => transport.invoke<boolean>("start_web_server"),
+  stopWebServer: () => transport.invoke<boolean>("stop_web_server"),
+  getWebServerStatus: () => transport.invoke<boolean>("get_web_server_status"),
 };
 
 export const ReposAPI = {
