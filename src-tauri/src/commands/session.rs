@@ -75,7 +75,13 @@ pub async fn create_session_inner(
                     .and_then(|c| serde_json::from_str::<AgentLocalConfig>(&c).ok())
                     .map(|cfg| cfg.tooling.coding_agents.contains_key(aid))
                     .unwrap_or(false);
-                if has_prior_session {
+                let has_transcripts = std::path::Path::new(&cwd)
+                    .join(".agentscommander")
+                    .join("transcripts")
+                    .read_dir()
+                    .map(|mut d| d.next().is_some())
+                    .unwrap_or(false);
+                if has_prior_session && has_transcripts {
                     if executable_basename(&shell) == "cmd" {
                         if let Some(last) = shell_args.last_mut() {
                             if executable_basename(last) == "claude" || last.to_lowercase().contains("claude") {
