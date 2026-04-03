@@ -201,25 +201,13 @@ const TerminalView: Component = () => {
     next.terminal.focus();
 
     if (isBrowser) {
-      // Browser mode: match xterm to PTY dimensions first so the
-      // screen snapshot renders correctly, then fit to container.
-      requestAnimationFrame(async () => {
+      // Browser mode: fit xterm to container and resize PTY to match.
+      // The program receives SIGWINCH and redraws at the new size.
+      // We skip the snapshot replay because it was rendered for the
+      // native terminal's dimensions and would look garbled here.
+      requestAnimationFrame(() => {
         if (sessionId !== activeSessionId) return;
-        // 1. Get current PTY size (no snapshot yet)
-        const size = await PtyAPI.getPtySize(sessionId).catch(() => null);
-        if (size && sessionId === activeSessionId) {
-          next.terminal.resize(size.cols, size.rows);
-        }
-        // 2. Subscribe — snapshot arrives via pty_output with matching dimensions
-        if (sessionId === activeSessionId) {
-          await PtyAPI.subscribe(sessionId);
-        }
-        // 3. Now fit to container — PTY resize triggers program redraw
-        requestAnimationFrame(() => {
-          if (sessionId === activeSessionId) {
-            syncViewport(sessionId);
-          }
-        });
+        syncViewport(sessionId);
       });
     } else {
       next.terminal.scrollToBottom();
