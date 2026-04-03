@@ -34,7 +34,13 @@ export async function initZoom(windowType: WindowType): Promise<() => void> {
       const { getCurrentWebview } = await import("@tauri-apps/api/webview");
       await getCurrentWebview().setZoom(currentZoom);
     } else {
-      document.documentElement.style.zoom = String(currentZoom);
+      // Browser mode: apply zoom to #root, not <html>.
+      // Zooming <html> breaks xterm FitAddon measurements — it calculates
+      // cell counts against pre-zoom container dimensions, producing content
+      // that overflows when rendered at the zoomed scale.
+      document.documentElement.style.zoom = "";
+      const root = document.getElementById("root");
+      if (root) root.style.zoom = String(currentZoom);
     }
   }
 

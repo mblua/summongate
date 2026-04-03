@@ -192,13 +192,13 @@ html, body, #root {
   inset: 0;
 }
 
-.terminal-container .xterm {
+.terminal-host .xterm {
   height: 100%;
   padding: 2px 0 0 4px;
 }
 
-.terminal-container .xterm,
-.terminal-container .xterm * {
+.terminal-host .xterm,
+.terminal-host .xterm * {
   box-sizing: content-box;
 }
 
