@@ -1059,17 +1059,16 @@ impl MailboxPoller {
 
             match sessions.iter().find(|s| s.id == session_id.to_string()) {
                 Some(session) => format!(
-                    concat!(
-                        "\n",
-                        "# === TOKEN REFRESHED ===\n",
-                        "# Your previous token was invalid. Here is your updated token:\n",
-                        "# New session token: {token}\n",
-                        "#\n",
-                        "# Updated send command:\n",
-                        "#   \"agentscommander-new.exe\" send --token {token} --root \"{root}\" --to \"<agent_name>\" --message \"...\" --mode wake\n",
-                        "# === End Token Refresh ===\n",
-                        "\r",
-                    ),
+                    "\n\
+                    # === TOKEN REFRESHED ===\n\
+                    # Your previous token was invalid. Here is your updated token:\n\
+                    # New session token: {token}\n\
+                    #\n\
+                    # Updated send command:\n\
+                    #   \"{exe}\" send --token {token} --root \"{root}\" --to \"<agent_name>\" --message \"...\" --mode wake\n\
+                    # === End Token Refresh ===\n\
+                    \r",
+                    exe = crate::config::profile::exe_name(),
                     token = session.token,
                     root = session.working_directory,
                 ),

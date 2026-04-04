@@ -4,7 +4,9 @@ import { applyWindowLayout } from "../../shared/window-layout";
 import { isTauri } from "../../shared/platform";
 
 declare const __APP_VERSION__: string;
+declare const __BUILD_PROFILE__: string;
 const APP_VERSION = __APP_VERSION__;
+const BUILD_PROFILE = __BUILD_PROFILE__;
 
 const Titlebar: Component = () => {
   const [layoutOpen, setLayoutOpen] = createSignal(false);
@@ -52,6 +54,9 @@ const Titlebar: Component = () => {
         </span>
         {import.meta.env.DEV && (
           <span class="titlebar-dev-badge" data-tauri-drag-region>DEV</span>
+        )}
+        {BUILD_PROFILE === "stage" && (
+          <span class="titlebar-stage-badge" data-tauri-drag-region>STAGE</span>
         )}
       </div>
       <div class="titlebar-controls">

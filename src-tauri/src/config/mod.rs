@@ -1,20 +1,16 @@
 pub mod claude_settings;
 pub mod dark_factory;
+pub mod profile;
 pub mod session_context;
 pub mod sessions_persistence;
 pub mod settings;
 
 use std::path::PathBuf;
 
-/// Returns the app config directory.
-/// Uses `.agentscommander-dev` when running from a debug build (target\debug),
-/// `.agentscommander` otherwise (production).
+/// Returns the app config directory based on build profile.
+/// DEV: `~/.agentscommander-new-dev`
+/// PROD/STAGE: `~/.agentscommander` (shared)
 pub fn config_dir() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
-    let dir_name = if cfg!(debug_assertions) {
-        ".agentscommander-new-dev"
-    } else {
-        ".agentscommander-new"
-    };
-    Some(home.join(dir_name))
+    Some(home.join(profile::config_dir_name()))
 }

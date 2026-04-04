@@ -3,7 +3,9 @@ import { terminalStore } from "../stores/terminal";
 import iconUrl from "../../assets/icon-16.png";
 import { isTauri } from "../../shared/platform";
 declare const __APP_VERSION__: string;
+declare const __BUILD_PROFILE__: string;
 const APP_VERSION = __APP_VERSION__;
+const BUILD_PROFILE = __BUILD_PROFILE__;
 
 const Titlebar: Component<{ detached?: boolean }> = (props) => {
   const handleMinimize = async () => {
@@ -39,6 +41,9 @@ const Titlebar: Component<{ detached?: boolean }> = (props) => {
         </span>
         {import.meta.env.DEV && (
           <span class="titlebar-dev-badge" data-tauri-drag-region>DEV</span>
+        )}
+        {BUILD_PROFILE === "stage" && (
+          <span class="titlebar-stage-badge" data-tauri-drag-region>STAGE</span>
         )}
         <Show when={props.detached}>
           <span class="titlebar-detached-badge">DETACHED</span>

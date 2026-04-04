@@ -12,6 +12,9 @@ export default defineConfig({
   envPrefix: ["VITE_", "TAURI_"],
   define: {
     __APP_VERSION__: JSON.stringify(tauriConf.version),
+    __BUILD_PROFILE__: JSON.stringify(
+      process.env.BUILD_PROFILE || (process.env.TAURI_DEBUG ? "dev" : "prod")
+    ),
   },
   build: {
     target: "esnext",

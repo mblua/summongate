@@ -77,6 +77,19 @@ html, body, #root {
   vertical-align: middle;
 }
 
+.titlebar-stage-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  margin-left: 6px;
+  background: rgba(255, 170, 0, 0.18);
+  color: #ffaa00;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+
 .titlebar-controls {
   display: flex;
   gap: 0;

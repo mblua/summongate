@@ -104,13 +104,7 @@ fn read_role(repo_path: &str) -> String {
 
 /// Load the teams.json from the global config directory.
 fn load_teams_config() -> Option<serde_json::Value> {
-    let home = dirs::home_dir()?;
-    let dir_name = if cfg!(debug_assertions) {
-        ".agentscommander-new-dev"
-    } else {
-        ".agentscommander-new"
-    };
-    let teams_path = home.join(dir_name).join("teams.json");
+    let teams_path = crate::config::config_dir()?.join("teams.json");
     let content = std::fs::read_to_string(teams_path).ok()?;
     serde_json::from_str(&content).ok()
 }

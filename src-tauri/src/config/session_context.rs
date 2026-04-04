@@ -11,7 +11,7 @@ pub fn ensure_global_context() -> Result<String, String> {
     if !file_path.exists() {
         std::fs::create_dir_all(&config_dir)
             .map_err(|e| format!("Failed to create config dir: {}", e))?;
-        std::fs::write(&file_path, DEFAULT_CONTEXT)
+        std::fs::write(&file_path, &default_context())
             .map_err(|e| format!("Failed to write AgentsCommanderContext.md: {}", e))?;
         log::info!("Created global AgentsCommanderContext.md at {:?}", file_path);
     }
@@ -351,16 +351,21 @@ fn simple_hash(s: &str) -> u64 {
     hash
 }
 
-const DEFAULT_CONTEXT: &str = r#"# AgentsCommander Context
+/// Generate the default agent context with profile-aware exe/product names.
+fn default_context() -> String {
+    let exe = super::profile::exe_name();
+    let product = super::profile::product_name();
+    format!(
+r#"# AgentsCommander Context
 
 You are running inside an AgentsCommander session — a terminal session manager that coordinates multiple AI agents.
 
 ## CLI executable
 
-`agentscommander-new.exe` is **not** in PATH. Use the full path via the `LOCALAPPDATA` environment variable (the directory name contains a space, so always quote):
+`{exe}` is **not** in PATH. Use the full path via the `LOCALAPPDATA` environment variable (the directory name contains a space, so always quote):
 
 ```
-"$LOCALAPPDATA/Agents Commander New/agentscommander-new.exe"
+"$LOCALAPPDATA/{product}/{exe}"
 ```
 
 ## Self-discovery via --help
@@ -368,9 +373,9 @@ You are running inside an AgentsCommander session — a terminal session manager
 The CLI `--help` output is the **primary and authoritative reference** for learning how to use AgentsCommander. Before guessing flags, modes, or behavior, always consult it:
 
 ```
-agentscommander-new.exe --help                  # List all subcommands
-agentscommander-new.exe send --help             # Full docs for sending messages
-agentscommander-new.exe list-peers --help       # Full docs for discovering peers
+{exe} --help                  # List all subcommands
+{exe} send --help             # Full docs for sending messages
+{exe} list-peers --help       # Full docs for discovering peers
 ```
 
 The `--help` text documents every flag, its purpose, accepted values, priority rules, delivery modes, and discovery flows. It is designed to be self-contained — you should not need README, CLAUDE.md, or external docs to use any command correctly.
@@ -398,7 +403,7 @@ Your agent root is your current working directory.
 Fire-and-forget (do NOT use --get-output):
 
 ```
-agentscommander-new.exe send --token <YOUR_TOKEN> --root "<YOUR_ROOT>" --to "<agent_name>" --message "..." --mode wake
+{exe} send --token <YOUR_TOKEN> --root "<YOUR_ROOT>" --to "<agent_name>" --message "..." --mode wake
 ```
 
 The other agent will reply back via your console as a new message.
@@ -408,6 +413,10 @@ After sending, you can stay idle and wait for the reply to arrive.
 ### List available peers
 
 ```
-agentscommander-new.exe list-peers --token <YOUR_TOKEN> --root "<YOUR_ROOT>"
+{exe} list-peers --token <YOUR_TOKEN> --root "<YOUR_ROOT>"
 ```
-"#;
+"#,
+    exe = exe,
+    product = product,
+    )
+}

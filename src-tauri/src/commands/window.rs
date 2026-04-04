@@ -164,7 +164,7 @@ pub async fn open_guide_window(app: AppHandle) -> Result<(), String> {
         "guide",
         WebviewUrl::App("index.html?window=guide".into()),
     )
-    .title("Guide — Agents Commander New")
+    .title(format!("Guide — {}", crate::config::profile::app_title_suffix()))
     .icon(icon)
     .map_err(|e| e.to_string())?
     .inner_size(720.0, 560.0)
@@ -196,7 +196,7 @@ pub async fn open_darkfactory_window(app: AppHandle) -> Result<(), String> {
         "darkfactory",
         WebviewUrl::App("index.html?window=darkfactory".into()),
     )
-    .title("Dark Factory — Agents Commander New")
+    .title(format!("Dark Factory — {}", crate::config::profile::app_title_suffix()))
     .icon(icon)
     .map_err(|e| e.to_string())?
     .inner_size(960.0, 640.0)
