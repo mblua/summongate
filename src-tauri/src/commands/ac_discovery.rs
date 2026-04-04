@@ -168,7 +168,7 @@ impl DiscoveryBranchWatcher {
     }
 
     /// Update the list of replicas to watch from discovered workgroups.
-    /// Pre-seeds the cache with known branch values to avoid spurious events on first poll.
+    /// Does NOT pre-seed the cache — first poll() will push branches to matching sessions.
     pub fn update_replicas(&self, workgroups: &[AcWorkgroup]) {
         let mut entries = Vec::new();
         let mut known_branches: HashMap<String, Option<String>> = HashMap::new();
@@ -212,14 +212,14 @@ impl DiscoveryBranchWatcher {
             );
         }
 
-        // Prune stale entries and pre-seed new ones (preserve live-polled values)
+        // Prune stale cache entries — do NOT pre-seed new ones.
+        // Leaving new entries absent from the cache forces the first poll()
+        // to treat them as "changed" and push the branch to matching sessions.
+        // Pre-seeding prevented this push, leaving restored sessions stale.
         let valid_paths: std::collections::HashSet<&str> =
             entries.iter().map(|e| e.replica_path.as_str()).collect();
         let mut cache = self.cache.lock().unwrap();
         cache.retain(|k, _| valid_paths.contains(k.as_str()));
-        for (path, branch) in known_branches {
-            cache.entry(path).or_insert(branch);
-        }
         drop(cache);
 
         *self.replicas.lock().unwrap() = entries;

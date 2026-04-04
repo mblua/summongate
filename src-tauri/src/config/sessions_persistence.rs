@@ -16,6 +16,12 @@ pub struct PersistedSession {
     /// True for the session that was active when the app closed
     #[serde(default)]
     pub was_active: bool,
+    /// Path to detect git branch from (overrides working_directory for GitWatcher)
+    #[serde(default)]
+    pub git_branch_source: Option<String>,
+    /// Prefix prepended to the detected branch (e.g., "agentscommander" → "agentscommander/main")
+    #[serde(default)]
+    pub git_branch_prefix: Option<String>,
 }
 
 fn sessions_path() -> Option<PathBuf> {
@@ -121,6 +127,8 @@ pub async fn snapshot_sessions(mgr: &SessionManager) -> Vec<PersistedSession> {
             shell_args: strip_auto_injected_continue(&s.shell, &s.shell_args),
             working_directory: s.working_directory.clone(),
             was_active: active_id.as_deref() == Some(&s.id),
+            git_branch_source: s.git_branch_source.clone(),
+            git_branch_prefix: s.git_branch_prefix.clone(),
         })
         .collect();
 
