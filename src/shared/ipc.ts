@@ -281,13 +281,13 @@ export const ProjectAPI = {
 // Agent Creator API
 export const AgentCreatorAPI = {
   pickFolder: (defaultPath?: string) =>
-    invoke<string | null>("pick_folder", { defaultPath: defaultPath ?? null }),
+    transport.invoke<string | null>("pick_folder", { defaultPath: defaultPath ?? null }),
 
   createFolder: (parentPath: string, agentName: string) =>
-    invoke<string>("create_agent_folder", { parentPath, agentName }),
+    transport.invoke<string>("create_agent_folder", { parentPath, agentName }),
 
   writeClaudeSettingsLocal: (agentPath: string) =>
-    invoke<void>("write_claude_settings_local", { agentPath }),
+    transport.invoke<void>("write_claude_settings_local", { agentPath }),
 };
 
 // Guide window
@@ -306,7 +306,7 @@ export function onLastPrompt(
 
 // Dark Factory window
 export const DarkFactoryWindowAPI = {
-  open: () => invoke<void>("open_darkfactory_window"),
+  open: () => transport.invoke<void>("open_darkfactory_window"),
 };
 
 export function onTelegramIncoming(
