@@ -696,6 +696,11 @@ html, body, #root {
   background: var(--sidebar-hover);
 }
 
+.action-bar-dropdown-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .action-bar-icons {
   display: flex;
   align-items: center;
@@ -2072,6 +2077,11 @@ html, body, #root {
 .new-agent-browse-btn:hover {
   background: rgba(0, 212, 255, 0.18);
   border-color: rgba(0, 212, 255, 0.45);
+}
+
+.new-agent-browse-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .new-agent-name-row {
