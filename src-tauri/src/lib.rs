@@ -322,7 +322,7 @@ pub fn run() {
                 .unwrap_or(0.0);
 
             // "SideBar Right" defaults: sidebar on right edge, terminal fills the rest
-            let sidebar_w = 280.0_f64;
+            let sidebar_w = (screen_w * 0.4).round();
             let default_sidebar = config::settings::WindowGeometry {
                 x: primary_x + screen_w - sidebar_w,
                 y: primary_y,
