@@ -85,7 +85,10 @@ const SidebarApp: Component = () => {
     await settingsStore.load();
 
     // Load saved project if any
-    await projectStore.initFromSettings(appSettings.projectPath ?? null);
+    await projectStore.initFromSettings(
+      appSettings.projectPaths ?? [],
+      appSettings.projectPath ?? null,
+    );
 
     // Load all repos for inactive agent display
     try {

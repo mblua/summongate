@@ -135,6 +135,7 @@ export interface AppSettings {
   webServerPort: number;
   webServerBind: string;
   projectPath: string | null;
+  projectPaths: string[];
   sidebarStyle: string;
 }
 
