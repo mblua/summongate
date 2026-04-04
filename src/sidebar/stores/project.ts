@@ -80,6 +80,23 @@ export const projectStore = {
     return { picked, hasAcNew };
   },
 
+  /** Update a replica's branch from the discovery branch watcher */
+  updateReplicaBranch(replicaPath: string, branch: string | null) {
+    const current = project();
+    if (!current) return;
+    setProject({
+      ...current,
+      workgroups: current.workgroups.map((wg) => ({
+        ...wg,
+        agents: wg.agents.map((a) =>
+          a.path === replicaPath
+            ? { ...a, repoBranch: branch ?? undefined }
+            : a
+        ),
+      })),
+    });
+  },
+
   clear() {
     setProject(null);
   },

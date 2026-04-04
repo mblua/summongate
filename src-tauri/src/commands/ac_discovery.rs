@@ -539,7 +539,10 @@ pub async fn create_ac_project(path: String) -> Result<(), String> {
 /// Unlike discover_ac_agents which scans repo_paths from settings,
 /// this targets a specific folder.
 #[tauri::command]
-pub async fn discover_project(path: String) -> Result<AcDiscoveryResult, String> {
+pub async fn discover_project(
+    path: String,
+    branch_watcher: State<'_, Arc<DiscoveryBranchWatcher>>,
+) -> Result<AcDiscoveryResult, String> {
     let base = Path::new(&path);
     if !base.is_dir() {
         return Err(format!("Path is not a directory: {}", path));
@@ -735,6 +738,9 @@ pub async fn discover_project(path: String) -> Result<AcDiscoveryResult, String>
     agents.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     teams.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     workgroups.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+    // Update the branch watcher with discovered replicas
+    branch_watcher.update_replicas(&workgroups);
 
     Ok(AcDiscoveryResult { agents, teams, workgroups })
 }

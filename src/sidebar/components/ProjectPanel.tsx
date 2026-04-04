@@ -1,6 +1,6 @@
-import { Component, For, Show, createSignal } from "solid-js";
+import { Component, For, Show, createSignal, onMount, onCleanup } from "solid-js";
 import type { AcWorkgroup, AcAgentReplica, Session } from "../../shared/types";
-import { SessionAPI, WindowAPI } from "../../shared/ipc";
+import { SessionAPI, WindowAPI, onDiscoveryBranchUpdated } from "../../shared/ipc";
 import { isTauri } from "../../shared/platform";
 import { projectStore } from "../stores/project";
 import { sessionsStore } from "../stores/sessions";
@@ -35,6 +35,15 @@ function replicaDotClass(wg: AcWorkgroup, replica: AcAgentReplica): string {
 
 const ProjectPanel: Component = () => {
   const [collapsed, setCollapsed] = createSignal(false);
+
+  // Listen for replica branch updates from the discovery branch watcher
+  let unlistenBranch: (() => void) | null = null;
+  onMount(async () => {
+    unlistenBranch = await onDiscoveryBranchUpdated((data) => {
+      projectStore.updateReplicaBranch(data.replicaPath, data.branch);
+    });
+  });
+  onCleanup(() => unlistenBranch?.());
 
   const handleReplicaClick = async (replica: AcAgentReplica, wg: AcWorkgroup) => {
     const existing = replicaSession(wg, replica);
@@ -142,6 +151,11 @@ const ProjectPanel: Component = () => {
                                   (() => {
                                     const dotClass = () => replicaDotClass(wg, replica);
                                     const repoName = () => replicaRepoName(replica);
+                                    const branchLabel = () => {
+                                      const name = repoName();
+                                      if (!name) return null;
+                                      return replica.repoBranch ? `${name}/${replica.repoBranch}` : name;
+                                    };
                                     return (
                                       <div
                                         class="ac-discovery-item"
@@ -152,8 +166,8 @@ const ProjectPanel: Component = () => {
                                         <div class="ac-discovery-item-info">
                                           <span class="ac-discovery-item-name">{replica.name}</span>
                                           <div class="ac-discovery-badges">
-                                            <Show when={repoName()}>
-                                              <span class="ac-discovery-badge branch">{repoName()}</span>
+                                            <Show when={branchLabel()}>
+                                              <span class="ac-discovery-badge branch">{branchLabel()}</span>
                                             </Show>
                                           </div>
                                         </div>
