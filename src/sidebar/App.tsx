@@ -74,18 +74,19 @@ const SidebarApp: Component = () => {
     }
     document.addEventListener("mousedown", handleRaiseTerminal);
 
-    // Default layout: sidebar right when no saved geometry
-    if (!appSettings.sidebarGeometry && !appSettings.terminalGeometry) {
-      try {
-        await applyWindowLayout("right");
-      } catch {}
-    }
+    // Always apply Sidebar Right layout on startup
+    try {
+      await applyWindowLayout("right");
+    } catch {}
 
     // Load settings into reactive store (for voice-to-text visibility etc.)
     await settingsStore.load();
 
     // Load saved project if any
-    await projectStore.initFromSettings(appSettings.projectPath ?? null);
+    await projectStore.initFromSettings(
+      appSettings.projectPaths ?? [],
+      appSettings.projectPath ?? null,
+    );
 
     // Load all repos for inactive agent display
     try {

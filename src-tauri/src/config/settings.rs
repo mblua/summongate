@@ -88,9 +88,12 @@ pub struct AppSettings {
     /// Bind address: "127.0.0.1" (local only) or "0.0.0.0" (all interfaces)
     #[serde(default = "default_web_bind")]
     pub web_server_bind: String,
-    /// Currently loaded project path (persisted across restarts)
+    /// Currently loaded project path (legacy single-project, kept for backward compat)
     #[serde(default)]
     pub project_path: Option<String>,
+    /// Currently loaded project paths (multi-project support)
+    #[serde(default)]
+    pub project_paths: Vec<String>,
     /// Sidebar visual style: "classic", "noir-minimal", "card-sections", "command-center"
     #[serde(default = "default_sidebar_style")]
     pub sidebar_style: String,
@@ -163,6 +166,7 @@ impl Default for AppSettings {
             web_server_port: default_web_port(),
             web_server_bind: default_web_bind(),
             project_path: None,
+            project_paths: vec![],
             sidebar_style: default_sidebar_style(),
         }
     }

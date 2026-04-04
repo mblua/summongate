@@ -572,6 +572,10 @@ pub fn run() {
             commands::ac_discovery::discover_project,
             commands::ac_discovery::get_replica_context_files,
             commands::ac_discovery::set_replica_context_files,
+            commands::entity_creation::create_agent_matrix,
+            commands::entity_creation::list_all_agents,
+            commands::entity_creation::create_team,
+            commands::entity_creation::create_workgroup,
         ])
         .build(tauri::generate_context!())
         .expect("error while building application")

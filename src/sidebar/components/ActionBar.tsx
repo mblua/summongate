@@ -15,6 +15,7 @@ const ActionBar: Component = () => {
   const [confirmPath, setConfirmPath] = createSignal<string | null>(null);
   const [toastMsg, setToastMsg] = createSignal<string | null>(null);
   const [isLight, setIsLight] = createSignal(true);
+  const [isPendingDialog, setIsPendingDialog] = createSignal(false);
   let dropdownRef: HTMLDivElement | undefined;
 
   // Click-away to close dropdown
@@ -35,11 +36,17 @@ const ActionBar: Component = () => {
   onCleanup(() => document.removeEventListener("mousedown", onClickAway));
 
   const handleNewProject = async () => {
+    if (isPendingDialog()) return;
     setShowDropdown(false);
-    const { picked, hasAcNew } = await projectStore.pickAndCheck();
-    if (!picked) return;
-    if (!hasAcNew) {
-      await projectStore.createAndLoad(picked);
+    setIsPendingDialog(true);
+    try {
+      const { picked, hasAcNew } = await projectStore.pickAndCheck();
+      if (!picked) return;
+      if (!hasAcNew) {
+        await projectStore.createAndLoad(picked);
+      }
+    } finally {
+      setIsPendingDialog(false);
     }
   };
 
@@ -49,14 +56,20 @@ const ActionBar: Component = () => {
   };
 
   const handleOpenProject = async () => {
+    if (isPendingDialog()) return;
     setShowDropdown(false);
-    const picked = await open({ directory: true, title: "Select AC Project Folder" });
-    if (!picked) return;
-    const hasAcNew = await ProjectAPI.checkPath(picked);
-    if (hasAcNew) {
-      await projectStore.loadProject(picked);
-    } else {
-      showToast("No AC project found in this folder (.ac-new/ not found)");
+    setIsPendingDialog(true);
+    try {
+      const picked = await open({ directory: true, title: "Select AC Project Folder" });
+      if (!picked) return;
+      const hasAcNew = await ProjectAPI.checkPath(picked);
+      if (hasAcNew) {
+        await projectStore.loadProject(picked);
+      } else {
+        showToast("No AC project found in this folder (.ac-new/ not found)");
+      }
+    } finally {
+      setIsPendingDialog(false);
     }
   };
 
@@ -74,6 +87,7 @@ const ActionBar: Component = () => {
         <div class="action-bar-dropdown" ref={dropdownRef}>
           <button
             class="action-bar-dropdown-btn"
+            disabled={isPendingDialog()}
             onClick={() => setShowDropdown(!showDropdown())}
           >
             New / Open
@@ -83,10 +97,10 @@ const ActionBar: Component = () => {
           </button>
           <Show when={showDropdown()}>
             <div class="action-bar-menu">
-              <button class="action-bar-menu-item" onClick={handleNewProject}>
+              <button class="action-bar-menu-item" disabled={isPendingDialog()} onClick={handleNewProject}>
                 &#x1F4C1; New Project
               </button>
-              <button class="action-bar-menu-item" onClick={handleOpenProject}>
+              <button class="action-bar-menu-item" disabled={isPendingDialog()} onClick={handleOpenProject}>
                 &#x1F4C2; Open Project
               </button>
               <button class="action-bar-menu-item" onClick={() => { setShowDropdown(false); setShowNewAgent(true); }}>

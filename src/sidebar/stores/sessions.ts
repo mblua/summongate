@@ -50,8 +50,7 @@ function makeInactiveEntry(name: string, path: string): Session {
 const wgReplicaMemo = createMemo(() => {
   const names = new Set<string>();
   const paths = new Set<string>();
-  const proj = projectStore.current;
-  if (proj) {
+  for (const proj of projectStore.projects) {
     for (const wg of proj.workgroups) {
       for (const replica of wg.agents) {
         names.add(`${wg.name}/${replica.name}`);

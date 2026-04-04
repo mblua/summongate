@@ -2,6 +2,7 @@ pub mod ac_discovery;
 pub mod agent_creator;
 pub mod config;
 pub mod dark_factory;
+pub mod entity_creation;
 pub mod phone;
 pub mod pty;
 pub mod repos;

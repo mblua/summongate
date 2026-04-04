@@ -278,16 +278,44 @@ export const ProjectAPI = {
     transport.invoke<AcDiscoveryResult>("discover_project", { path }),
 };
 
+// Entity Creation API (agents, teams, workgroups)
+export const EntityAPI = {
+  createAgentMatrix: (projectPath: string, name: string, description: string) =>
+    transport.invoke<void>("create_agent_matrix", { projectPath, name, description }),
+
+  listAllAgents: (projectPaths: string[]) =>
+    transport.invoke<{ name: string; description: string; path: string; projectName: string }[]>(
+      "list_all_agents",
+      { projectPaths }
+    ),
+
+  createTeam: (
+    projectPath: string,
+    name: string,
+    agents: string[],
+    coordinator: string,
+    repos: { url: string; agents: string[] }[]
+  ) =>
+    transport.invoke<void>("create_team", { projectPath, name, agents, coordinator, repos }),
+
+  createWorkgroup: (projectPath: string, teamName: string, brief?: string) =>
+    transport.invoke<void>("create_workgroup", {
+      projectPath,
+      teamName,
+      brief: brief ?? null,
+    }),
+};
+
 // Agent Creator API
 export const AgentCreatorAPI = {
   pickFolder: (defaultPath?: string) =>
-    invoke<string | null>("pick_folder", { defaultPath: defaultPath ?? null }),
+    transport.invoke<string | null>("pick_folder", { defaultPath: defaultPath ?? null }),
 
   createFolder: (parentPath: string, agentName: string) =>
-    invoke<string>("create_agent_folder", { parentPath, agentName }),
+    transport.invoke<string>("create_agent_folder", { parentPath, agentName }),
 
   writeClaudeSettingsLocal: (agentPath: string) =>
-    invoke<void>("write_claude_settings_local", { agentPath }),
+    transport.invoke<void>("write_claude_settings_local", { agentPath }),
 };
 
 // Guide window
@@ -306,7 +334,7 @@ export function onLastPrompt(
 
 // Dark Factory window
 export const DarkFactoryWindowAPI = {
-  open: () => invoke<void>("open_darkfactory_window"),
+  open: () => transport.invoke<void>("open_darkfactory_window"),
 };
 
 export function onTelegramIncoming(

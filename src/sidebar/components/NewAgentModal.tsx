@@ -11,6 +11,7 @@ const NewAgentModal: Component<{ onClose: () => void }> = (props) => {
   const [createdPath, setCreatedPath] = createSignal("");
   const [error, setError] = createSignal("");
   const [creating, setCreating] = createSignal(false);
+  const [isPicking, setIsPicking] = createSignal(false);
   const [agents, setAgents] = createSignal<AgentConfig[]>([]);
   const [highlightIndex, setHighlightIndex] = createSignal(0);
   let nameInputRef!: HTMLInputElement;
@@ -39,11 +40,17 @@ const NewAgentModal: Component<{ onClose: () => void }> = (props) => {
   });
 
   const handleBrowse = async () => {
-    const selected = await AgentCreatorAPI.pickFolder(parentPath() || undefined);
-    if (selected) {
-      setParentPath(selected);
-      setError("");
-      requestAnimationFrame(() => nameInputRef?.focus());
+    if (isPicking()) return;
+    setIsPicking(true);
+    try {
+      const selected = await AgentCreatorAPI.pickFolder(parentPath() || undefined);
+      if (selected) {
+        setParentPath(selected);
+        setError("");
+        requestAnimationFrame(() => nameInputRef?.focus());
+      }
+    } finally {
+      setIsPicking(false);
     }
   };
 
@@ -203,8 +210,8 @@ const NewAgentModal: Component<{ onClose: () => void }> = (props) => {
                   placeholder="Select a folder..."
                   readOnly
                 />
-                <button class="new-agent-browse-btn" onClick={handleBrowse}>
-                  Browse
+                <button class="new-agent-browse-btn" disabled={isPicking()} onClick={handleBrowse}>
+                  {isPicking() ? "Picking..." : "Browse"}
                 </button>
               </div>
             </div>

@@ -696,6 +696,11 @@ html, body, #root {
   background: var(--sidebar-hover);
 }
 
+.action-bar-dropdown-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .action-bar-icons {
   display: flex;
   align-items: center;
@@ -2074,6 +2079,11 @@ html, body, #root {
   border-color: rgba(0, 212, 255, 0.45);
 }
 
+.new-agent-browse-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .new-agent-name-row {
   display: flex;
   align-items: center;
@@ -2442,6 +2452,13 @@ html, body, #root {
   margin-bottom: 2px;
 }
 
+.ac-empty-hint {
+  padding: 4px 12px 4px 24px;
+  font-size: 11px;
+  color: var(--sidebar-fg-dim, rgba(255, 255, 255, 0.35));
+  font-style: italic;
+}
+
 .ac-wg-header {
   display: flex;
   flex-direction: column;
@@ -2481,6 +2498,59 @@ html, body, #root {
   font-size: 10px;
   color: var(--sidebar-fg-dim);
   opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Team section styles */
+.ac-team-group {
+  margin-bottom: 1px;
+}
+
+.ac-team-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px var(--spacing-md) 4px calc(var(--spacing-md) + 6px);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition-fast);
+}
+
+.ac-team-header:hover {
+  background: var(--sidebar-hover);
+}
+
+.ac-team-name {
+  font-size: var(--font-size-sm);
+  color: var(--sidebar-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ac-team-count {
+  margin-left: auto;
+  font-size: 9px;
+  opacity: 0.4;
+  color: var(--sidebar-fg-dim);
+}
+
+.ac-team-members {
+  padding: 0 0 2px 0;
+}
+
+.ac-team-member {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px var(--spacing-md) 3px calc(var(--spacing-md) + 20px);
+  font-size: var(--font-size-sm);
+  color: var(--sidebar-fg-dim);
+}
+
+.ac-team-member-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2809,4 +2879,295 @@ html.light-theme[data-sidebar-style="card-sections"] .ac-wg-group:last-child {
 
 [data-sidebar-style="command-center"] .ac-wg-header--collapsible {
   padding: 3px var(--spacing-md) 3px 0;
+}
+
+/* ===== Entity Creation Modals ===== */
+
+.entity-textarea {
+  width: 100%;
+  min-height: 60px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--sidebar-hover);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-radius: var(--radius-md);
+  color: var(--sidebar-fg);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-sm);
+  resize: vertical;
+  transition: border-color var(--transition-fast);
+}
+
+.entity-textarea:focus {
+  outline: none;
+  border-color: var(--sidebar-accent);
+}
+
+.entity-textarea::placeholder {
+  color: var(--sidebar-fg-dim);
+  opacity: 0.5;
+}
+
+.entity-char-count {
+  font-size: 9px;
+  color: var(--sidebar-fg-dim);
+  text-align: right;
+  opacity: 0.6;
+}
+
+.entity-select {
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--sidebar-hover);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-radius: var(--radius-md);
+  color: var(--sidebar-fg);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2388888f' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+.entity-select:focus {
+  outline: none;
+  border-color: var(--sidebar-accent);
+}
+
+.entity-select option {
+  background: var(--sidebar-surface);
+  color: var(--sidebar-fg);
+}
+
+/* ===== Wizard Modal (multi-step) ===== */
+
+.entity-wizard-modal {
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.wizard-step-indicator {
+  font-size: 10px;
+  color: var(--sidebar-fg-dim);
+  opacity: 0.6;
+  margin-left: auto;
+}
+
+.wizard-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  max-height: 50vh;
+}
+
+.wizard-body::-webkit-scrollbar {
+  width: 4px;
+}
+
+.wizard-body::-webkit-scrollbar-thumb {
+  background: var(--sidebar-border);
+  border-radius: 2px;
+}
+
+.wizard-loading,
+.wizard-empty {
+  font-size: var(--font-size-sm);
+  color: var(--sidebar-fg-dim);
+  text-align: center;
+  padding: var(--spacing-lg);
+  opacity: 0.7;
+}
+
+/* Agent selection (step 2) */
+
+.wizard-agent-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wizard-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 var(--spacing-sm) 0;
+  position: sticky;
+  top: 0;
+  background: var(--sidebar-bg);
+  z-index: 1;
+}
+
+.wizard-search-icon {
+  flex-shrink: 0;
+  color: var(--sidebar-fg-dim);
+}
+
+.wizard-search-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--sidebar-border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: var(--font-size-sm);
+  color: var(--sidebar-fg);
+  outline: none;
+}
+
+.wizard-search-input::placeholder {
+  color: var(--sidebar-fg-dim);
+}
+
+.wizard-search-input:focus {
+  border-color: var(--accent-primary, #60a5fa);
+}
+
+.wizard-group-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--sidebar-fg-dim);
+  padding: var(--spacing-xs) 0;
+  margin-top: var(--spacing-xs);
+}
+
+.wizard-agent-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.wizard-agent-row:hover {
+  background: rgba(0, 212, 255, 0.05);
+}
+
+.wizard-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--sidebar-fg);
+}
+
+.wizard-checkbox-label input[type="checkbox"],
+.wizard-checkbox-label input[type="radio"] {
+  accent-color: var(--sidebar-accent);
+  cursor: pointer;
+}
+
+.wizard-agent-name {
+  font-size: var(--font-size-sm);
+}
+
+.wizard-coord-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--sidebar-fg-dim);
+}
+
+.wizard-coord-text {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* Repo assignment (step 3) */
+
+.wizard-repo-input-row {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.wizard-repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.wizard-repo-card {
+  background: rgba(0, 212, 255, 0.03);
+  border: 1px solid rgba(0, 212, 255, 0.1);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm);
+}
+
+.wizard-repo-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-xs);
+}
+
+.wizard-repo-name {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--sidebar-accent);
+}
+
+.wizard-repo-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--sidebar-fg-dim);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.wizard-repo-remove:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.wizard-repo-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: var(--spacing-xs);
+}
+
+.wizard-all-label {
+  font-weight: 600;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* ===== Context Menu Extras ===== */
+
+.context-separator {
+  height: 1px;
+  background: var(--sidebar-border);
+  margin: var(--spacing-xs) 0;
+}
+
+.context-option-disabled {
+  opacity: 0.35;
+  cursor: not-allowed !important;
+}
+
+.context-option-danger {
+  color: #ef4444 !important;
+}
+
+.context-option-danger:hover {
+  background: rgba(239, 68, 68, 0.08) !important;
 }

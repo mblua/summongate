@@ -1,10 +1,14 @@
 import { Component, For, Show, createSignal, onMount, onCleanup } from "solid-js";
-import type { AcWorkgroup, AcAgentReplica, Session } from "../../shared/types";
+import { Portal } from "solid-js/web";
+import type { AcWorkgroup, AcAgentReplica, AcTeam, Session } from "../../shared/types";
 import { SessionAPI, WindowAPI, onDiscoveryBranchUpdated } from "../../shared/ipc";
 import { isTauri } from "../../shared/platform";
 import { projectStore } from "../stores/project";
 import { sessionsStore } from "../stores/sessions";
 import SessionItem from "./SessionItem";
+import NewEntityAgentModal from "./NewEntityAgentModal";
+import NewTeamModal from "./NewTeamModal";
+import NewWorkgroupModal from "./NewWorkgroupModal";
 
 /** Derive the repo name from a replica's repoPaths (strip 'repo-' prefix) */
 function replicaRepoName(replica: AcAgentReplica): string | undefined {
@@ -34,8 +38,6 @@ function replicaDotClass(wg: AcWorkgroup, replica: AcAgentReplica): string {
 }
 
 const ProjectPanel: Component = () => {
-  const [collapsed, setCollapsed] = createSignal(false);
-
   // Listen for replica branch updates from the discovery branch watcher
   let unlistenBranch: (() => void) | null = null;
   onMount(async () => {
@@ -105,106 +107,246 @@ const ProjectPanel: Component = () => {
   };
 
   return (
-    <Show when={projectStore.current}>
-      {(proj) => (
-        <div class="project-panel">
-          <button
-            class="project-header"
-            onClick={() => setCollapsed((c) => !c)}
-          >
-            <span class="ac-discovery-chevron" classList={{ collapsed: collapsed() }}>
-              &#x25BE;
-            </span>
-            <span class="project-title">Project: {proj().folderName}</span>
-          </button>
-          <Show when={!collapsed()}>
-            <div class="project-content">
-              {/* Workgroups */}
-              <For each={proj().workgroups}>
-                {(wg) => {
-                  const [wgCollapsed, setWgCollapsed] = createSignal(false);
-                  return (
-                    <div class="ac-wg-group">
-                      <div
-                        class="ac-wg-header ac-wg-header--collapsible"
-                        title={wg.path}
-                        onClick={() => setWgCollapsed((c) => !c)}
-                      >
-                        <span class="ac-discovery-chevron" classList={{ collapsed: wgCollapsed() }}>
-                          &#x25BE;
-                        </span>
-                        <div class="ac-wg-header-text">
-                          <span class="ac-wg-name">{wg.name}</span>
-                          <Show when={wg.brief}>
-                            <span class="ac-wg-brief">{wg.brief}</span>
-                          </Show>
+    <For each={projectStore.projects}>
+      {(proj) => {
+        const [collapsed, setCollapsed] = createSignal(false);
+        const [showCtxMenu, setShowCtxMenu] = createSignal(false);
+        const [ctxMenuPos, setCtxMenuPos] = createSignal({ x: 0, y: 0 });
+        const [showNewAgent, setShowNewAgent] = createSignal(false);
+        const [showNewTeam, setShowNewTeam] = createSignal(false);
+        const [showNewWorkgroup, setShowNewWorkgroup] = createSignal(false);
+        const [teamCtxMenu, setTeamCtxMenu] = createSignal<{ team: AcTeam; x: number; y: number } | null>(null);
+
+        let dismissCtx: (() => void) | null = null;
+
+        const cleanupCtx = () => {
+          if (dismissCtx) {
+            window.removeEventListener("click", dismissCtx);
+            window.removeEventListener("contextmenu", dismissCtx);
+            window.removeEventListener("keydown", dismissCtx as any);
+            dismissCtx = null;
+          }
+        };
+
+        onCleanup(cleanupCtx);
+
+        const handleProjectContextMenu = (e: MouseEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          cleanupCtx();
+          setTeamCtxMenu(null);
+          setCtxMenuPos({ x: e.clientX, y: e.clientY });
+          setShowCtxMenu(true);
+          const dismiss = (ev?: Event) => {
+            if (ev instanceof KeyboardEvent && ev.key !== "Escape") return;
+            setShowCtxMenu(false);
+            cleanupCtx();
+          };
+          dismissCtx = dismiss;
+          setTimeout(() => {
+            window.addEventListener("click", dismiss);
+            window.addEventListener("contextmenu", dismiss);
+            window.addEventListener("keydown", dismiss as any);
+          });
+        };
+
+        const hasTeamsWithCoord = () =>
+          proj.teams.some((t) => t.coordinator !== null && t.coordinator !== "");
+
+        const handleRemoveProject = () => {
+          setShowCtxMenu(false);
+          projectStore.removeProject(proj.path);
+        };
+
+        const handleTeamContextMenu = (e: MouseEvent, team: AcTeam) => {
+          e.preventDefault();
+          e.stopPropagation();
+          cleanupCtx();
+          setShowCtxMenu(false);
+          setTeamCtxMenu({ team, x: e.clientX, y: e.clientY });
+          const dismiss = (ev?: Event) => {
+            if (ev instanceof KeyboardEvent && ev.key !== "Escape") return;
+            setTeamCtxMenu(null);
+            cleanupCtx();
+          };
+          dismissCtx = dismiss;
+          setTimeout(() => {
+            window.addEventListener("click", dismiss);
+            window.addEventListener("contextmenu", dismiss);
+            window.addEventListener("keydown", dismiss as any);
+          });
+        };
+
+        return (
+          <div class="project-panel">
+            <button
+              class="project-header"
+              onClick={() => setCollapsed((c) => !c)}
+              onContextMenu={handleProjectContextMenu}
+            >
+              <span class="ac-discovery-chevron" classList={{ collapsed: collapsed() }}>
+                &#x25BE;
+              </span>
+              <span class="project-title">Project: {proj.folderName}</span>
+            </button>
+
+            {/* Project context menu */}
+            {showCtxMenu() && (
+              <Portal>
+                <div
+                  class="session-context-menu"
+                  style={{ left: `${ctxMenuPos().x}px`, top: `${ctxMenuPos().y}px` }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    class="session-context-option"
+                    onClick={() => { setShowCtxMenu(false); setShowNewAgent(true); }}
+                  >
+                    New Agent
+                  </button>
+                  <button
+                    class="session-context-option"
+                    onClick={() => { setShowCtxMenu(false); setShowNewTeam(true); }}
+                  >
+                    New Team
+                  </button>
+                  <button
+                    class="session-context-option"
+                    classList={{ "context-option-disabled": !hasTeamsWithCoord() }}
+                    disabled={!hasTeamsWithCoord()}
+                    onClick={() => {
+                      if (!hasTeamsWithCoord()) return;
+                      setShowCtxMenu(false);
+                      setShowNewWorkgroup(true);
+                    }}
+                  >
+                    New Workgroup
+                  </button>
+                  <div class="context-separator" />
+                  <button
+                    class="session-context-option context-option-danger"
+                    onClick={handleRemoveProject}
+                  >
+                    Remove Project
+                  </button>
+                </div>
+              </Portal>
+            )}
+
+            {/* Entity creation modals */}
+            {showNewAgent() && (
+              <Portal>
+                <NewEntityAgentModal
+                  projectPath={proj.path}
+                  onClose={() => setShowNewAgent(false)}
+                />
+              </Portal>
+            )}
+            {showNewTeam() && (
+              <Portal>
+                <NewTeamModal
+                  projectPath={proj.path}
+                  onClose={() => setShowNewTeam(false)}
+                />
+              </Portal>
+            )}
+            {showNewWorkgroup() && (
+              <Portal>
+                <NewWorkgroupModal
+                  projectPath={proj.path}
+                  teams={proj.teams}
+                  onClose={() => setShowNewWorkgroup(false)}
+                />
+              </Portal>
+            )}
+
+            <Show when={!collapsed()}>
+              <div class="project-content">
+                {/* Workgroups */}
+                <For each={proj.workgroups}>
+                  {(wg) => {
+                    const [wgCollapsed, setWgCollapsed] = createSignal(false);
+                    return (
+                      <div class="ac-wg-group">
+                        <div
+                          class="ac-wg-header ac-wg-header--collapsible"
+                          title={wg.path}
+                          onClick={() => setWgCollapsed((c) => !c)}
+                        >
+                          <span class="ac-discovery-chevron" classList={{ collapsed: wgCollapsed() }}>
+                            &#x25BE;
+                          </span>
+                          <div class="ac-wg-header-text">
+                            <span class="ac-wg-name">{wg.name}</span>
+                            <Show when={wg.brief}>
+                              <span class="ac-wg-brief">{wg.brief}</span>
+                            </Show>
+                          </div>
                         </div>
-                      </div>
-                      <Show when={!wgCollapsed()}>
-                        <For each={wg.agents}>
-                          {(replica) => {
-                            const session = () => replicaSession(wg, replica);
-                            return (
-                              <Show
-                                when={session()}
-                                fallback={
-                                  (() => {
-                                    const dotClass = () => replicaDotClass(wg, replica);
-                                    const repoName = () => replicaRepoName(replica);
-                                    const branchLabel = () => {
-                                      const name = repoName();
-                                      if (!name) return null;
-                                      return replica.repoBranch ? `${name}/${replica.repoBranch}` : name;
-                                    };
-                                    return (
-                                      <div
-                                        class="ac-discovery-item"
-                                        onClick={() => handleReplicaClick(replica, wg)}
-                                        title={replica.path}
-                                      >
-                                        <div class={`session-item-status ${dotClass()}`} />
-                                        <div class="ac-discovery-item-info">
-                                          <span class="ac-discovery-item-name">{replica.name}</span>
-                                          <div class="ac-discovery-badges">
-                                            <Show when={branchLabel()}>
-                                              <span class="ac-discovery-badge branch">{branchLabel()}</span>
-                                            </Show>
+                        <Show when={!wgCollapsed()}>
+                          <For each={wg.agents}>
+                            {(replica) => {
+                              const session = () => replicaSession(wg, replica);
+                              return (
+                                <Show
+                                  when={session()}
+                                  fallback={
+                                    (() => {
+                                      const dotClass = () => replicaDotClass(wg, replica);
+                                      const repoName = () => replicaRepoName(replica);
+                                      const branchLabel = () => {
+                                        const name = repoName();
+                                        if (!name) return null;
+                                        return replica.repoBranch ? `${name}/${replica.repoBranch}` : name;
+                                      };
+                                      return (
+                                        <div
+                                          class="ac-discovery-item"
+                                          onClick={() => handleReplicaClick(replica, wg)}
+                                          title={replica.path}
+                                        >
+                                          <div class={`session-item-status ${dotClass()}`} />
+                                          <div class="ac-discovery-item-info">
+                                            <span class="ac-discovery-item-name">{replica.name}</span>
+                                            <div class="ac-discovery-badges">
+                                              <Show when={branchLabel()}>
+                                                <span class="ac-discovery-badge branch">{branchLabel()}</span>
+                                              </Show>
+                                            </div>
                                           </div>
                                         </div>
-                                      </div>
-                                    );
-                                  })()
-                                }
-                              >
-                                {(s) => {
-                                  const patched = () => {
-                                    const sess = s();
-                                    if (sess.gitBranch && !sess.gitBranch.includes("/")) {
-                                      const repoName = replicaRepoName(replica);
-                                      if (repoName) {
-                                        return { ...sess, gitBranch: `${repoName}/${sess.gitBranch}` };
+                                      );
+                                    })()
+                                  }
+                                >
+                                  {(s) => {
+                                    const patched = () => {
+                                      const sess = s();
+                                      if (sess.gitBranch && !sess.gitBranch.includes("/")) {
+                                        const repoName = replicaRepoName(replica);
+                                        if (repoName) {
+                                          return { ...sess, gitBranch: `${repoName}/${sess.gitBranch}` };
+                                        }
                                       }
-                                    }
-                                    return sess;
-                                  };
-                                  return (
-                                    <SessionItem
-                                      session={patched()}
-                                      isActive={s().id === sessionsStore.activeId}
-                                    />
-                                  );
-                                }}
-                              </Show>
-                            );
-                          }}
-                        </For>
-                      </Show>
-                    </div>
-                  );
-                }}
-              </For>
-              {/* Agent Matrix */}
-              <Show when={proj().agents.length > 0}>
+                                      return sess;
+                                    };
+                                    return (
+                                      <SessionItem
+                                        session={patched()}
+                                        isActive={s().id === sessionsStore.activeId}
+                                      />
+                                    );
+                                  }}
+                                </Show>
+                              );
+                            }}
+                          </For>
+                        </Show>
+                      </div>
+                    );
+                  }}
+                </For>
+                {/* Agent Matrix */}
                 {(() => {
                   const [matrixCollapsed, setMatrixCollapsed] = createSignal(false);
                   return (
@@ -221,47 +363,142 @@ const ProjectPanel: Component = () => {
                         </div>
                       </div>
                       <Show when={!matrixCollapsed()}>
-                        <For each={proj().agents}>
-                          {(agent) => {
-                            const session = () => sessionsStore.findSessionByName(agent.name);
-                            return (
-                              <Show
-                                when={session()}
-                                fallback={
-                                  <div
-                                    class="ac-discovery-item"
-                                    onClick={() => handleAgentClick(agent)}
-                                    title={agent.path}
-                                  >
-                                    <div class="session-item-status offline" />
-                                    <div class="ac-discovery-item-info">
-                                      <span class="ac-discovery-item-name">
-                                        {agent.name.slice(agent.name.lastIndexOf("/") + 1)}
-                                      </span>
+                        <Show
+                          when={proj.agents.length > 0}
+                          fallback={
+                            <div class="ac-empty-hint">No agents</div>
+                          }
+                        >
+                          <For each={proj.agents}>
+                            {(agent) => {
+                              const session = () => sessionsStore.findSessionByName(agent.name);
+                              return (
+                                <Show
+                                  when={session()}
+                                  fallback={
+                                    <div
+                                      class="ac-discovery-item"
+                                      onClick={() => handleAgentClick(agent)}
+                                      title={agent.path}
+                                    >
+                                      <div class="session-item-status offline" />
+                                      <div class="ac-discovery-item-info">
+                                        <span class="ac-discovery-item-name">
+                                          {agent.name.slice(agent.name.lastIndexOf("/") + 1)}
+                                        </span>
+                                      </div>
                                     </div>
-                                  </div>
-                                }
-                              >
-                                {(s) => (
-                                  <SessionItem
-                                    session={s()}
-                                    isActive={s().id === sessionsStore.activeId}
-                                  />
-                                )}
-                              </Show>
-                            );
-                          }}
-                        </For>
+                                  }
+                                >
+                                  {(s) => (
+                                    <SessionItem
+                                      session={s()}
+                                      isActive={s().id === sessionsStore.activeId}
+                                    />
+                                  )}
+                                </Show>
+                              );
+                            }}
+                          </For>
+                        </Show>
                       </Show>
                     </div>
                   );
                 })()}
-              </Show>
-            </div>
-          </Show>
-        </div>
-      )}
-    </Show>
+                {/* Teams */}
+                {(() => {
+                  const [teamsCollapsed, setTeamsCollapsed] = createSignal(false);
+                  return (
+                    <div class="ac-wg-group">
+                      <div
+                        class="ac-wg-header ac-wg-header--collapsible"
+                        onClick={() => setTeamsCollapsed((c) => !c)}
+                      >
+                        <span class="ac-discovery-chevron" classList={{ collapsed: teamsCollapsed() }}>
+                          &#x25BE;
+                        </span>
+                        <div class="ac-wg-header-text">
+                          <span class="ac-wg-name">Teams</span>
+                        </div>
+                      </div>
+                      <Show when={!teamsCollapsed()}>
+                        <Show
+                          when={proj.teams.length > 0}
+                          fallback={
+                            <div class="ac-empty-hint">No teams</div>
+                          }
+                        >
+                          <For each={proj.teams}>
+                            {(team) => {
+                              const [teamExpanded, setTeamExpanded] = createSignal(false);
+                              return (
+                                <div class="ac-team-group">
+                                  <div
+                                    class="ac-team-header"
+                                    onClick={() => setTeamExpanded((e) => !e)}
+                                    onContextMenu={(e) => handleTeamContextMenu(e, team)}
+                                  >
+                                    <span class="ac-discovery-chevron" classList={{ collapsed: !teamExpanded() }}>
+                                      &#x25BE;
+                                    </span>
+                                    <span class="ac-team-name">{team.name}</span>
+                                    <span class="ac-team-count">{team.agents.length}</span>
+                                  </div>
+                                  <Show when={teamExpanded()}>
+                                    <div class="ac-team-members">
+                                      <For each={team.agents}>
+                                        {(agentName) => (
+                                          <div class="ac-team-member">
+                                            <span class="ac-team-member-name">{agentName}</span>
+                                            <Show when={agentName === team.coordinator}>
+                                              <span class="ac-discovery-badge coord">coordinator</span>
+                                            </Show>
+                                          </div>
+                                        )}
+                                      </For>
+                                    </div>
+                                  </Show>
+                                </div>
+                              );
+                            }}
+                          </For>
+                        </Show>
+                      </Show>
+                    </div>
+                  );
+                })()}
+              </div>
+            </Show>
+
+            {/* Team context menu */}
+            {teamCtxMenu() && (
+              <Portal>
+                <div
+                  class="session-context-menu"
+                  style={{ left: `${teamCtxMenu()!.x}px`, top: `${teamCtxMenu()!.y}px` }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    class="session-context-option context-option-disabled"
+                    disabled
+                    onClick={() => setTeamCtxMenu(null)}
+                  >
+                    Edit Team
+                  </button>
+                  <button
+                    class="session-context-option context-option-disabled"
+                    disabled
+                    onClick={() => setTeamCtxMenu(null)}
+                  >
+                    Delete Team
+                  </button>
+                </div>
+              </Portal>
+            )}
+          </div>
+        );
+      }}
+    </For>
   );
 };
 
