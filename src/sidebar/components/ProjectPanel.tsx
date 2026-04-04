@@ -450,7 +450,9 @@ const ProjectPanel: Component = () => {
                                         {(agentName) => {
                                           const shortName = () => {
                                             const parts = agentName.replace(/\\/g, "/").split("/");
-                                            return parts[parts.length - 1].replace(/^__?agent_/, "");
+                                            const agent = parts[parts.length - 1].replace(/^__?agent_/, "");
+                                            const project = parts[0];
+                                            return project && project !== agent ? `${agent}@${project}` : agent;
                                           };
                                           return (
                                             <div class="ac-team-member" title={agentName}>
