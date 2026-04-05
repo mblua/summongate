@@ -235,10 +235,15 @@ impl MailboxPoller {
             }
         }
 
-        // Check if token is the master token (bypasses anti-spoofing + team validation)
+        // Check if token is the master token or root token (bypasses anti-spoofing + team validation)
         let is_master = if let Some(ref token_str) = msg.token {
             let master = app.state::<MasterToken>();
-            master.matches(token_str)
+            if master.matches(token_str) {
+                true
+            } else {
+                let settings = crate::config::settings::load_settings();
+                settings.root_token.as_deref() == Some(token_str.as_str())
+            }
         } else {
             false
         };

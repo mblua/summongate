@@ -200,7 +200,7 @@ pub fn execute(args: SendArgs) -> i32 {
 
     let message = OutboxMessage {
         id: msg_id.clone(),
-        token: if is_root { None } else { args.token },
+        token: args.token,
         from: sender.clone(),
         to: args.to.clone(),
         body: message_body,
