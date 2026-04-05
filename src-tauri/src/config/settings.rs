@@ -13,6 +13,7 @@ pub struct AgentConfig {
     pub command: String,
     pub color: String,
     /// If true, run `git pull` before launching the agent
+    #[serde(default)]
     pub git_pull_before: bool,
     /// If true, auto-generate .claude/settings.local.json with claudeMdExcludes on agent creation
     #[serde(default)]
