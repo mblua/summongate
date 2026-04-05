@@ -148,3 +148,16 @@ pub fn web_server_port() -> u16 {
 pub fn is_stage() -> bool {
     binary_suffix() == Some("stage") || (binary_suffix().is_none() && BUILD_PROFILE == "stage")
 }
+
+/// Runtime instance label for the titlebar badge.
+/// Returns "STAGE", "STANDALONE", etc. or empty string for prod (no badge).
+pub fn instance_label() -> &'static str {
+    static LABEL: OnceLock<String> = OnceLock::new();
+    LABEL.get_or_init(|| match binary_suffix() {
+        Some(suffix) => suffix.to_uppercase(),
+        None => match BUILD_PROFILE {
+            "stage" => "STAGE".to_string(),
+            _ => String::new(), // prod and dev-via-Vite (DEV badge handles that)
+        },
+    })
+}

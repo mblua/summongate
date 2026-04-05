@@ -4,12 +4,11 @@ import { applyWindowLayout } from "../../shared/window-layout";
 import { isTauri } from "../../shared/platform";
 
 declare const __APP_VERSION__: string;
-declare const __BUILD_PROFILE__: string;
 const APP_VERSION = __APP_VERSION__;
-const BUILD_PROFILE = __BUILD_PROFILE__;
 
 const Titlebar: Component = () => {
   const [layoutOpen, setLayoutOpen] = createSignal(false);
+  const [instanceLabel, setInstanceLabel] = createSignal("");
 
   const handleMinimize = async () => {
     if (!isTauri) return;
@@ -37,9 +36,16 @@ const Titlebar: Component = () => {
     }
   };
 
-  onMount(() => {
+  onMount(async () => {
     document.addEventListener("click", handleClickOutside);
     onCleanup(() => document.removeEventListener("click", handleClickOutside));
+    if (isTauri) {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const label = await invoke<string>("get_instance_label");
+        if (label) setInstanceLabel(label);
+      } catch { /* non-Tauri or command unavailable */ }
+    }
   });
 
   return (
@@ -55,8 +61,8 @@ const Titlebar: Component = () => {
         {import.meta.env.DEV && (
           <span class="titlebar-dev-badge" data-tauri-drag-region>DEV</span>
         )}
-        {BUILD_PROFILE === "stage" && (
-          <span class="titlebar-stage-badge" data-tauri-drag-region>STAGE</span>
+        {instanceLabel() && (
+          <span class="titlebar-stage-badge" data-tauri-drag-region>{instanceLabel()}</span>
         )}
       </div>
       <div class="titlebar-controls">
