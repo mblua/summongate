@@ -8,7 +8,6 @@ import type {
   AppSettings,
   RepoMatch,
   BridgeInfo,
-  DarkFactoryConfig,
   PhoneMessage,
   AgentInfo,
   AcDiscoveryResult,
@@ -239,13 +238,6 @@ export function onTelegramBridgeError(
   );
 }
 
-// Dark Factory API
-export const DarkFactoryAPI = {
-  get: () => transport.invoke<DarkFactoryConfig>("get_dark_factory"),
-  save: (config: DarkFactoryConfig) =>
-    transport.invoke<void>("save_dark_factory", { config }),
-};
-
 // Phone API
 export const PhoneAPI = {
   sendMessage: (from: string, to: string, body: string, team: string) =>
@@ -331,11 +323,6 @@ export function onLastPrompt(
     callback
   );
 }
-
-// Dark Factory window
-export const DarkFactoryWindowAPI = {
-  open: () => transport.invoke<void>("open_darkfactory_window"),
-};
 
 export function onTelegramIncoming(
   callback: (data: { sessionId: string; text: string; from: string }) => void

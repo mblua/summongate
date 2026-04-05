@@ -1545,190 +1545,6 @@ html, body, #root {
   margin: 0 0 var(--spacing-sm) 0;
 }
 
-/* Dark Factory styles */
-.df-team-card {
-  gap: var(--spacing-sm);
-}
-
-.df-team-name {
-  font-weight: 600;
-  flex: 1;
-}
-
-.df-team-count {
-  font-size: 10px;
-  color: var(--sidebar-fg-dim);
-  background: var(--sidebar-hover);
-  padding: 1px 6px;
-  border-radius: 8px;
-}
-
-.df-members {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
-}
-
-.df-member-row {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  padding: 3px var(--spacing-sm);
-  border-radius: var(--radius-sm);
-  background: var(--sidebar-hover);
-}
-
-.df-member-row:hover {
-  background: var(--sidebar-active);
-}
-
-.df-member-name {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: var(--sidebar-fg);
-  white-space: nowrap;
-}
-
-.df-member-path {
-  font-size: 10px;
-  color: var(--sidebar-fg-dim);
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: "Cascadia Code", "JetBrains Mono", monospace;
-}
-
-.df-coord-badge {
-  font-size: 9px;
-  font-weight: 700;
-  color: #e94560;
-  background: rgba(233, 69, 96, 0.15);
-  padding: 1px 5px;
-  border-radius: 4px;
-  letter-spacing: 0.5px;
-}
-
-.df-add-member-search {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
-}
-
-.df-repo-results {
-  display: flex;
-  flex-direction: column;
-  max-height: 150px;
-  overflow-y: auto;
-  border: 1px solid var(--sidebar-border);
-  border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, 0.3);
-}
-
-.df-repo-result-item {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border: none;
-  background: transparent;
-  color: var(--sidebar-fg);
-  font-family: var(--font-ui);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  text-align: left;
-}
-
-.df-repo-result-item:hover:not(:disabled) {
-  background: var(--sidebar-hover);
-}
-
-.df-repo-result-item:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.df-repo-name {
-  font-weight: 500;
-}
-
-.df-repo-agents {
-  font-size: 10px;
-  color: var(--sidebar-fg-dim);
-}
-
-.df-searching {
-  font-size: 11px;
-  color: var(--sidebar-fg-dim);
-  padding: var(--spacing-xs);
-}
-
-.df-new-team-row {
-  display: flex;
-  gap: var(--spacing-sm);
-  align-items: center;
-}
-
-.df-new-team-input {
-  flex: 1;
-}
-
-.df-team-error {
-  font-size: 11px;
-  color: var(--status-exited);
-}
-
-.df-layer-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 4px;
-  background: var(--sidebar-hover);
-  margin-bottom: 4px;
-}
-
-.df-layer-index {
-  font-size: 11px;
-  color: var(--sidebar-fg-dim);
-  min-width: 18px;
-  text-align: center;
-}
-
-.df-layer-name {
-  flex: 1;
-  font-size: 13px;
-}
-
-.df-layer-edit-input {
-  flex: 1;
-}
-
-.df-layer-actions {
-  display: flex;
-  gap: 2px;
-}
-
-.df-layer-btn {
-  background: none;
-  border: none;
-  color: var(--sidebar-fg-dim);
-  cursor: pointer;
-  padding: 2px 6px;
-  font-size: 13px;
-  border-radius: 3px;
-}
-
-.df-layer-btn:hover:not(:disabled) {
-  color: var(--sidebar-fg);
-  background: var(--sidebar-hover);
-}
-
-.df-layer-btn:disabled {
-  opacity: 0.3;
-  cursor: default;
-}
-
 /* Empty state */
 .empty-state {
   display: flex;
@@ -2452,6 +2268,11 @@ html, body, #root {
   margin-bottom: 2px;
 }
 
+.ac-wg-subgroup {
+  padding-left: 8px;
+  margin-bottom: 1px;
+}
+
 .ac-empty-hint {
   padding: 4px 12px 4px 24px;
   font-size: 11px;
@@ -2737,6 +2558,12 @@ html, body, #root {
   border-top-color: var(--sidebar-fg-dim);
 }
 
+[data-sidebar-style="noir-minimal"] .ac-wg-subgroup {
+  margin-left: 8px;
+  border-top: 1px solid var(--sidebar-border);
+  padding-top: 3px;
+}
+
 [data-sidebar-style="noir-minimal"] .ac-wg-name {
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -2810,6 +2637,17 @@ html.light-theme[data-sidebar-style="card-sections"] .ac-wg-group:last-child {
   border-color: rgba(234, 179, 8, 0.12);
 }
 
+[data-sidebar-style="card-sections"] .ac-wg-subgroup {
+  background: rgba(255, 255, 255, 0.015);
+  border-radius: 3px;
+  margin: 2px 0;
+  padding: 4px 6px;
+}
+
+html.light-theme[data-sidebar-style="card-sections"] .ac-wg-subgroup {
+  background: rgba(0, 0, 0, 0.015);
+}
+
 [data-sidebar-style="card-sections"] .ac-wg-header--collapsible {
   padding: 4px 6px;
 }
@@ -2851,6 +2689,12 @@ html.light-theme[data-sidebar-style="card-sections"] .ac-wg-group:last-child {
 
 [data-sidebar-style="command-center"] .ac-wg-group:last-child {
   border-left-color: var(--status-pending);
+}
+
+[data-sidebar-style="command-center"] .ac-wg-subgroup {
+  border-left: 2px solid var(--status-idle);
+  margin: 1px 0;
+  padding-left: 6px;
 }
 
 [data-sidebar-style="command-center"] .ac-wg-name {

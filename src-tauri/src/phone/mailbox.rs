@@ -6,8 +6,9 @@ use serde::{Deserialize, Serialize};
 use tauri::Manager;
 use uuid::Uuid;
 
-use crate::config::dark_factory::{self, DarkFactoryConfig};
+use crate::config::agent_config::AgentLocalConfig;
 use crate::config::settings::SettingsState;
+use crate::config::teams;
 use crate::pty::manager::PtyManager;
 use crate::session::manager::SessionManager;
 use crate::session::session::SessionStatus;
@@ -106,7 +107,7 @@ impl MailboxPoller {
         // Collect all outbox directories to scan
         let mut outbox_dirs: Vec<PathBuf> = all_paths
             .iter()
-            .map(|p| Path::new(p).join(".agentscommander").join("outbox"))
+            .map(|p| Path::new(p).join(crate::config::agent_local_dir_name()).join("outbox"))
             .collect();
         outbox_dirs.push(PathBuf::from(&app_outbox_path));
 
@@ -235,10 +236,15 @@ impl MailboxPoller {
             }
         }
 
-        // Check if token is the master token (bypasses anti-spoofing + team validation)
+        // Check if token is the master token or root token (bypasses anti-spoofing + team validation)
         let is_master = if let Some(ref token_str) = msg.token {
             let master = app.state::<MasterToken>();
-            master.matches(token_str)
+            if master.matches(token_str) {
+                true
+            } else {
+                let settings = crate::config::settings::load_settings();
+                settings.root_token.as_deref() == Some(token_str.as_str())
+            }
         } else {
             false
         };
@@ -306,10 +312,12 @@ impl MailboxPoller {
             }
 
             // Validate peer visibility (team membership) — skipped for master token
-            let dark_factory = dark_factory::load_dark_factory();
-            if !self.can_reach(&msg.from, &msg.to, &dark_factory) {
+            let discovered_teams = teams::discover_teams();
+            if !self.can_reach(&msg.from, &msg.to, &discovered_teams) {
+                log::warn!("[mailbox] Routing check FAILED: '{}' cannot reach '{}'", msg.from, msg.to);
                 return self.reject_message(path, &msg, "Sender cannot reach destination").await;
             }
+            log::info!("[mailbox] Routing check passed: '{}' → '{}'", msg.from, msg.to);
         }
 
         // Deliver based on mode — all modes require immediate delivery or rejection
@@ -400,6 +408,7 @@ impl MailboxPoller {
         }
 
         // No active session — need to spawn a temporary one.
+        log::info!("[mailbox] wake-and-sleep: no active session for '{}', spawning temporary session", msg.to);
         // Determine which agent CLI to use.
         let agent_command = self.resolve_agent_command(app, msg).await;
 
@@ -417,7 +426,7 @@ impl MailboxPoller {
                 shell,
                 shell_args,
                 cwd,
-                Some(format!("[temp] {}", msg.to)),
+                Some(format!("{} {}", crate::session::session::TEMP_SESSION_PREFIX, msg.to)),
                 None, // Temp session — don't update lastCodingAgent
                 None, // No agent label for temp sessions
                 true,  // Skip tooling save for temp sessions
@@ -478,8 +487,10 @@ impl MailboxPoller {
 
                         let session_mgr = app_clone
                             .state::<Arc<tokio::sync::RwLock<SessionManager>>>();
-                        let mgr = session_mgr.read().await;
-                        let _ = mgr.destroy_session(session_id_clone).await;
+                        {
+                            let mgr = session_mgr.read().await;
+                            let _ = mgr.destroy_session(session_id_clone).await;
+                        } // guard dropped before persist
 
                         let _ = tauri::Emitter::emit(
                             &app_clone,
@@ -487,6 +498,10 @@ impl MailboxPoller {
                             serde_json::json!({ "id": session_id_clone.to_string() }),
                         );
                         log::info!("wake-and-sleep: destroyed temp session {}", session_id_clone);
+
+                        // Persist immediately so the temp session is flushed from sessions.json
+                        let mgr = session_mgr.read().await;
+                        crate::config::sessions_persistence::persist_current_state(&mgr).await;
                     });
 
                     Ok(())
@@ -632,7 +647,7 @@ impl MailboxPoller {
                 // Response file goes to the SENDER's .agentscommander/responses/
                 if let Some(sender_path) = self.resolve_repo_path(&msg.from, app).await {
                     let response_dir = std::path::PathBuf::from(sender_path)
-                        .join(".agentscommander")
+                        .join(crate::config::agent_local_dir_name())
                         .join("responses");
                     let mgr = pty_mgr.lock().map_err(|e| format!("PTY lock failed: {}", e))?;
                     mgr.register_response_watcher(session_id, rid.clone(), response_dir);
@@ -641,9 +656,17 @@ impl MailboxPoller {
             }
         }
 
-        crate::pty::inject::inject_text_into_session(app, session_id, &payload, true, crate::pty::transcript::InjectReason::MessageDelivery, Some(msg.from.clone())).await?;
+        log::debug!(
+            "[mailbox] Injecting into PTY session={} msg={} payload_len={} first_100={:?}",
+            session_id, msg.id, payload.len(), payload.chars().take(100).collect::<String>()
+        );
+        crate::pty::inject::inject_text_into_session(app, session_id, &payload, true, crate::pty::transcript::InjectReason::MessageDelivery, Some(msg.from.clone())).await
+            .map_err(|e| {
+                log::error!("[mailbox] PTY injection FAILED session={} msg={}: {}", session_id, msg.id, e);
+                e
+            })?;
 
-        log::info!("Injected message {} into session {} PTY", msg.id, session_id);
+        log::info!("[mailbox] PTY injection SUCCESS session={} msg={}", session_id, msg.id);
         let _ = tauri::Emitter::emit(
             app,
             "message_delivered",
@@ -715,30 +738,61 @@ impl MailboxPoller {
         ).await
     }
 
-    /// Find an active session for a given agent name (matches by working directory).
+    /// Find the best session for a given agent name (matches by working directory).
+    /// Prefers active/running non-temp sessions over idle/exited ones.
     async fn find_active_session(&self, app: &tauri::AppHandle, agent_name: &str) -> Option<Uuid> {
         let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
         let mgr = session_mgr.read().await;
-        let dirs = mgr.get_sessions_directories().await;
+        let sessions = mgr.list_sessions().await;
 
         log::info!(
             "[mailbox] find_active_session for '{}' — {} sessions: {:?}",
             agent_name,
-            dirs.len(),
-            dirs.iter().map(|(id, cwd, _, _)| format!("{}={}", id, cwd)).collect::<Vec<_>>()
+            sessions.len(),
+            sessions.iter().map(|s| format!("{}={} status={:?} name={}", s.id, s.working_directory, s.status, s.name)).collect::<Vec<_>>()
         );
 
-        for (id, cwd, _, _) in &dirs {
-            let normalized = cwd.replace('\\', "/");
-            if normalized.ends_with(agent_name)
-                || normalized.contains(&format!("/{}", agent_name))
-            {
-                log::info!("[mailbox] Matched session {} (cwd={})", id, cwd);
-                return Some(*id);
-            }
+        // Collect all CWD-matching sessions (also match via agent_name_from_path for WG replicas
+        // where CWD contains __agent_ prefix that doesn't appear in the logical agent name)
+        let mut matches: Vec<&crate::session::session::SessionInfo> = sessions
+            .iter()
+            .filter(|s| {
+                let normalized = s.working_directory.replace('\\', "/");
+                self.agent_name_from_path(&s.working_directory) == agent_name
+                    || normalized.ends_with(agent_name)
+                    || normalized.contains(&format!("/{}", agent_name))
+            })
+            .collect();
+
+        if matches.is_empty() {
+            log::warn!("[mailbox] No session matched for '{}'", agent_name);
+            return None;
         }
-        log::warn!("[mailbox] No session matched for '{}'", agent_name);
-        None
+
+        log::info!(
+            "[mailbox] {} CWD matches for '{}': {:?}",
+            matches.len(),
+            agent_name,
+            matches.iter().map(|s| format!("{}({})", s.id, s.name)).collect::<Vec<_>>()
+        );
+
+        // Sort: non-temp first (false < true), then Active/Running before Idle before Exited
+        matches.sort_by_key(|s| {
+            let is_temp = s.name.starts_with(crate::session::session::TEMP_SESSION_PREFIX);
+            let status = match s.status {
+                SessionStatus::Active | SessionStatus::Running => 0u8,
+                SessionStatus::Idle => 1,
+                SessionStatus::Exited(_) => 2,
+            };
+            (is_temp, status)
+        });
+
+        let best = &matches[0];
+        log::info!(
+            "[mailbox] Best match for '{}': session {} (name='{}', status={:?})",
+            agent_name, best.id, best.name, best.status
+        );
+        Uuid::parse_str(&best.id).ok()
     }
 
     /// Resolve the full filesystem path for an agent name.
@@ -750,7 +804,10 @@ impl MailboxPoller {
 
         for (_, cwd, _, _) in &dirs {
             let normalized = cwd.replace('\\', "/");
-            if normalized.ends_with(agent_name) || normalized.contains(&format!("/{}", agent_name)) {
+            if self.agent_name_from_path(cwd) == agent_name
+                || normalized.ends_with(agent_name)
+                || normalized.contains(&format!("/{}", agent_name))
+            {
                 return Some(cwd.clone());
             }
         }
@@ -760,18 +817,25 @@ impl MailboxPoller {
         let cfg = settings.read().await;
         for rp in &cfg.repo_paths {
             let normalized = rp.replace('\\', "/");
-            if normalized.ends_with(agent_name) || normalized.contains(&format!("/{}", agent_name)) {
+            if self.agent_name_from_path(rp) == agent_name
+                || normalized.ends_with(agent_name)
+                || normalized.contains(&format!("/{}", agent_name))
+            {
                 return Some(rp.clone());
             }
         }
 
-        // Check teams config for member paths
-        let dark_factory = dark_factory::load_dark_factory();
-        for team in &dark_factory.teams {
-            for member in &team.members {
-                let normalized = member.path.replace('\\', "/");
-                if normalized.ends_with(agent_name) || normalized.contains(&format!("/{}", agent_name)) {
-                    return Some(member.path.clone());
+        // Check discovered teams for member paths
+        let discovered_teams = teams::discover_teams();
+        for team in &discovered_teams {
+            for agent_path in team.agent_paths.iter().flatten() {
+                let path_str = agent_path.to_string_lossy().to_string();
+                let normalized = path_str.replace('\\', "/");
+                if self.agent_name_from_path(&path_str) == agent_name
+                    || normalized.ends_with(agent_name)
+                    || normalized.contains(&format!("/{}", agent_name))
+                {
+                    return Some(path_str);
                 }
             }
         }
@@ -807,16 +871,18 @@ impl MailboxPoller {
         None
     }
 
-    /// Derive agent name (parent/folder) from a path.
+    /// Derive agent name (parent/folder) from a path, stripping `__agent_`/`_agent_` prefixes.
     fn agent_name_from_path(&self, path: &str) -> String {
         let normalized = path.replace('\\', "/");
         let components: Vec<&str> = normalized.split('/').filter(|s| !s.is_empty()).collect();
         if components.len() >= 2 {
-            format!(
-                "{}/{}",
-                components[components.len() - 2],
-                components[components.len() - 1]
-            )
+            let parent = components[components.len() - 2];
+            let last = components[components.len() - 1];
+            let stripped = last
+                .strip_prefix("__agent_")
+                .or_else(|| last.strip_prefix("_agent_"))
+                .unwrap_or(last);
+            format!("{}/{}", parent, stripped)
         } else {
             normalized
         }
@@ -824,11 +890,11 @@ impl MailboxPoller {
 
     /// Check if sender can reach destination via team membership.
     /// Only agents in the same team can communicate — no parent directory fallback.
-    fn can_reach(&self, from: &str, to: &str, config: &DarkFactoryConfig) -> bool {
-        if config.teams.is_empty() {
-            return false; // No teams configured → no communication
+    fn can_reach(&self, from: &str, to: &str, discovered_teams: &[teams::DiscoveredTeam]) -> bool {
+        if discovered_teams.is_empty() {
+            return false; // No teams discovered → no communication
         }
-        crate::phone::manager::can_communicate(from, to, config)
+        crate::config::teams::can_communicate(from, to, discovered_teams)
     }
 
     /// Resolve which agent CLI to use for wake-and-sleep mode.
@@ -850,10 +916,10 @@ impl MailboxPoller {
         // Try lastCodingAgent from destination's config.json
         if let Some(dest_path) = self.resolve_repo_path(&msg.to, app).await {
             let config_path = Path::new(&dest_path)
-                .join(".agentscommander")
+                .join(crate::config::agent_local_dir_name())
                 .join("config.json");
             if let Ok(content) = std::fs::read_to_string(&config_path) {
-                if let Ok(local_config) = serde_json::from_str::<crate::config::dark_factory::AgentLocalConfig>(&content) {
+                if let Ok(local_config) = serde_json::from_str::<AgentLocalConfig>(&content) {
                     if let Some(last_agent) = local_config.tooling.last_coding_agent.as_deref() {
                         if let Some(agent) = cfg.agents.iter().find(|a| a.id == last_agent) {
                             return Some((agent.command.clone(), vec![]));
@@ -897,6 +963,7 @@ impl MailboxPoller {
         std::fs::remove_file(path)
             .map_err(|e| format!("Failed to remove outbox file: {}", e))?;
 
+        log::info!("[mailbox] Message {} moved to delivered/", msg.id);
         Ok(())
     }
 
@@ -928,7 +995,7 @@ impl MailboxPoller {
         std::fs::remove_file(path)
             .map_err(|e| format!("Failed to remove outbox file: {}", e))?;
 
-        log::warn!("Rejected message {}: {}", msg.id, reason);
+        log::warn!("[mailbox] Message {} moved to rejected/: {}", msg.id, reason);
         Ok(())
     }
 

@@ -36,6 +36,7 @@ function shellMatchesAgent(shell: string, shellArgs: string[], agent: string): b
 const SessionItem: Component<{
   session: Session;
   isActive: boolean;
+  originProject?: string;
 }> = (props) => {
   const [showBotMenu, setShowBotMenu] = createSignal(false);
   const [showAgentModal, setShowAgentModal] = createSignal(false);
@@ -188,7 +189,7 @@ const SessionItem: Component<{
   const isInactive = () => props.session.id.startsWith("inactive-");
 
   /** Derive short display name from workingDirectory.
-   *  .ac-new paths: "agent-name@project-folder" (e.g. "code-reviewer@phi_phibridge")
+   *  .ac-new paths: "agent-name@origin-project" (e.g. "code-reviewer@phi_phibridge")
    *  Other paths: "parentFolder/name" (last 2 segments)
    */
   const displayName = () => {
@@ -198,7 +199,8 @@ const SessionItem: Component<{
       const parts = normalized.split("/");
       const acIdx = parts.indexOf(".ac-new");
       if (acIdx >= 1) {
-        const projectFolder = parts[acIdx - 1];
+        // Use origin project from identity resolution; fall back to path-derived project
+        const projectFolder = props.originProject || parts[acIdx - 1];
         let agentDir = parts[parts.length - 1];
         agentDir = agentDir.replace(/^__?agent_/, "");
         return `${agentDir}@${projectFolder}`;

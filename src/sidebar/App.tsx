@@ -5,7 +5,6 @@ import {
   SessionAPI,
   SettingsAPI,
   TelegramAPI,
-  DarkFactoryAPI,
   ReposAPI,
   WindowAPI,
   onSessionCreated,
@@ -92,12 +91,6 @@ const SidebarApp: Component = () => {
     try {
       const allRepos = await ReposAPI.search("");
       sessionsStore.setRepos(allRepos.filter((r) => r.agents.length > 0));
-    } catch {}
-
-    // Load teams for filter
-    try {
-      const dfConfig = await DarkFactoryAPI.get();
-      sessionsStore.setTeams(dfConfig.teams);
     } catch {}
 
     // Load initial sessions

@@ -280,7 +280,14 @@ impl PtyManager {
                             let has_standalone_marker = scan_text
                                 .lines()
                                 .any(|line| strip_ansi_csi(line).trim() == "%%ACRC%%");
+                            if !has_standalone_marker && scan_text.contains("ACRC") {
+                                log::debug!("[ACRC] partial match in session {} (not standalone): {:?}",
+                                    id, &scan_text[..scan_text.len().min(100)]);
+                            }
                             if has_standalone_marker {
+                                log::info!("[ACRC] standalone marker detected for session {}", id);
+                                log::debug!("[ACRC] scan_text for session {}: {:?}",
+                                    id, &scan_text[..scan_text.len().min(100)]);
                                 // Cooldown check + pending check + cooldown write
                                 // in a single logical block to avoid inconsistency windows.
                                 let should_inject = {
@@ -293,6 +300,7 @@ impl PtyManager {
                                         log::debug!("[ACRC] cooldown active for session {}, skipping", id);
                                         false
                                     } else {
+                                        log::info!("[ACRC] cooldown clear for session {}, proceeding", id);
                                         let already_pending = acrc_pending.lock()
                                             .map(|mut set| !set.insert(id))
                                             .unwrap_or(false);
@@ -303,17 +311,20 @@ impl PtyManager {
                                             }
                                             true
                                         } else {
+                                            log::info!("[ACRC] already pending for session {}, skipping", id);
                                             false
                                         }
                                     }
                                 };
                                 if should_inject {
+                                    log::info!("[ACRC] injecting credentials for session {}", id);
                                     let app = app_handle.clone();
                                     let pending = Arc::clone(&acrc_pending);
                                     tauri::async_runtime::spawn(async move {
                                         inject_credentials(&app, id).await;
                                         if let Ok(mut set) = pending.lock() {
                                             set.remove(&id);
+                                            log::debug!("[ACRC] pending flag cleared for session {}", id);
                                         }
                                     });
                                 }
@@ -612,17 +623,33 @@ fn scan_response_markers(session_id: Uuid, text: &str, watchers: &ResponseWatche
 
 /// Inject session credentials into a PTY in response to a %%ACRC%% marker.
 async fn inject_credentials(app: &AppHandle, session_id: Uuid) {
+    log::debug!("[ACRC] inject_credentials START for session {}", session_id);
     let session_mgr = app.state::<Arc<tokio::sync::RwLock<crate::session::manager::SessionManager>>>();
     let mgr = session_mgr.read().await;
     let sessions: Vec<crate::session::session::SessionInfo> = mgr.list_sessions().await;
 
     let session = match sessions.iter().find(|s| s.id == session_id.to_string()) {
-        Some(s) => s,
+        Some(s) => {
+            log::debug!("[ACRC] session {} found, preparing credentials", session_id);
+            s
+        }
         None => {
             log::warn!("[ACRC] session {} not found", session_id);
             return;
         }
     };
+
+    let exe_path = std::env::current_exe().ok();
+    let binary_name = exe_path.as_ref()
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "agentscommander".to_string());
+    let binary_path = {
+        let raw = exe_path.as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "agentscommander.exe".to_string());
+        raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string()
+    };
+    let local_dir = format!(".{}", &binary_name);
 
     let cred_block = format!(
         concat!(
@@ -630,11 +657,17 @@ async fn inject_credentials(app: &AppHandle, session_id: Uuid) {
             "# === Session Credentials ===\n",
             "# Token: {token}\n",
             "# Root: {root}\n",
+            "# Binary: {binary}\n",
+            "# BinaryPath: {binary_path}\n",
+            "# LocalDir: {local_dir}\n",
             "# === End Credentials ===\n",
             "\r",
         ),
         token = session.token,
         root = session.working_directory,
+        binary = binary_name,
+        binary_path = binary_path,
+        local_dir = local_dir,
     );
 
     drop(mgr);

@@ -128,7 +128,6 @@ export interface AppSettings {
   sidebarZoom: number;
   terminalZoom: number;
   guideZoom: number;
-  darkfactoryZoom: number;
   sidebarGeometry: WindowGeometry | null;
   terminalGeometry: WindowGeometry | null;
   webServerEnabled: boolean;
@@ -146,21 +145,11 @@ export interface TeamSessionGroup {
   members: Session[];
 }
 
-// Dark Factory types
+// Team types (from discovery)
 
 export interface TeamMember {
   name: string;
   path: string;
-}
-
-export interface DarkFactoryLayer {
-  id: string;
-  name: string;
-}
-
-export interface CoordinatorLink {
-  supervisorTeamId: string;
-  subordinateTeamId: string;
 }
 
 export interface Team {
@@ -170,12 +159,6 @@ export interface Team {
   coordinatorName?: string;
   layerId?: string;
   visible?: boolean;
-}
-
-export interface DarkFactoryConfig {
-  teams: Team[];
-  layers: DarkFactoryLayer[];
-  coordinatorLinks: CoordinatorLink[];
 }
 
 // Sidebar store state
@@ -233,6 +216,7 @@ export interface AcAgentReplica {
   name: string;
   path: string;
   identityPath?: string;
+  originProject?: string;
   preferredAgentId?: string;
   repoPaths: string[];
   repoBranch?: string;
@@ -252,32 +236,3 @@ export interface AcDiscoveryResult {
   workgroups: AcWorkgroup[];
 }
 
-// Dark Factory component props
-
-export interface OrgChartProps {
-  config: DarkFactoryConfig;
-}
-
-export interface LayerColumnProps {
-  layer: DarkFactoryLayer;
-  teams: Team[];
-  hoveredTeamId: string | null;
-  onHoverTeam: (id: string | null) => void;
-  onNodeRect: (teamId: string, rect: DOMRect) => void;
-  wrapperRef: HTMLDivElement | undefined;
-}
-
-export interface TeamNodeProps {
-  team: Team;
-  highlighted: boolean;
-  onHover: (hovering: boolean) => void;
-  onNodeRect: (teamId: string, rect: DOMRect) => void;
-  wrapperRef: HTMLDivElement | undefined;
-}
-
-export interface ConnectionLinesProps {
-  links: CoordinatorLink[];
-  teams: Team[];
-  nodeRects: Map<string, DOMRect>;
-  hoveredTeamId: string | null;
-}

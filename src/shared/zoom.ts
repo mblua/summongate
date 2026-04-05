@@ -6,13 +6,12 @@ const ZOOM_STEP = 0.1;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 3.0;
 
-type WindowType = "sidebar" | "terminal" | "guide" | "darkfactory";
+type WindowType = "sidebar" | "terminal" | "guide";
 
 const zoomKeyMap: Record<WindowType, keyof AppSettings> = {
   sidebar: "sidebarZoom",
   terminal: "terminalZoom",
   guide: "guideZoom",
-  darkfactory: "darkfactoryZoom",
 };
 
 function clampZoom(value: number): number {

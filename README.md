@@ -27,7 +27,8 @@ Built with **Tauri 2.x** (Rust) + **SolidJS** (TypeScript) + **xterm.js** (WebGL
 - **Zoom support** - Ctrl+Scroll, Ctrl++/-, Ctrl+0 on any window, with per-window zoom level persistence
 - **Window geometry persistence** - Windows reopen at the same position and size as when you last closed the app
 - **Keyboard shortcuts** - New session, close, switch, voice toggle (Ctrl+Shift+R)
-- **Configurable** - Shell, args, repo paths, agents, and bots via `~/.agentscommander/settings.json`
+- **Configurable** - Shell, args, repo paths, agents, and bots via `settings.json` (next to binary)
+- **Portable instances** - Copy the exe, rename with a suffix, run. Each copy is fully isolated with its own config
 
 ## Design Principles
 
@@ -113,7 +114,7 @@ This creates a draft release with auto-generated changelog and installers for Wi
 
 ## Configuration
 
-Settings are stored in `~/.agentscommander/settings.json`:
+Settings are stored in a `.agentscommander*/settings.json` file next to the binary (see [Portable Instances](#portable-instances) below).
 
 On Windows the default shell is `powershell.exe`; on Linux/macOS it is `/bin/bash`.
 
@@ -144,6 +145,49 @@ On Windows the default shell is `powershell.exe`; on Linux/macOS it is `/bin/bas
   "terminalGeometry": null
 }
 ```
+
+## Portable Instances
+
+Agents Commander is fully portable. The binary carries everything it needs — no installation required.
+
+### Config directory
+
+The config directory lives **next to the binary**, named after it:
+
+```
+C:\tools\agentscommander.exe          -> C:\tools\.agentscommander\
+C:\tools\agentscommander_stage.exe    -> C:\tools\.agentscommander_stage\
+C:\work\agentscommander_team-a.exe    -> C:\work\.agentscommander_team-a\
+```
+
+Each config directory contains `settings.json`, `sessions.json`, web tokens, and all instance state. Two copies of the binary in different folders (or with different names) are **completely independent** — separate settings, sessions, ports, and mutex.
+
+### Instance labeling
+
+Rename the binary with an underscore suffix to create a labeled instance:
+
+```
+agentscommander_<suffix>.exe
+```
+
+The suffix (uppercased) appears as a badge in the titlebar and affects isolation:
+
+| Binary name | Titlebar | Mutex | Web port |
+|---|---|---|---|
+| `agentscommander.exe` | Agents Commander | Shared (prod) | 9877 |
+| `agentscommander_stage.exe` | Agents Commander **[STAGE]** | Unique | 9878 |
+| `agentscommander_dev.exe` | Agents Commander **[DEV]** | Unique | 9876 |
+| `agentscommander_team-a.exe` | Agents Commander **[TEAM-A]** | Unique | Auto (9880-9899) |
+
+Unknown suffixes get a deterministic port in the 9880-9899 range based on a hash of the suffix name.
+
+### Creating a new isolated instance
+
+1. Copy `agentscommander.exe` to any folder
+2. Rename it with an underscore suffix: `agentscommander_myteam.exe`
+3. Run it
+
+That's it. The instance creates its own config directory on first launch, gets a unique mutex (so it won't conflict with other instances), and shows **[MYTEAM]** in the titlebar.
 
 ## CLI
 

@@ -5,8 +5,6 @@ import SidebarApp from "./sidebar/App";
 import TerminalApp from "./terminal/App";
 import GuideApp from "./guide/App";
 import BrowserApp from "./browser/App";
-import DarkFactoryApp from "./darkfactory/App";
-
 const params = new URLSearchParams(window.location.search);
 const windowType = params.get("window");
 
@@ -30,8 +28,6 @@ if (windowType === "terminal") {
   );
 } else if (windowType === "guide") {
   render(() => <GuideApp />, root);
-} else if (windowType === "darkfactory") {
-  render(() => <DarkFactoryApp />, root);
 } else if (windowType === "sidebar") {
   render(() => <SidebarApp />, root);
 } else if (!isTauri) {

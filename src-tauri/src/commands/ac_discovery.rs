@@ -41,6 +41,8 @@ pub struct AcAgentReplica {
     pub path: String,
     /// Resolved identity path from config.json "identity" field
     pub identity_path: Option<String>,
+    /// Project folder where the identity (matrix agent) lives
+    pub origin_project: Option<String>,
     /// Preferred coding agent ID inherited from the identity matrix
     pub preferred_agent_id: Option<String>,
     /// Absolute paths to repos this replica works on (resolved from config.json "repos")
@@ -70,6 +72,19 @@ pub struct AcDiscoveryResult {
     pub agents: Vec<AcAgentMatrix>,
     pub teams: Vec<AcTeam>,
     pub workgroups: Vec<AcWorkgroup>,
+}
+
+/// Extract the origin project name from a resolved identity path.
+/// Looks for the folder immediately before ".ac-new" in the path.
+fn extract_origin_project(identity_abs_path: &std::path::Path) -> Option<String> {
+    let s = identity_abs_path.to_string_lossy().replace('\\', "/");
+    let parts: Vec<&str> = s.split('/').collect();
+    for (i, part) in parts.iter().enumerate() {
+        if *part == ".ac-new" && i > 0 {
+            return Some(parts[i - 1].to_string());
+        }
+    }
+    None
 }
 
 /// Derive agent display name from its path.
@@ -485,6 +500,14 @@ pub async fn discover_ac_agents(
                                 let identity_path = replica_config.as_ref()
                                     .and_then(|v| v.get("identity")?.as_str().map(String::from));
 
+                                // Resolve identity to determine origin project
+                                let origin_project = identity_path.as_ref()
+                                    .and_then(|rel| {
+                                        std::fs::canonicalize(wg_path.join(rel)).ok()
+                                            .and_then(|abs| extract_origin_project(&abs))
+                                    })
+                                    .or_else(|| Some(project_folder.clone()));
+
                                 // Resolve identity to matrix dir and read its lastCodingAgent
                                 let preferred_agent_id = identity_path.as_ref().and_then(|rel| {
                                     let matrix_dir = wg_path.join(rel);
@@ -522,6 +545,7 @@ pub async fn discover_ac_agents(
                                     name: replica_name,
                                     path: wg_path.to_string_lossy().to_string(),
                                     identity_path,
+                                    origin_project,
                                     preferred_agent_id,
                                     repo_paths,
                                     repo_branch,
@@ -718,6 +742,14 @@ pub async fn discover_project(
                         let identity_path = replica_config.as_ref()
                             .and_then(|v| v.get("identity")?.as_str().map(String::from));
 
+                        // Resolve identity to determine origin project
+                        let origin_project = identity_path.as_ref()
+                            .and_then(|rel| {
+                                std::fs::canonicalize(wg_path.join(rel)).ok()
+                                    .and_then(|abs| extract_origin_project(&abs))
+                            })
+                            .or_else(|| Some(project_folder.clone()));
+
                         let preferred_agent_id = identity_path.as_ref().and_then(|rel| {
                             let matrix_dir = wg_path.join(rel);
                             let matrix_config = matrix_dir.join("config.json");
@@ -751,6 +783,7 @@ pub async fn discover_project(
                             name: replica_name,
                             path: wg_path.to_string_lossy().to_string(),
                             identity_path,
+                            origin_project,
                             preferred_agent_id,
                             repo_paths,
                             repo_branch,

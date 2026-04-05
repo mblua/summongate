@@ -444,13 +444,6 @@ pub fn run() {
             let _ = &sidebar;
             let _ = &terminal;
 
-            // Sync per-agent configs from teams.json so local config.json
-            // files stay up to date (team membership, coordinator roles).
-            let teams_config = config::dark_factory::load_dark_factory();
-            if let Err(e) = config::dark_factory::sync_agent_configs(&teams_config) {
-                log::warn!("Failed to sync agent configs on startup: {}", e);
-            }
-
             // Restore sessions from last run
             let persisted = sessions_persistence::load_sessions();
             if !persisted.is_empty() {
@@ -547,10 +540,7 @@ pub fn run() {
             commands::window::close_detached_terminal,
             commands::window::open_in_explorer,
             commands::window::open_guide_window,
-            commands::window::open_darkfactory_window,
             commands::window::ensure_terminal_window,
-            commands::dark_factory::get_dark_factory,
-            commands::dark_factory::save_dark_factory,
             commands::phone::phone_send_message,
             commands::phone::phone_get_inbox,
             commands::phone::phone_list_agents,
@@ -563,6 +553,7 @@ pub fn run() {
             commands::config::start_web_server,
             commands::config::stop_web_server,
             commands::config::get_web_server_status,
+            commands::config::get_instance_label,
             commands::agent_creator::pick_folder,
             commands::agent_creator::create_agent_folder,
             commands::agent_creator::write_claude_settings_local,

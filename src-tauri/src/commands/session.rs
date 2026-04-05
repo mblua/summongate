@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
-use crate::config::dark_factory::{self, AgentLocalConfig};
+use crate::config::agent_config::{self, AgentLocalConfig};
 use crate::config::sessions_persistence::persist_current_state;
 use crate::config::settings::{AppSettings, SettingsState};
 use crate::pty::manager::PtyManager;
@@ -170,7 +170,7 @@ pub async fn create_session_inner(
         if let Some(ref aid) = agent_id {
             let label = agent_label.as_deref().unwrap_or("Unknown");
             let session_id_str = id.to_string();
-            if let Err(e) = dark_factory::set_last_coding_agent(&cwd, aid, label, Some(&session_id_str)) {
+            if let Err(e) = agent_config::set_last_coding_agent(&cwd, aid, label, Some(&session_id_str)) {
                 log::warn!("Failed to save lastCodingAgent: {}", e);
             }
         }
@@ -267,7 +267,7 @@ pub async fn create_session(
     // Auto-attach Telegram bot if repo has .agentscommander/config.json
     let id = Uuid::parse_str(&info.id).unwrap();
     let config_path = std::path::Path::new(&cwd)
-        .join(".agentscommander")
+        .join(crate::config::agent_local_dir_name())
         .join("config.json");
     if let Ok(contents) = tokio::fs::read_to_string(&config_path).await {
         if let Ok(local_config) = serde_json::from_str::<AgentLocalConfig>(&contents) {

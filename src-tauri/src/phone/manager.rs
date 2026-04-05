@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::config::dark_factory::{DarkFactoryConfig, Team};
+use crate::config::teams::DiscoveredTeam;
 use super::types::{AgentInfo, Conversation, PhoneMessage};
 
 /// Returns <config_dir>/conversations/
@@ -8,84 +8,25 @@ fn conversations_dir() -> Option<PathBuf> {
     crate::config::config_dir().map(|d| d.join("conversations"))
 }
 
-/// Check if two agents can communicate based on team routing rules.
-/// Intra-team: agents in the same team can talk (with coordinator gating).
-/// Cross-team: coordinators linked via CoordinatorLink can talk.
-pub fn can_communicate(from: &str, to: &str, config: &DarkFactoryConfig) -> bool {
-    // Find all teams where both are members
-    let shared_teams: Vec<&Team> = config
-        .teams
-        .iter()
-        .filter(|t| {
-            let has_from = t.members.iter().any(|m| m.name == from);
-            let has_to = t.members.iter().any(|m| m.name == to);
-            has_from && has_to
-        })
-        .collect();
-
-    // Intra-team check
-    if !shared_teams.is_empty() {
-        for team in &shared_teams {
-            match &team.coordinator_name {
-                None => return true,
-                Some(coord) => {
-                    if coord == from || coord == to {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-
-    // WG-scoped check: agents in the same workgroup can communicate
-    // WG names follow the pattern "wg-X-name/agent"
-    if from.starts_with("wg-") && to.starts_with("wg-") {
-        let from_wg = from.split('/').next().unwrap_or("");
-        let to_wg = to.split('/').next().unwrap_or("");
-        if !from_wg.is_empty() && from_wg == to_wg {
-            return true;
-        }
-    }
-
-    // Cross-team coordinator links check
-    for link in &config.coordinator_links {
-        let sup_team = config.teams.iter().find(|t| t.id == link.supervisor_team_id);
-        let sub_team = config.teams.iter().find(|t| t.id == link.subordinate_team_id);
-        if let (Some(sup), Some(sub)) = (sup_team, sub_team) {
-            let from_is_sup_coord = sup.coordinator_name.as_deref() == Some(from)
-                && sup.members.iter().any(|m| m.name == from);
-            let from_is_sub_coord = sub.coordinator_name.as_deref() == Some(from)
-                && sub.members.iter().any(|m| m.name == from);
-            let to_is_sup_coord = sup.coordinator_name.as_deref() == Some(to)
-                && sup.members.iter().any(|m| m.name == to);
-            let to_is_sub_coord = sub.coordinator_name.as_deref() == Some(to)
-                && sub.members.iter().any(|m| m.name == to);
-            // Bidirectional: supervisor coord <-> subordinate coord
-            if (from_is_sup_coord && to_is_sub_coord)
-                || (from_is_sub_coord && to_is_sup_coord)
-            {
-                return true;
-            }
-        }
-    }
-
-    false
-}
-
-/// List all agents from teams with their team memberships
-pub fn list_agents(config: &DarkFactoryConfig) -> Vec<AgentInfo> {
+/// List all agents from discovered teams with their team memberships
+pub fn list_agents(teams: &[DiscoveredTeam]) -> Vec<AgentInfo> {
     let mut agents: std::collections::HashMap<String, AgentInfo> = std::collections::HashMap::new();
 
-    for team in &config.teams {
-        for member in &team.members {
-            let entry = agents.entry(member.name.clone()).or_insert_with(|| AgentInfo {
-                name: member.name.clone(),
-                path: member.path.clone(),
+    for team in teams {
+        for (i, name) in team.agent_names.iter().enumerate() {
+            let path = team.agent_paths.get(i)
+                .and_then(|p| p.as_ref())
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            let entry = agents.entry(name.clone()).or_insert_with(|| AgentInfo {
+                name: name.clone(),
+                path,
                 teams: Vec::new(),
                 is_coordinator_of: Vec::new(),
             });
             entry.teams.push(team.name.clone());
-            if team.coordinator_name.as_deref() == Some(&member.name) {
+            if team.coordinator_name.as_deref() == Some(name.as_str()) {
                 entry.is_coordinator_of.push(team.name.clone());
             }
         }
@@ -150,12 +91,12 @@ pub fn send_message(
     to: &str,
     body: &str,
     team: &str,
-    config: &DarkFactoryConfig,
+    teams: &[DiscoveredTeam],
 ) -> Result<String, String> {
     // Validate routing
-    if !can_communicate(from, to, config) {
+    if !crate::config::teams::can_communicate(from, to, teams) {
         return Err(format!(
-            "Agent '{}' cannot communicate with '{}' — no shared team, no coordinator link, or must go through coordinator",
+            "Agent '{}' cannot communicate with '{}' — no shared team or coordinator link",
             from, to
         ));
     }

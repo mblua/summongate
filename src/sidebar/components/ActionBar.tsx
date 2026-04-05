@@ -2,7 +2,7 @@ import { Component, createSignal, createEffect, onCleanup, Show } from "solid-js
 import { open } from "@tauri-apps/plugin-dialog";
 import { projectStore } from "../stores/project";
 import { sessionsStore } from "../stores/sessions";
-import { ProjectAPI, GuideAPI, DarkFactoryWindowAPI } from "../../shared/ipc";
+import { ProjectAPI, GuideAPI } from "../../shared/ipc";
 import OpenAgentModal from "./OpenAgentModal";
 import NewAgentModal from "./NewAgentModal";
 import SettingsModal from "./SettingsModal";
@@ -137,9 +137,6 @@ const ActionBar: Component = () => {
             title="Toggle theme"
           >
             {isLight() ? "\u2600\uFE0F" : "\uD83C\uDF19"}
-          </button>
-          <button class="toolbar-gear-btn" onClick={() => DarkFactoryWindowAPI.open()} title="Dark Factory">
-            &#x1F3ED;
           </button>
           <button class="toolbar-gear-btn" onClick={() => setShowSettings(true)} title="Settings">
             &#x2699;

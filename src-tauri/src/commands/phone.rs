@@ -1,4 +1,4 @@
-use crate::config::dark_factory;
+use crate::config::teams;
 use crate::phone::manager;
 use crate::phone::types::{AgentInfo, PhoneMessage};
 
@@ -9,8 +9,8 @@ pub async fn phone_send_message(
     body: String,
     team: String,
 ) -> Result<String, String> {
-    let config = dark_factory::load_dark_factory();
-    manager::send_message(&from, &to, &body, &team, &config)
+    let discovered = teams::discover_teams();
+    manager::send_message(&from, &to, &body, &team, &discovered)
 }
 
 #[tauri::command]
@@ -20,8 +20,8 @@ pub async fn phone_get_inbox(agent_name: String) -> Result<Vec<PhoneMessage>, St
 
 #[tauri::command]
 pub async fn phone_list_agents() -> Result<Vec<AgentInfo>, String> {
-    let config = dark_factory::load_dark_factory();
-    Ok(manager::list_agents(&config))
+    let discovered = teams::discover_teams();
+    Ok(manager::list_agents(&discovered))
 }
 
 #[tauri::command]

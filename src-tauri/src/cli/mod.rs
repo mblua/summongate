@@ -1,11 +1,11 @@
 pub mod create_agent;
-pub mod send;
 pub mod list_peers;
+pub mod list_sessions;
+pub mod send;
 
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "agentscommander-new")]
 #[command(about = "Agent terminal session manager with inter-agent messaging")]
 #[command(after_help = "\
 TOKEN: Your session token is injected into your console as a '# === Session Credentials ===' block \
@@ -28,6 +28,8 @@ pub enum Commands {
     Send(send::SendArgs),
     /// List reachable peers (returns JSON array with name, status, role, teams)
     ListPeers(list_peers::ListPeersArgs),
+    /// List all sessions in the running app instance (returns JSON)
+    ListSessions(list_sessions::ListSessionsArgs),
     /// Create a new agent: folder + CLAUDE.md, optionally launch it
     CreateAgent(create_agent::CreateAgentArgs),
 }
@@ -55,6 +57,7 @@ pub fn handle_cli(cmd: Commands) -> i32 {
     match cmd {
         Commands::Send(args) => send::execute(args),
         Commands::ListPeers(args) => list_peers::execute(args),
+        Commands::ListSessions(args) => list_sessions::execute(args),
         Commands::CreateAgent(args) => create_agent::execute(args),
     }
 }

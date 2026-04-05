@@ -23,7 +23,9 @@ pub async fn save_debug_logs(content: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn get_settings(settings: State<'_, SettingsState>) -> Result<AppSettings, String> {
     let s = settings.read().await;
-    Ok(s.clone())
+    let mut result = s.clone();
+    result.root_token = None; // never expose root token to frontend
+    Ok(result)
 }
 
 #[tauri::command]
@@ -31,9 +33,12 @@ pub async fn update_settings(
     settings: State<'_, SettingsState>,
     new_settings: AppSettings,
 ) -> Result<(), String> {
-    save_settings(&new_settings)?;
+    let mut to_save = new_settings;
+    // Preserve existing root token — frontend cannot overwrite it
+    to_save.root_token = settings.read().await.root_token.clone();
+    save_settings(&to_save)?;
     let mut s = settings.write().await;
-    *s = new_settings;
+    *s = to_save;
     Ok(())
 }
 
@@ -123,4 +128,11 @@ pub async fn get_web_server_status(
         Ok(_) => Ok(true),
         Err(_) => Ok(false),
     }
+}
+
+/// Returns the runtime instance label for the titlebar badge.
+/// E.g. "STAGE", "STANDALONE", or "" for prod (no badge).
+#[tauri::command]
+pub fn get_instance_label() -> String {
+    crate::config::profile::instance_label().to_string()
 }

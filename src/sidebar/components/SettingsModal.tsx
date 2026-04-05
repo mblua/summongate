@@ -1,18 +1,13 @@
 import { Component, createSignal, For, Show, onMount } from "solid-js";
-import { createStore, produce } from "solid-js/store";
+import { createStore } from "solid-js/store";
 import { isTauri } from "../../shared/platform";
 import type {
   AppSettings,
   AgentConfig,
   TelegramBotConfig,
-  DarkFactoryConfig,
-  DarkFactoryLayer,
-  CoordinatorLink,
-  Team,
-  TeamMember,
   RepoMatch,
 } from "../../shared/types";
-import { SettingsAPI, TelegramAPI, DarkFactoryAPI, ReposAPI } from "../../shared/ipc";
+import { SettingsAPI, TelegramAPI, ReposAPI } from "../../shared/ipc";
 import { settingsStore } from "../../shared/stores/settings";
 import { sessionsStore } from "../stores/sessions";
 
@@ -46,13 +41,12 @@ function newId(): string {
   return `agent_${Date.now()}_${idCounter++}`;
 }
 
-type SettingsTab = "general" | "agents" | "integrations" | "darkfactory";
+type SettingsTab = "general" | "agents" | "integrations";
 
 const TABS: { key: SettingsTab; label: string }[] = [
   { key: "general", label: "General" },
   { key: "agents", label: "Coding Agents" },
   { key: "integrations", label: "Integrations" },
-  { key: "darkfactory", label: "Dark Factory" },
 ];
 
 const SettingsModal: Component<{ onClose: () => void }> = (props) => {
@@ -66,31 +60,17 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
   } | null>(null);
   const [activeTab, setActiveTab] = createSignal<SettingsTab>("general");
 
-  // Dark Factory state (separate from AppSettings)
-  const [dfConfig, setDfConfig] = createStore<DarkFactoryConfig>({ teams: [], layers: [], coordinatorLinks: [] });
-  const [repoResults, setRepoResults] = createSignal<RepoMatch[]>([]);
-  const [repoQuery, setRepoQuery] = createSignal("");
-  const [searchingRepos, setSearchingRepos] = createSignal(false);
   const [webServerRunning, setWebServerRunning] = createSignal(false);
-  const [addingMemberToTeam, setAddingMemberToTeam] = createSignal<string | null>(null);
-  const [newTeamName, setNewTeamName] = createSignal("");
-  const [teamNameError, setTeamNameError] = createSignal("");
-  const [newLayerName, setNewLayerName] = createSignal("");
-  const [layerNameError, setLayerNameError] = createSignal("");
-  const [editingLayerId, setEditingLayerId] = createSignal<string | null>(null);
-  const [editingLayerName, setEditingLayerName] = createSignal("");
   const [saveError, setSaveError] = createSignal("");
 
   const s = () => settings.data;
 
   onMount(async () => {
-    const [loaded, df, wsRunning] = await Promise.all([
+    const [loaded, wsRunning] = await Promise.all([
       SettingsAPI.get(),
-      DarkFactoryAPI.get(),
       SettingsAPI.getWebServerStatus().catch(() => false),
     ]);
     setSettings("data", loaded);
-    setDfConfig(df);
     setWebServerRunning(wsRunning);
   });
 
@@ -194,174 +174,6 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
     return settings.data.agents.some((a) => a.command === command);
   };
 
-  // ── Dark Factory: Teams ──
-  const addTeam = () => {
-    const name = newTeamName().trim();
-    if (!name) {
-      setTeamNameError("Name cannot be empty");
-      return;
-    }
-    if (dfConfig.teams.some((t) => t.name.toLowerCase() === name.toLowerCase())) {
-      setTeamNameError("Team name already exists");
-      return;
-    }
-    setTeamNameError("");
-    const team: Team = {
-      id: newId(),
-      name,
-      members: [],
-    };
-    setDfConfig("teams", (prev) => [...prev, team]);
-    setNewTeamName("");
-  };
-
-  const removeTeam = (teamId: string) => {
-    setDfConfig("teams", (prev) => prev.filter((t) => t.id !== teamId));
-    // Clean up coordinator links referencing the removed team
-    setDfConfig("coordinatorLinks", (prev) =>
-      (prev || []).filter(
-        (l) => l.supervisorTeamId !== teamId && l.subordinateTeamId !== teamId
-      )
-    );
-  };
-
-  const updateTeamName = (teamId: string, name: string) => {
-    setDfConfig("teams", (t) => t.id === teamId, "name", name);
-  };
-
-  const addMemberToTeam = (teamId: string, repo: RepoMatch) => {
-    setDfConfig(
-      "teams",
-      (t) => t.id === teamId,
-      "members",
-      (prev) => {
-        if (prev.some((m) => m.path === repo.path)) return prev;
-        return [...prev, { name: repo.name, path: repo.path }];
-      }
-    );
-    setAddingMemberToTeam(null);
-    setRepoQuery("");
-    setRepoResults([]);
-  };
-
-  const removeMember = (teamId: string, memberPath: string) => {
-    setDfConfig(
-      "teams",
-      (t) => t.id === teamId,
-      produce((team: Team) => {
-        team.members = team.members.filter((m) => m.path !== memberPath);
-        if (
-          team.coordinatorName &&
-          !team.members.some((m) => m.name === team.coordinatorName)
-        ) {
-          team.coordinatorName = undefined;
-        }
-      })
-    );
-  };
-
-  const setCoordinator = (teamId: string, memberName: string | undefined) => {
-    setDfConfig("teams", (t) => t.id === teamId, "coordinatorName", memberName);
-  };
-
-  const handleRepoSearch = async (query: string) => {
-    setRepoQuery(query);
-    if (query.length < 1) {
-      setRepoResults([]);
-      return;
-    }
-    setSearchingRepos(true);
-    try {
-      const results = await ReposAPI.search(query);
-      setRepoResults(results);
-    } catch {
-      setRepoResults([]);
-    }
-    setSearchingRepos(false);
-  };
-
-  // ── Dark Factory: Layers ──
-  const addLayer = () => {
-    const name = newLayerName().trim();
-    if (!name) {
-      setLayerNameError("Name cannot be empty");
-      return;
-    }
-    if ((dfConfig.layers || []).some((l) => l.name.toLowerCase() === name.toLowerCase())) {
-      setLayerNameError("Layer name already exists");
-      return;
-    }
-    setLayerNameError("");
-    const layer: DarkFactoryLayer = { id: newId(), name };
-    setDfConfig("layers", (prev) => [...(prev || []), layer]);
-    setNewLayerName("");
-  };
-
-  const removeLayer = (layerId: string) => {
-    setDfConfig("layers", (prev) => (prev || []).filter((l) => l.id !== layerId));
-    // Clear layerId from teams that reference this layer
-    setDfConfig("teams", (t) => t.layerId === layerId, "layerId", undefined as any);
-    // Remove coordinator links involving teams in this layer
-    // (teams keep their links, but layer assignment is cleared — links still valid by teamId)
-  };
-
-  const moveLayer = (index: number, direction: -1 | 1) => {
-    const layers = [...(dfConfig.layers || [])];
-    const newIndex = index + direction;
-    if (newIndex < 0 || newIndex >= layers.length) return;
-    [layers[index], layers[newIndex]] = [layers[newIndex], layers[index]];
-    setDfConfig("layers", layers);
-  };
-
-  const saveLayerEdit = (layerId: string) => {
-    const name = editingLayerName().trim();
-    if (!name) return;
-    if ((dfConfig.layers || []).some((l) => l.id !== layerId && l.name.toLowerCase() === name.toLowerCase())) {
-      setLayerNameError("Layer name already exists");
-      return;
-    }
-    setLayerNameError("");
-    setDfConfig("layers", (l) => l.id === layerId, "name", name);
-    setEditingLayerId(null);
-  };
-
-  // ── Dark Factory: Team layer assignment ──
-  const setTeamLayer = (teamId: string, layerId: string | undefined) => {
-    setDfConfig("teams", (t) => t.id === teamId, "layerId", layerId as any);
-  };
-
-  // ── Dark Factory: Coordinator Links (Reports to) ──
-  const setReportsTo = (subordinateTeamId: string, supervisorTeamId: string | undefined) => {
-    // Remove existing link where this team is subordinate
-    setDfConfig("coordinatorLinks", (prev) =>
-      (prev || []).filter((l) => l.subordinateTeamId !== subordinateTeamId)
-    );
-    // Add new link if a supervisor was selected
-    if (supervisorTeamId) {
-      const link: CoordinatorLink = { supervisorTeamId, subordinateTeamId };
-      setDfConfig("coordinatorLinks", (prev) => [...(prev || []), link]);
-    }
-  };
-
-  const getReportsTo = (teamId: string): string | undefined => {
-    return (dfConfig.coordinatorLinks || []).find((l) => l.subordinateTeamId === teamId)
-      ?.supervisorTeamId;
-  };
-
-  /** Teams eligible as supervisor: must be in a layer with lower index (higher hierarchy) */
-  const getSupervisorCandidates = (teamId: string): Team[] => {
-    const team = dfConfig.teams.find((t) => t.id === teamId);
-    if (!team?.layerId) return [];
-    const layers = dfConfig.layers || [];
-    const teamLayerIndex = layers.findIndex((l) => l.id === team.layerId);
-    if (teamLayerIndex <= 0) return []; // Layer 0 or no layer = no possible supervisor
-    // All teams in layers with index < teamLayerIndex
-    const higherLayerIds = new Set(layers.slice(0, teamLayerIndex).map((l) => l.id));
-    return dfConfig.teams.filter(
-      (t) => t.id !== teamId && t.layerId && higherLayerIds.has(t.layerId)
-    );
-  };
-
   // ── Validation ──
   const validateAgents = (): string | null => {
     if (!settings.data) return null;
@@ -387,18 +199,13 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
     }
     setSaveError("");
     setSaving(true);
-    await Promise.all([
-      SettingsAPI.update(settings.data),
-      DarkFactoryAPI.save({ ...dfConfig }),
-    ]);
+    await SettingsAPI.update(settings.data);
     if (isTauri) {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       await getCurrentWindow().setAlwaysOnTop(settings.data.sidebarAlwaysOnTop);
     }
     // Refresh settings store so mic button visibility updates
     settingsStore.refresh();
-    // Refresh teams in sidebar dropdown immediately
-    sessionsStore.setTeams([...dfConfig.teams]);
     // Refresh repos (repo_paths may have changed)
     try {
       const allRepos = await ReposAPI.search("");
@@ -861,324 +668,6 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
     </>
   );
 
-  const renderDarkFactoryTab = () => (
-    <>
-      {/* ── Layers ── */}
-      <div class="settings-section">
-        <div class="settings-section-title">Layers</div>
-        <p class="settings-hint">
-          Layers define hierarchy levels. The order here determines position in the
-          organigrama (top = highest hierarchy).
-        </p>
-
-        <For each={dfConfig.layers || []}>
-          {(layer, i) => (
-            <div class="df-layer-row">
-              <span class="df-layer-index">{i() + 1}</span>
-              <Show
-                when={editingLayerId() === layer.id}
-                fallback={
-                  <span class="df-layer-name">{layer.name}</span>
-                }
-              >
-                <input
-                  class="settings-input df-layer-edit-input"
-                  value={editingLayerName()}
-                  onInput={(e) => setEditingLayerName(e.currentTarget.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") saveLayerEdit(layer.id);
-                    if (e.key === "Escape") setEditingLayerId(null);
-                  }}
-                  autofocus
-                />
-              </Show>
-              <div class="df-layer-actions">
-                <Show
-                  when={editingLayerId() === layer.id}
-                  fallback={
-                    <button
-                      class="df-layer-btn"
-                      onClick={() => {
-                        setEditingLayerId(layer.id);
-                        setEditingLayerName(layer.name);
-                      }}
-                      title="Edit"
-                    >
-                      &#x270E;
-                    </button>
-                  }
-                >
-                  <button
-                    class="df-layer-btn"
-                    onClick={() => saveLayerEdit(layer.id)}
-                    title="Save"
-                  >
-                    &#x2713;
-                  </button>
-                </Show>
-                <button
-                  class="df-layer-btn"
-                  onClick={() => moveLayer(i(), -1)}
-                  disabled={i() === 0}
-                  title="Move up"
-                >
-                  &#x2191;
-                </button>
-                <button
-                  class="df-layer-btn"
-                  onClick={() => moveLayer(i(), 1)}
-                  disabled={i() === (dfConfig.layers || []).length - 1}
-                  title="Move down"
-                >
-                  &#x2193;
-                </button>
-                <button
-                  class="settings-path-remove"
-                  onClick={() => removeLayer(layer.id)}
-                  title="Remove layer"
-                >
-                  &#x2715;
-                </button>
-              </div>
-            </div>
-          )}
-        </For>
-
-        <div class="df-new-team-row">
-          <input
-            class="settings-input df-new-team-input"
-            placeholder="New layer name..."
-            value={newLayerName()}
-            onInput={(e) => {
-              setNewLayerName(e.currentTarget.value);
-              setLayerNameError("");
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") addLayer();
-            }}
-          />
-          <button class="settings-add-btn" onClick={addLayer}>
-            + Add Layer
-          </button>
-        </div>
-        <Show when={layerNameError()}>
-          <span class="df-team-error">{layerNameError()}</span>
-        </Show>
-      </div>
-
-      {/* ── Teams ── */}
-      <div class="settings-section">
-        <div class="settings-section-title">Teams</div>
-        <p class="settings-hint">
-          Teams group agents (repos) together. Members of a team can communicate
-          with each other. When a coordinator is set, all messages route through
-          them.
-        </p>
-
-        <For each={dfConfig.teams}>
-          {(team) => (
-            <div class="settings-button-card df-team-card">
-              <div class="settings-button-card-header">
-                <span class="df-team-name">{team.name}</span>
-                <span class="df-team-count">
-                  {team.members.length} member{team.members.length !== 1 ? "s" : ""}
-                </span>
-                <button
-                  class="settings-agent-remove"
-                  onClick={() => removeTeam(team.id)}
-                  title="Remove team"
-                >
-                  &#x2715;
-                </button>
-              </div>
-
-              {/* Team name edit */}
-              <label class="settings-field">
-                <span class="settings-label">Team Name</span>
-                <input
-                  class="settings-input"
-                  value={team.name}
-                  onInput={(e) => updateTeamName(team.id, e.currentTarget.value)}
-                />
-              </label>
-
-              {/* Visible in sidebar */}
-              <label class="settings-field settings-field-inline">
-                <input
-                  type="checkbox"
-                  class="settings-checkbox"
-                  checked={team.visible !== false}
-                  onChange={(e) =>
-                    setDfConfig("teams", (t) => t.id === team.id, "visible", e.currentTarget.checked)
-                  }
-                />
-                <span class="settings-label">Visible in sidebar</span>
-              </label>
-
-              {/* Layer assignment */}
-              <label class="settings-field">
-                <span class="settings-label">Layer</span>
-                <select
-                  class="settings-input settings-select"
-                  value={team.layerId || ""}
-                  onChange={(e) =>
-                    setTeamLayer(team.id, e.currentTarget.value || undefined)
-                  }
-                >
-                  <option value="">None</option>
-                  <For each={dfConfig.layers || []}>
-                    {(layer) => (
-                      <option value={layer.id}>{layer.name}</option>
-                    )}
-                  </For>
-                </select>
-              </label>
-
-              {/* Coordinator */}
-              <label class="settings-field">
-                <span class="settings-label">Coordinator</span>
-                <select
-                  class="settings-input settings-select"
-                  value={team.coordinatorName || ""}
-                  onChange={(e) =>
-                    setCoordinator(
-                      team.id,
-                      e.currentTarget.value || undefined
-                    )
-                  }
-                >
-                  <option value="">None</option>
-                  <For each={team.members}>
-                    {(member) => (
-                      <option value={member.name}>{member.name}</option>
-                    )}
-                  </For>
-                </select>
-              </label>
-
-              {/* Reports to (CoordinatorLink) */}
-              <Show when={team.layerId && (dfConfig.layers || []).findIndex((l) => l.id === team.layerId) > 0}>
-                <label class="settings-field">
-                  <span class="settings-label">Reports to</span>
-                  <select
-                    class="settings-input settings-select"
-                    value={getReportsTo(team.id) || ""}
-                    onChange={(e) =>
-                      setReportsTo(team.id, e.currentTarget.value || undefined)
-                    }
-                  >
-                    <option value="">None</option>
-                    <For each={getSupervisorCandidates(team.id)}>
-                      {(candidate) => (
-                        <option value={candidate.id}>{candidate.name}</option>
-                      )}
-                    </For>
-                  </select>
-                </label>
-              </Show>
-
-              {/* Members */}
-              <div class="df-members">
-                <span class="settings-label">Members</span>
-                <For each={team.members}>
-                  {(member) => (
-                    <div class="df-member-row">
-                      <Show when={team.coordinatorName === member.name}>
-                        <span class="df-coord-badge">COORD</span>
-                      </Show>
-                      <span class="df-member-name">{member.name}</span>
-                      <span class="df-member-path" title={member.path}>
-                        {member.path}
-                      </span>
-                      <button
-                        class="settings-path-remove"
-                        onClick={() => removeMember(team.id, member.path)}
-                        title="Remove member"
-                      >
-                        &#x2715;
-                      </button>
-                    </div>
-                  )}
-                </For>
-
-                {/* Add member */}
-                <Show when={addingMemberToTeam() === team.id}>
-                  <div class="df-add-member-search">
-                    <input
-                      class="settings-input"
-                      placeholder="Search repos..."
-                      value={repoQuery()}
-                      onInput={(e) => handleRepoSearch(e.currentTarget.value)}
-                      autofocus
-                    />
-                    <Show when={repoResults().length > 0}>
-                      <div class="df-repo-results">
-                        <For each={repoResults()}>
-                          {(repo) => (
-                            <button
-                              class="df-repo-result-item"
-                              onClick={() => addMemberToTeam(team.id, repo)}
-                              disabled={team.members.some(
-                                (m) => m.path === repo.path
-                              )}
-                            >
-                              <span class="df-repo-name">{repo.name}</span>
-                              <span class="df-repo-agents">
-                                {repo.agents.join(", ")}
-                              </span>
-                            </button>
-                          )}
-                        </For>
-                      </div>
-                    </Show>
-                    <Show when={searchingRepos()}>
-                      <span class="df-searching">Searching...</span>
-                    </Show>
-                  </div>
-                </Show>
-
-                <button
-                  class="settings-add-btn"
-                  onClick={() =>
-                    setAddingMemberToTeam(
-                      addingMemberToTeam() === team.id ? null : team.id
-                    )
-                  }
-                >
-                  {addingMemberToTeam() === team.id
-                    ? "Cancel"
-                    : "+ Add Member"}
-                </button>
-              </div>
-            </div>
-          )}
-        </For>
-
-        {/* New team */}
-        <div class="df-new-team-row">
-          <input
-            class="settings-input df-new-team-input"
-            placeholder="New team name..."
-            value={newTeamName()}
-            onInput={(e) => {
-              setNewTeamName(e.currentTarget.value);
-              setTeamNameError("");
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") addTeam();
-            }}
-          />
-          <button class="settings-add-btn" onClick={addTeam}>
-            + Add Team
-          </button>
-        </div>
-        <Show when={teamNameError()}>
-          <span class="df-team-error">{teamNameError()}</span>
-        </Show>
-      </div>
-    </>
-  );
-
   return (
     <div class="modal-overlay" onClick={handleOverlayClick}>
       <div class="modal-container modal-container-lg">
@@ -1203,18 +692,22 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
           </For>
         </div>
 
-        {settings.data && (
+        <Show
+          when={settings.data}
+          fallback={
+            <div class="modal-body" style="display:flex;align-items:center;justify-content:center;min-height:200px;color:#555;font-size:13px">
+              Loading...
+            </div>
+          }
+        >
           <div class="modal-body">
             <Show when={activeTab() === "general"}>{renderGeneralTab()}</Show>
             <Show when={activeTab() === "agents"}>{renderAgentsTab()}</Show>
             <Show when={activeTab() === "integrations"}>
               {renderIntegrationsTab()}
             </Show>
-            <Show when={activeTab() === "darkfactory"}>
-              {renderDarkFactoryTab()}
-            </Show>
           </div>
-        )}
+        </Show>
 
         <div class="modal-footer">
           <Show when={saveError()}>

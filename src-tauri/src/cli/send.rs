@@ -3,8 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::config::dark_factory;
-use crate::phone::manager::can_communicate;
+use crate::config::teams;
 
 #[derive(Args)]
 #[command(after_help = "\
@@ -62,12 +61,12 @@ pub struct SendArgs {
     #[arg(long)]
     pub root: Option<String>,
 
-    /// Write message to a specific outbox directory instead of <root>/.agentscommander/outbox/
+    /// Write message to a specific outbox directory instead of <root>/<local-dir>/outbox/
     #[arg(long)]
     pub outbox: Option<String>,
 }
 
-/// Outbox message written to .agentscommander/outbox/<uuid>.json
+/// Outbox message written to <local-dir>/outbox/<uuid>.json
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutboxMessage {
@@ -95,16 +94,22 @@ pub struct OutboxMessage {
     pub command: Option<String>,
 }
 
-/// Derive agent name from a path: last two components → "parent/folder"
+/// Strip `__agent_` and `_agent_` prefixes from directory names.
+fn strip_agent_prefix(name: &str) -> &str {
+    name.strip_prefix("__agent_")
+        .or_else(|| name.strip_prefix("_agent_"))
+        .unwrap_or(name)
+}
+
+/// Derive agent name from a path: last two components → "parent/folder",
+/// stripping `__agent_`/`_agent_` prefixes for consistent WG replica naming.
 fn agent_name_from_root(root: &str) -> String {
     let normalized = root.replace('\\', "/");
     let components: Vec<&str> = normalized.split('/').filter(|s| !s.is_empty()).collect();
     if components.len() >= 2 {
-        format!(
-            "{}/{}",
-            components[components.len() - 2],
-            components[components.len() - 1]
-        )
+        let parent = components[components.len() - 2];
+        let last = strip_agent_prefix(components[components.len() - 1]);
+        format!("{}/{}", parent, last)
     } else {
         normalized
     }
@@ -119,7 +124,7 @@ pub fn execute(args: SendArgs) -> i32 {
         }
     };
     let sender = agent_name_from_root(&root);
-    let ac_dir = PathBuf::from(&root).join(".agentscommander");
+    let ac_dir = PathBuf::from(&root).join(crate::config::agent_local_dir_name());
 
     // Validate mode — "queue" is no longer supported
     let valid_modes = ["active-only", "wake", "wake-and-sleep"];
@@ -133,16 +138,24 @@ pub fn execute(args: SendArgs) -> i32 {
     }
 
     // ── Pre-validate routing ──────────────────────────────────────────────
-    // Load teams config and check if sender can reach destination BEFORE
-    // writing to outbox. Fail immediately with a clear error if not.
-    let config = dark_factory::load_dark_factory();
-    if config.teams.is_empty() || !can_communicate(&sender, &args.to, &config) {
-        eprintln!(
-            "Error: routing rejected — '{}' cannot reach '{}'. \
-             Check team membership and coordinator rules.",
-            sender, args.to
-        );
-        return 1;
+    // Root token bypasses all routing checks. Only load settings if a token is present.
+    let is_root = args.token.as_deref().is_some_and(|t| {
+        let settings = crate::config::settings::load_settings();
+        settings.root_token.as_deref().is_some_and(|rt| rt == t)
+    });
+
+    if !is_root {
+        // Load discovered teams and check if sender can reach destination BEFORE
+        // writing to outbox. Fail immediately with a clear error if not.
+        let discovered = teams::discover_teams();
+        if discovered.is_empty() || !teams::can_communicate(&sender, &args.to, &discovered) {
+            eprintln!(
+                "Error: routing rejected — '{}' cannot reach '{}'. \
+                 Check team membership and coordinator rules.",
+                sender, args.to
+            );
+            return 1;
+        }
     }
 
     // Resolve message body: --message-file takes priority over --message

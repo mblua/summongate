@@ -62,7 +62,11 @@ pub async fn inject_text_into_session(
             .lock()
             .map_err(|_| "PtyManager lock poisoned".to_string())?
             .write(session_id, text.as_bytes())
-            .map_err(|e| format!("PTY write failed: {}", e))?;
+            .map_err(|e| {
+                log::error!("[inject] PTY write FAILED session={}: {}", session_id, e);
+                format!("PTY write failed: {}", e)
+            })?;
+        log::debug!("[inject] PTY write OK session={} bytes={}", session_id, text.len());
     }
 
     // Record transcript

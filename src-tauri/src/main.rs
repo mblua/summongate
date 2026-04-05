@@ -1,24 +1,44 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 
 fn main() {
-    let args = agentscommander_lib::cli::Cli::try_parse();
-    match args {
-        Ok(cli) => match cli.command {
-            Some(cmd) => {
-                let code = agentscommander_lib::cli::handle_cli(cmd);
-                std::process::exit(code);
-            }
-            None => {
-                // GUI mode (with or without --app)
-                if !try_acquire_single_instance() {
-                    // Another GUI instance is already running — exit silently
-                    std::process::exit(0);
+    // Resolve actual binary name at runtime so --help shows the correct name.
+    // Leaked once at startup — lives for the process lifetime.
+    let binary_name: &'static str = Box::leak(
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "agentscommander".to_string())
+            .into_boxed_str(),
+    );
+
+    let cmd = agentscommander_lib::cli::Cli::command().name(binary_name);
+
+    match cmd.try_get_matches() {
+        Ok(matches) => {
+            match agentscommander_lib::cli::Cli::from_arg_matches(&matches) {
+                Ok(cli) => match cli.command {
+                    Some(cmd) => {
+                        let code = agentscommander_lib::cli::handle_cli(cmd);
+                        std::process::exit(code);
+                    }
+                    None => {
+                        // GUI mode (with or without --app)
+                        if !try_acquire_single_instance() {
+                            // Another GUI instance is already running — exit silently
+                            std::process::exit(0);
+                        }
+                        agentscommander_lib::run();
+                    }
+                },
+                Err(e) => {
+                    agentscommander_lib::cli::attach_parent_console();
+                    let _ = e.print();
+                    std::process::exit(1);
                 }
-                agentscommander_lib::run();
             }
-        },
+        }
         Err(e) => {
             // --help, --version, or invalid args: print and exit
             agentscommander_lib::cli::attach_parent_console();
