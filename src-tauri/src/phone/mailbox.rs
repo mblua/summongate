@@ -649,9 +649,9 @@ impl MailboxPoller {
             }
         }
 
-        log::info!(
+        log::debug!(
             "[mailbox] Injecting into PTY session={} msg={} payload_len={} first_100={:?}",
-            session_id, msg.id, payload.len(), &payload[..payload.len().min(100)]
+            session_id, msg.id, payload.len(), payload.chars().take(100).collect::<String>()
         );
         crate::pty::inject::inject_text_into_session(app, session_id, &payload, true, crate::pty::transcript::InjectReason::MessageDelivery, Some(msg.from.clone())).await
             .map_err(|e| {
