@@ -24,14 +24,14 @@ const AGENT_PRESETS: Record<string, Omit<AgentConfig, "id">> = {
     label: "Claude Code",
     command: "claude --enable-auto-mode",
     color: "#d97706",
-    gitPullBefore: true,
+    gitPullBefore: false,
     excludeGlobalClaudeMd: true,
   },
   codex: {
     label: "Codex",
     command: "codex",
     color: "#10b981",
-    gitPullBefore: true,
+    gitPullBefore: false,
     excludeGlobalClaudeMd: false,
   },
 };
