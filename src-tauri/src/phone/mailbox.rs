@@ -313,8 +313,10 @@ impl MailboxPoller {
             // Validate peer visibility (team membership) — skipped for master token
             let dark_factory = dark_factory::load_dark_factory();
             if !self.can_reach(&msg.from, &msg.to, &dark_factory) {
+                log::warn!("[mailbox] Routing check FAILED: '{}' cannot reach '{}'", msg.from, msg.to);
                 return self.reject_message(path, &msg, "Sender cannot reach destination").await;
             }
+            log::info!("[mailbox] Routing check passed: '{}' → '{}'", msg.from, msg.to);
         }
 
         // Deliver based on mode — all modes require immediate delivery or rejection
@@ -405,6 +407,7 @@ impl MailboxPoller {
         }
 
         // No active session — need to spawn a temporary one.
+        log::info!("[mailbox] wake-and-sleep: no active session for '{}', spawning temporary session", msg.to);
         // Determine which agent CLI to use.
         let agent_command = self.resolve_agent_command(app, msg).await;
 
@@ -646,9 +649,17 @@ impl MailboxPoller {
             }
         }
 
-        crate::pty::inject::inject_text_into_session(app, session_id, &payload, true, crate::pty::transcript::InjectReason::MessageDelivery, Some(msg.from.clone())).await?;
+        log::info!(
+            "[mailbox] Injecting into PTY session={} msg={} payload_len={} first_100={:?}",
+            session_id, msg.id, payload.len(), &payload[..payload.len().min(100)]
+        );
+        crate::pty::inject::inject_text_into_session(app, session_id, &payload, true, crate::pty::transcript::InjectReason::MessageDelivery, Some(msg.from.clone())).await
+            .map_err(|e| {
+                log::error!("[mailbox] PTY injection FAILED session={} msg={}: {}", session_id, msg.id, e);
+                e
+            })?;
 
-        log::info!("Injected message {} into session {} PTY", msg.id, session_id);
+        log::info!("[mailbox] PTY injection SUCCESS session={} msg={}", session_id, msg.id);
         let _ = tauri::Emitter::emit(
             app,
             "message_delivered",
@@ -904,6 +915,7 @@ impl MailboxPoller {
         std::fs::remove_file(path)
             .map_err(|e| format!("Failed to remove outbox file: {}", e))?;
 
+        log::info!("[mailbox] Message {} moved to delivered/", msg.id);
         Ok(())
     }
 
@@ -935,7 +947,7 @@ impl MailboxPoller {
         std::fs::remove_file(path)
             .map_err(|e| format!("Failed to remove outbox file: {}", e))?;
 
-        log::warn!("Rejected message {}: {}", msg.id, reason);
+        log::warn!("[mailbox] Message {} moved to rejected/: {}", msg.id, reason);
         Ok(())
     }
 
