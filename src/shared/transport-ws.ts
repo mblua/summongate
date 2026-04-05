@@ -208,6 +208,10 @@ export class WsTransport implements Transport {
     };
   }
 
+  async emit<T>(event: string, payload: T): Promise<void> {
+    await this.invoke<void>("broadcast_event", { event, payload });
+  }
+
   writePtyBinary(sessionId: string, data: Uint8Array): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 

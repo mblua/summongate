@@ -6,6 +6,8 @@ export interface Transport {
     event: string,
     callback: (payload: T) => void
   ): Promise<() => void>;
+  /** Emit an event to all windows */
+  emit<T>(event: string, payload: T): Promise<void>;
   /** Efficient binary PTY write (optional — falls back to invoke if absent) */
   writePtyBinary?(sessionId: string, data: Uint8Array): void;
 }

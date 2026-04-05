@@ -2,7 +2,7 @@ import { Component, createSignal, createEffect, onCleanup, Show } from "solid-js
 import { open } from "@tauri-apps/plugin-dialog";
 import { projectStore } from "../stores/project";
 import { sessionsStore } from "../stores/sessions";
-import { ProjectAPI, GuideAPI } from "../../shared/ipc";
+import { ProjectAPI, GuideAPI, emitThemeChanged } from "../../shared/ipc";
 import OpenAgentModal from "./OpenAgentModal";
 import NewAgentModal from "./NewAgentModal";
 import SettingsModal from "./SettingsModal";
@@ -133,6 +133,7 @@ const ActionBar: Component = () => {
               } else {
                 document.documentElement.classList.remove("light-theme");
               }
+              emitThemeChanged(next).catch(console.error);
             }}
             title="Toggle theme"
           >

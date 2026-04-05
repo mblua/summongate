@@ -5,6 +5,7 @@ import type { Transport } from "./transport";
 export class TauriTransport implements Transport {
   private invokeImpl: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null = null;
   private listenImpl: ((event: string, handler: (e: { payload: unknown }) => void) => Promise<() => void>) | null = null;
+  private emitImpl: ((event: string, payload?: unknown) => Promise<void>) | null = null;
   private ready: Promise<void>;
 
   constructor() {
@@ -16,6 +17,7 @@ export class TauriTransport implements Transport {
     const event = await import("@tauri-apps/api/event");
     this.invokeImpl = core.invoke;
     this.listenImpl = event.listen as typeof this.listenImpl;
+    this.emitImpl = event.emit;
   }
 
   async invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -29,5 +31,10 @@ export class TauriTransport implements Transport {
   ): Promise<() => void> {
     await this.ready;
     return this.listenImpl!(event, (e) => callback(e.payload as T));
+  }
+
+  async emit<T>(event: string, payload: T): Promise<void> {
+    await this.ready;
+    await this.emitImpl!(event, payload);
   }
 }

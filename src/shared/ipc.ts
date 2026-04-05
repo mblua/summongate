@@ -11,6 +11,7 @@ import type {
   PhoneMessage,
   AgentInfo,
   AcDiscoveryResult,
+  TeamConfigResult,
 } from "./types";
 
 // Select transport based on runtime environment
@@ -290,6 +291,21 @@ export const EntityAPI = {
   ) =>
     transport.invoke<void>("create_team", { projectPath, name, agents, coordinator, repos }),
 
+  deleteTeam: (projectPath: string, teamName: string) =>
+    transport.invoke<void>("delete_team", { projectPath, teamName }),
+
+  updateTeam: (
+    projectPath: string,
+    teamName: string,
+    agents: string[],
+    coordinator: string,
+    repos: { url: string; agents: string[] }[]
+  ) =>
+    transport.invoke<void>("update_team", { projectPath, teamName, agents, coordinator, repos }),
+
+  getTeamConfig: (projectPath: string, teamName: string) =>
+    transport.invoke<TeamConfigResult>("get_team_config", { projectPath, teamName }),
+
   createWorkgroup: (projectPath: string, teamName: string, brief?: string) =>
     transport.invoke<void>("create_workgroup", {
       projectPath,
@@ -314,6 +330,17 @@ export const AgentCreatorAPI = {
 export const GuideAPI = {
   open: () => transport.invoke<void>("open_guide_window"),
 };
+
+// Theme sync across windows
+export function emitThemeChanged(light: boolean): Promise<void> {
+  return transport.emit("theme_changed", { light });
+}
+
+export function onThemeChanged(
+  callback: (data: { light: boolean }) => void
+): Promise<UnlistenFn> {
+  return transport.listen<{ light: boolean }>("theme_changed", callback);
+}
 
 export function onLastPrompt(
   callback: (data: { sessionId: string; text: string }) => void

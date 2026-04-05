@@ -7,6 +7,7 @@ import {
   onSessionCreated,
   onSessionDestroyed,
   onSessionRenamed,
+  onThemeChanged,
 } from "../shared/ipc";
 import { registerShortcuts, unregisterShortcuts } from "../shared/shortcuts";
 import { initZoom } from "../shared/zoom";
@@ -118,6 +119,17 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       await onSessionRenamed(({ id, name }) => {
         if (id === terminalStore.activeSessionId) {
           terminalStore.setActiveSession(id, name);
+        }
+      })
+    );
+
+    // Theme sync: follow sidebar theme toggle
+    unlisteners.push(
+      await onThemeChanged(({ light }) => {
+        if (light) {
+          document.documentElement.classList.add("light-theme");
+        } else {
+          document.documentElement.classList.remove("light-theme");
         }
       })
     );
