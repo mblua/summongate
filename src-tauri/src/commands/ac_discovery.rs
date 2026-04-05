@@ -632,9 +632,12 @@ pub async fn discover_ac_agents(
     teams.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     workgroups.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
-    // Associate each workgroup with its team by matching replica membership
+    // Associate each workgroup with its team by matching replica membership.
+    // Two-pass approach: exact match across ALL teams first, then suffix fallback.
+    // This prevents a suffix hit on team T1 from shadowing an exact hit on T2.
     for wg in &mut workgroups {
-        wg.team_name = teams.iter().find(|t| {
+        // Pass 1: exact match (origin_project/name == team agent ref)
+        let exact = teams.iter().find(|t| {
             wg.agents.iter().any(|agent| {
                 let full_ref = format!(
                     "{}/{}",
@@ -643,7 +646,31 @@ pub async fn discover_ac_agents(
                 );
                 t.agents.contains(&full_ref)
             })
-        }).map(|t| t.name.clone());
+        });
+        if let Some(t) = exact {
+            wg.team_name = Some(t.name.clone());
+            log::info!("[discovery] Workgroup '{}' → team '{}'", wg.name, t.name);
+        } else {
+            // Pass 2: suffix fallback — covers missing/stale identity, canonicalize
+            // failure, or absolute-path team refs from different projects
+            let suffix = teams.iter().find(|t| {
+                wg.agents.iter().any(|agent| {
+                    t.agents.iter().any(|team_ref| {
+                        team_ref.rsplit('/').next()
+                            .map_or(false, |s| s == agent.name)
+                    })
+                })
+            });
+            wg.team_name = suffix.map(|t| t.name.clone());
+            if let Some(ref name) = wg.team_name {
+                log::warn!(
+                    "[discovery] Workgroup '{}' → team '{}' (matched via name suffix, identity may be missing)",
+                    wg.name, name
+                );
+            } else {
+                log::info!("[discovery] Workgroup '{}' → no team matched", wg.name);
+            }
+        }
     }
 
     // Update the branch watcher with discovered replicas
@@ -876,9 +903,12 @@ pub async fn discover_project(
     teams.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     workgroups.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
-    // Associate each workgroup with its team by matching replica membership
+    // Associate each workgroup with its team by matching replica membership.
+    // Two-pass approach: exact match across ALL teams first, then suffix fallback.
+    // This prevents a suffix hit on team T1 from shadowing an exact hit on T2.
     for wg in &mut workgroups {
-        wg.team_name = teams.iter().find(|t| {
+        // Pass 1: exact match (origin_project/name == team agent ref)
+        let exact = teams.iter().find(|t| {
             wg.agents.iter().any(|agent| {
                 let full_ref = format!(
                     "{}/{}",
@@ -887,7 +917,31 @@ pub async fn discover_project(
                 );
                 t.agents.contains(&full_ref)
             })
-        }).map(|t| t.name.clone());
+        });
+        if let Some(t) = exact {
+            wg.team_name = Some(t.name.clone());
+            log::info!("[discovery] Workgroup '{}' → team '{}'", wg.name, t.name);
+        } else {
+            // Pass 2: suffix fallback — covers missing/stale identity, canonicalize
+            // failure, or absolute-path team refs from different projects
+            let suffix = teams.iter().find(|t| {
+                wg.agents.iter().any(|agent| {
+                    t.agents.iter().any(|team_ref| {
+                        team_ref.rsplit('/').next()
+                            .map_or(false, |s| s == agent.name)
+                    })
+                })
+            });
+            wg.team_name = suffix.map(|t| t.name.clone());
+            if let Some(ref name) = wg.team_name {
+                log::warn!(
+                    "[discovery] Workgroup '{}' → team '{}' (matched via name suffix, identity may be missing)",
+                    wg.name, name
+                );
+            } else {
+                log::info!("[discovery] Workgroup '{}' → no team matched", wg.name);
+            }
+        }
     }
 
     // Update the branch watcher with discovered replicas
