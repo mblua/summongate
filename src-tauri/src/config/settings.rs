@@ -181,6 +181,7 @@ fn settings_path() -> Option<PathBuf> {
     super::config_dir().map(|d| d.join("settings.json"))
 }
 
+
 /// Load settings from the app config directory (see config_dir()), falling back to defaults.
 /// Auto-generates a root_token if missing and persists it.
 pub fn load_settings() -> AppSettings {

@@ -55,8 +55,12 @@ impl IdleDetector {
             }
         }
         let was_idle = {
-            self.activity.lock().unwrap().insert(session_id, Instant::now());
-            self.idle_set.lock().unwrap().remove(&session_id)
+            // Hold both locks together so insert + remove is atomic
+            // w.r.t. the watcher thread (same order: activity → idle_set).
+            let mut activity = self.activity.lock().unwrap();
+            let mut idle_set = self.idle_set.lock().unwrap();
+            activity.insert(session_id, Instant::now());
+            idle_set.remove(&session_id)
         };
         if was_idle {
             log::info!("[idle] BUSY {} ({} bytes, was idle → now busy)", sid, byte_count);
@@ -88,11 +92,24 @@ impl IdleDetector {
                 let mut idle_set = detector.idle_set.lock().unwrap();
 
                 for (&session_id, &last_seen) in activity.iter() {
-                    if now.duration_since(last_seen) > IDLE_THRESHOLD
+                    // Use checked_duration_since to avoid panic when a PTY
+                    // thread updates last_seen between Instant::now() and
+                    // the lock acquisition (last_seen > now).
+                    let elapsed = match now.checked_duration_since(last_seen) {
+                        Some(d) => d,
+                        None => continue, // last_seen is in the future — skip
+                    };
+                    if elapsed > IDLE_THRESHOLD
                         && !idle_set.contains(&session_id)
                     {
                         idle_set.insert(session_id);
-                        log::info!("[idle] IDLE {} ({}ms since last activity)", &session_id.to_string()[..8], now.duration_since(last_seen).as_millis());
+                        log::info!(
+                            "[idle] IDLE {} ({}ms since last activity)",
+                            &session_id.to_string()[..8],
+                            elapsed.as_millis()
+                        );
+                        // Callback inside lock scope preserves delivery order:
+                        // on_idle always fires before any on_busy for new activity.
                         (detector.on_idle)(session_id);
                     }
                 }
