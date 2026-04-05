@@ -168,9 +168,26 @@ pub async fn create_session_inner(
     // Save lastCodingAgent + codingAgents (skip for temp sessions)
     if !skip_tooling_save {
         if let Some(ref aid) = agent_id {
-            let label = agent_label.as_deref().unwrap_or("Unknown");
+            // Resolve label: use provided agent_label, or look up from settings by agent_id.
+            // Without this fallback, callers that pass agent_id but no label (session-requests,
+            // web remote) would write app: "Unknown" into the per-instance config.json.
+            let resolved_label = match agent_label.as_deref() {
+                Some(l) => l.to_string(),
+                None => {
+                    let settings = app.state::<SettingsState>();
+                    let cfg = settings.read().await;
+                    cfg.agents
+                        .iter()
+                        .find(|a| a.id == *aid)
+                        .map(|a| a.label.clone())
+                        .unwrap_or_else(|| {
+                            log::warn!("Could not resolve label for agent_id='{}' — defaulting to 'Unknown'", aid);
+                            "Unknown".to_string()
+                        })
+                }
+            };
             let session_id_str = id.to_string();
-            if let Err(e) = agent_config::set_last_coding_agent(&cwd, aid, label, Some(&session_id_str)) {
+            if let Err(e) = agent_config::set_last_coding_agent(&cwd, aid, &resolved_label, Some(&session_id_str)) {
                 log::warn!("Failed to save lastCodingAgent: {}", e);
             }
         }
@@ -212,9 +229,8 @@ pub async fn create_session(
     // If agentId provided and shell not explicitly set, use that agent's command
     let (shell, shell_args, agent_label) = match (&shell, &agent_id) {
         (None, Some(aid)) => {
-            log::info!("[BUG#1] (None, Some(aid)) branch hit. aid={:?}", aid);
             if let Some(agent) = cfg.agents.iter().find(|a| a.id == *aid) {
-                log::info!("[BUG#1] Agent FOUND: id={:?}, label={:?}, command={:?}", agent.id, agent.label, agent.command);
+                log::info!("[session] Agent resolved: id={:?}, label={:?}, command={:?}", agent.id, agent.label, agent.command);
                 let parts: Vec<String> = agent.command.split_whitespace().map(|s| s.to_string()).collect();
                 if let Some((cmd, args)) = parts.split_first() {
                     (cmd.clone(), args.to_vec(), Some(agent.label.clone()))
@@ -222,12 +238,11 @@ pub async fn create_session(
                     (cfg.default_shell.clone(), cfg.default_shell_args.clone(), Some(agent.label.clone()))
                 }
             } else {
-                log::info!("[BUG#1] Agent NOT found for aid={:?}. Falling back to default shell.", aid);
+                log::warn!("[session] Agent NOT found for aid={:?}. Falling back to default shell.", aid);
                 (cfg.default_shell.clone(), cfg.default_shell_args.clone(), None)
             }
         }
         _ => {
-            log::info!("[BUG#1] Catch-all branch hit. shell={:?}, agent_id={:?}", shell, agent_id);
             let s = shell.unwrap_or_else(|| cfg.default_shell.clone());
             let sa = shell_args.unwrap_or_else(|| cfg.default_shell_args.clone());
             let al = agent_id.as_ref().and_then(|aid| {
@@ -237,7 +252,7 @@ pub async fn create_session(
         }
     };
 
-    log::info!("[BUG#1] FINAL resolved: shell={:?}, args={:?}, label={:?}", shell, shell_args, agent_label);
+    log::info!("[session] FINAL resolved: shell={:?}, args={:?}, label={:?}", shell, shell_args, agent_label);
 
     drop(cfg);
 

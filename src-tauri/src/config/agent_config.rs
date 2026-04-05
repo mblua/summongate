@@ -110,7 +110,10 @@ pub struct AgentLocalConfig {
     pub dark_factory: AgentDarkFactory,
 }
 
-/// Update lastCodingAgent and codingAgents in a repo's .agentscommander/config.json.
+/// Update lastCodingAgent and codingAgents in a repo's config.
+/// Writes to BOTH:
+///  - `<repo_path>/config.json` (root, shared across all instances — read by discovery)
+///  - `<repo_path>/<agent_local_dir>/config.json` (per-instance)
 /// Reads existing config, upserts the coding agent entry, writes back.
 pub fn set_last_coding_agent(
     repo_path: &str,
@@ -118,16 +121,35 @@ pub fn set_last_coding_agent(
     app_label: &str,
     ac_session_id: Option<&str>,
 ) -> Result<(), String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let entry = CodingAgentEntry {
+        app: app_label.to_string(),
+        ac_session_id: ac_session_id.map(|s| s.to_string()),
+        last_used: now,
+    };
+
+    // Write to per-instance config dir
     let local_dir_name = crate::config::agent_local_dir_name();
-    let config_dir = Path::new(repo_path).join(local_dir_name.as_str());
-    std::fs::create_dir_all(&config_dir)
+    let instance_dir = Path::new(repo_path).join(local_dir_name.as_str());
+    std::fs::create_dir_all(&instance_dir)
         .map_err(|e| format!("Failed to create {} dir: {}", local_dir_name, e))?;
+    upsert_config(&instance_dir.join("config.json"), agent_id, &entry)?;
 
-    let config_path = config_dir.join("config.json");
+    // Also write to root config.json so discovery can find it regardless of instance
+    upsert_config(&Path::new(repo_path).join("config.json"), agent_id, &entry)?;
 
-    // Read existing or create default
+    log::info!("Updated lastCodingAgent to '{}' ({}) in {} + root config.json", agent_id, app_label, local_dir_name);
+    Ok(())
+}
+
+/// Read-modify-write a single config.json: upsert lastCodingAgent + codingAgents entry.
+fn upsert_config(
+    config_path: &Path,
+    agent_id: &str,
+    entry: &CodingAgentEntry,
+) -> Result<(), String> {
     let mut config: AgentLocalConfig = if config_path.exists() {
-        let content = std::fs::read_to_string(&config_path)
+        let content = std::fs::read_to_string(config_path)
             .map_err(|e| format!("Failed to read config: {}", e))?;
         serde_json::from_str(&content).unwrap_or_else(|e| {
             log::warn!("Failed to parse config at {:?}, starting fresh: {}", config_path, e);
@@ -138,23 +160,12 @@ pub fn set_last_coding_agent(
     };
 
     config.tooling.last_coding_agent = Some(agent_id.to_string());
-
-    // Upsert codingAgents entry
-    let now = chrono::Utc::now().to_rfc3339();
-    config.tooling.coding_agents.insert(
-        agent_id.to_string(),
-        CodingAgentEntry {
-            app: app_label.to_string(),
-            ac_session_id: ac_session_id.map(|s| s.to_string()),
-            last_used: now,
-        },
-    );
+    config.tooling.coding_agents.insert(agent_id.to_string(), entry.clone());
 
     let json = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    std::fs::write(&config_path, json)
+    std::fs::write(config_path, json)
         .map_err(|e| format!("Failed to write config: {}", e))?;
 
-    log::info!("Updated lastCodingAgent to '{}' ({}) in {:?}", agent_id, app_label, config_path);
     Ok(())
 }
