@@ -181,6 +181,37 @@ fn settings_path() -> Option<PathBuf> {
     super::config_dir().map(|d| d.join("settings.json"))
 }
 
+/// Look up an agent config by ID, checking the $HOME-based shared settings
+/// if the per-instance settings don't have it. This handles renamed binaries
+/// that create their own config dir without the full agent registry.
+pub fn find_agent_config_with_fallback(
+    instance_agents: &[AgentConfig],
+    agent_id: &str,
+) -> Option<AgentConfig> {
+    // First: check the per-instance agents (already loaded in memory)
+    if let Some(agent) = instance_agents.iter().find(|a| a.id == agent_id) {
+        return Some(agent.clone());
+    }
+
+    // Fallback: read the $HOME-based shared settings
+    let home = dirs::home_dir()?;
+    for dir_name in &[".agentscommander-new", ".agentscommander"] {
+        let shared_path = home.join(dir_name).join("settings.json");
+        if let Ok(contents) = std::fs::read_to_string(&shared_path) {
+            if let Ok(shared) = serde_json::from_str::<AppSettings>(&contents) {
+                if let Some(agent) = shared.agents.iter().find(|a| a.id == agent_id) {
+                    log::info!(
+                        "[settings] Agent '{}' not in per-instance config, found in {}",
+                        agent_id, dir_name
+                    );
+                    return Some(agent.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Load settings from the app config directory (see config_dir()), falling back to defaults.
 /// Auto-generates a root_token if missing and persists it.
 pub fn load_settings() -> AppSettings {
