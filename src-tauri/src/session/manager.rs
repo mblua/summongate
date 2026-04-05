@@ -109,6 +109,10 @@ impl SessionManager {
         if let Some(old_id) = *active {
             if let Some(old) = sessions.get_mut(&old_id) {
                 if old.status == SessionStatus::Active {
+                    log::info!(
+                        "[session-state] {} '{}': Active → Running (deactivated)",
+                        &old_id.to_string()[..8], old.name
+                    );
                     old.status = SessionStatus::Running;
                 }
             }
@@ -116,6 +120,10 @@ impl SessionManager {
 
         // Activate the new session
         if let Some(s) = sessions.get_mut(&id) {
+            log::info!(
+                "[session-state] {} '{}': {:?} → Active (switched to)",
+                &id.to_string()[..8], s.name, s.status
+            );
             s.status = SessionStatus::Active;
         }
         *active = Some(id);
@@ -153,6 +161,10 @@ impl SessionManager {
     pub async fn mark_exited(&self, id: Uuid, code: i32) {
         let mut sessions = self.sessions.write().await;
         if let Some(s) = sessions.get_mut(&id) {
+            log::info!(
+                "[session-state] {} '{}': {:?} → Exited({})",
+                &id.to_string()[..8], s.name, s.status, code
+            );
             s.status = SessionStatus::Exited(code);
         }
     }
@@ -160,6 +172,10 @@ impl SessionManager {
     pub async fn mark_idle(&self, id: Uuid) {
         let mut sessions = self.sessions.write().await;
         if let Some(s) = sessions.get_mut(&id) {
+            log::info!(
+                "[session-state] {} '{}': waiting_for_input {} → true",
+                &id.to_string()[..8], s.name, s.waiting_for_input
+            );
             s.waiting_for_input = true;
         }
     }
@@ -167,6 +183,10 @@ impl SessionManager {
     pub async fn mark_busy(&self, id: Uuid) {
         let mut sessions = self.sessions.write().await;
         if let Some(s) = sessions.get_mut(&id) {
+            log::info!(
+                "[session-state] {} '{}': waiting_for_input {} → false",
+                &id.to_string()[..8], s.name, s.waiting_for_input
+            );
             s.waiting_for_input = false;
         }
     }
