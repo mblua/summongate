@@ -86,6 +86,7 @@ pub fn mutex_name() -> &'static str {
         ),
         None => match BUILD_PROFILE {
             "dev" => "Local\\AgentsCommander_SingleInstance_New_Dev\0".to_string(),
+            "stage" => "Local\\AgentsCommander_SingleInstance_Stage\0".to_string(),
             _ => "Local\\AgentsCommander_SingleInstance\0".to_string(),
         },
     })
