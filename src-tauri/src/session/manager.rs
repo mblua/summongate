@@ -177,6 +177,9 @@ impl SessionManager {
                 &id.to_string()[..8], s.name, s.waiting_for_input
             );
             s.waiting_for_input = true;
+            if matches!(s.status, SessionStatus::Running) {
+                s.status = SessionStatus::Idle;
+            }
         }
     }
 
@@ -188,6 +191,9 @@ impl SessionManager {
                 &id.to_string()[..8], s.name, s.waiting_for_input
             );
             s.waiting_for_input = false;
+            if matches!(s.status, SessionStatus::Idle) {
+                s.status = SessionStatus::Running;
+            }
         }
     }
 
