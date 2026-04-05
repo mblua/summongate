@@ -8,12 +8,6 @@ fn conversations_dir() -> Option<PathBuf> {
     crate::config::config_dir().map(|d| d.join("conversations"))
 }
 
-/// Check if two agents can communicate based on discovery-based team routing rules.
-/// Delegates to the shared can_communicate in config::teams.
-pub fn can_communicate(from: &str, to: &str, teams: &[DiscoveredTeam]) -> bool {
-    crate::config::teams::can_communicate(from, to, teams)
-}
-
 /// List all agents from discovered teams with their team memberships
 pub fn list_agents(teams: &[DiscoveredTeam]) -> Vec<AgentInfo> {
     let mut agents: std::collections::HashMap<String, AgentInfo> = std::collections::HashMap::new();
@@ -21,6 +15,7 @@ pub fn list_agents(teams: &[DiscoveredTeam]) -> Vec<AgentInfo> {
     for team in teams {
         for (i, name) in team.agent_names.iter().enumerate() {
             let path = team.agent_paths.get(i)
+                .and_then(|p| p.as_ref())
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
 
@@ -99,7 +94,7 @@ pub fn send_message(
     teams: &[DiscoveredTeam],
 ) -> Result<String, String> {
     // Validate routing
-    if !can_communicate(from, to, teams) {
+    if !crate::config::teams::can_communicate(from, to, teams) {
         return Err(format!(
             "Agent '{}' cannot communicate with '{}' — no shared team or coordinator link",
             from, to

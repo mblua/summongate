@@ -4,10 +4,12 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct DiscoveredTeam {
     pub name: String,
-    /// Agent display names in "project/agent" format (from resolve_agent_ref)
+    /// Agent display names in "project/agent" format (from resolve_agent_ref).
+    /// Index-aligned with `agent_paths` — both vecs always have the same length.
     pub agent_names: Vec<String>,
-    /// Absolute paths to agent directories (resolved from team config refs)
-    pub agent_paths: Vec<PathBuf>,
+    /// Absolute paths to agent directories (resolved from team config refs).
+    /// `None` entries mean the directory was not found on disk.
+    pub agent_paths: Vec<Option<PathBuf>>,
     /// Coordinator display name
     pub coordinator_name: Option<String>,
     /// Absolute path to coordinator directory
@@ -15,7 +17,7 @@ pub struct DiscoveredTeam {
 }
 
 /// Derive agent name (parent/folder) from a path, stripping `__agent_`/`_agent_` prefixes.
-fn agent_name_from_path(path: &str) -> String {
+pub fn agent_name_from_path(path: &str) -> String {
     let normalized = path.replace('\\', "/");
     let components: Vec<&str> = normalized.split('/').filter(|s| !s.is_empty()).collect();
     if components.len() >= 2 {
@@ -38,13 +40,30 @@ fn resolve_agent_ref(project_folder: &str, agent_ref: &str) -> String {
     let trimmed = normalized
         .trim_start_matches("../")
         .trim_start_matches("./");
-    let agent_name = trimmed
-        .split('/')
-        .last()
-        .unwrap_or(trimmed)
-        .strip_prefix("_agent_")
-        .unwrap_or(trimmed);
-    format!("{}/{}", project_folder, agent_name)
+
+    if trimmed.contains(':') || trimmed.starts_with('/') {
+        // Absolute path: extract origin project from folder before .ac-new
+        let parts: Vec<&str> = trimmed.split('/').collect();
+        let origin = parts
+            .iter()
+            .position(|p| *p == ".ac-new")
+            .and_then(|i| if i > 0 { Some(parts[i - 1]) } else { None })
+            .unwrap_or(project_folder);
+        let dir_name = parts.last().unwrap_or(&trimmed);
+        let agent_name = dir_name
+            .strip_prefix("__agent_")
+            .or_else(|| dir_name.strip_prefix("_agent_"))
+            .unwrap_or(dir_name);
+        format!("{}/{}", origin, agent_name)
+    } else {
+        // Relative ref: extract last component and strip prefix
+        let last = trimmed.split('/').last().unwrap_or(trimmed);
+        let agent_name = last
+            .strip_prefix("__agent_")
+            .or_else(|| last.strip_prefix("_agent_"))
+            .unwrap_or(last);
+        format!("{}/{}", project_folder, agent_name)
+    }
 }
 
 /// Resolve an agent ref to an absolute path given the .ac-new directory.
@@ -98,11 +117,18 @@ fn agent_matches_member(
     false
 }
 
-/// Check if an agent is a member of a team.
-fn is_team_member(agent_name: &str, team: &DiscoveredTeam) -> bool {
+/// Check if an agent belongs to a team (as a regular member OR as the coordinator).
+pub fn is_in_team(agent_name: &str, team: &DiscoveredTeam) -> bool {
+    // Check regular members
     for (i, display_name) in team.agent_names.iter().enumerate() {
-        let path = team.agent_paths.get(i);
+        let path = team.agent_paths.get(i).and_then(|p| p.as_ref());
         if agent_matches_member(agent_name, display_name, path) {
+            return true;
+        }
+    }
+    // Check coordinator
+    if let Some(ref coord_name) = team.coordinator_name {
+        if agent_matches_member(agent_name, coord_name, team.coordinator_path.as_ref()) {
             return true;
         }
     }
@@ -122,14 +148,14 @@ fn is_coordinator(agent_name: &str, team: &DiscoveredTeam) -> bool {
 /// Check if two agents can communicate based on discovery-based team routing rules.
 ///
 /// Rules:
-/// 1. Same team membership → allowed
-/// 2. Both are coordinators (of any team) → allowed (cross-team coordinator chat)
-/// 3. WG-scoped: agents in the same workgroup → allowed
+/// 1. Same team (member or coordinator) → allowed
+/// 2. WG-scoped: agents in the same workgroup → allowed
+/// 3. Both are coordinators (of any team) → allowed (cross-team coordinator chat)
 /// 4. Otherwise → denied
 pub fn can_communicate(from: &str, to: &str, teams: &[DiscoveredTeam]) -> bool {
-    // Rule 1: Same team membership
+    // Rule 1: Same team (includes both regular members and coordinator)
     for team in teams {
-        if is_team_member(from, team) && is_team_member(to, team) {
+        if is_in_team(from, team) && is_in_team(to, team) {
             return true;
         }
     }
@@ -230,7 +256,7 @@ fn discover_teams_in_project(project_dir: &Path, teams: &mut Vec<DiscoveredTeam>
             None => continue,
         };
 
-        // Resolve agents
+        // Resolve agents — build names and paths in a single pass to keep indices aligned
         let agent_refs: Vec<String> = parsed
             .get("agents")
             .and_then(|a| a.as_array())
@@ -241,15 +267,14 @@ fn discover_teams_in_project(project_dir: &Path, teams: &mut Vec<DiscoveredTeam>
             })
             .unwrap_or_default();
 
-        let agent_names: Vec<String> = agent_refs
+        let (agent_names, agent_paths): (Vec<String>, Vec<Option<PathBuf>>) = agent_refs
             .iter()
-            .map(|r| resolve_agent_ref(&project_folder, r))
-            .collect();
-
-        let agent_paths: Vec<PathBuf> = agent_refs
-            .iter()
-            .filter_map(|r| resolve_agent_path(&ac_new, r))
-            .collect();
+            .map(|r| {
+                let name = resolve_agent_ref(&project_folder, r);
+                let path = resolve_agent_path(&ac_new, r);
+                (name, path)
+            })
+            .unzip();
 
         // Resolve coordinator
         let coordinator_ref = parsed
@@ -273,17 +298,4 @@ fn discover_teams_in_project(project_dir: &Path, teams: &mut Vec<DiscoveredTeam>
             coordinator_path,
         });
     }
-}
-
-/// Find all team member paths from discovered teams (for repo path resolution).
-pub fn all_member_paths(teams: &[DiscoveredTeam]) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    for team in teams {
-        for p in &team.agent_paths {
-            if !paths.contains(p) {
-                paths.push(p.clone());
-            }
-        }
-    }
-    paths
 }

@@ -410,21 +410,21 @@ pub fn execute(args: ListPeersArgs) -> i32 {
     // Find teams where I'm a member, then list their other members.
     // Also: if I'm a coordinator, show other coordinators (cross-team).
     let i_am_coordinator = discovered.iter().any(|t| {
-        t.coordinator_name.as_deref() == Some(&my_name)
-            || t.coordinator_path.as_ref().map(|p| agent_name_from_path(&p.to_string_lossy())).as_deref() == Some(&my_name)
+        crate::config::teams::is_in_team(&my_name, t)
+            && t.coordinator_name.as_deref().map_or(false, |cn| {
+                crate::config::teams::agent_name_from_path(cn) == my_name || cn == my_name
+            })
     });
 
     for team in &discovered {
-        let i_am_in_team = crate::config::teams::can_communicate(&my_name, &my_name, std::slice::from_ref(team))
-            || team.agent_names.iter().any(|n| n == &my_name)
-            || team.agent_paths.iter().any(|p| agent_name_from_path(&p.to_string_lossy()) == my_name);
+        let i_am_in_team = crate::config::teams::is_in_team(&my_name, team);
 
         if !i_am_in_team && !i_am_coordinator {
             continue;
         }
 
         for (i, display_name) in team.agent_names.iter().enumerate() {
-            let member_path = team.agent_paths.get(i);
+            let member_path = team.agent_paths.get(i).and_then(|p| p.as_ref());
             let peer_name = member_path
                 .map(|p| agent_name_from_path(&p.to_string_lossy()))
                 .unwrap_or_else(|| display_name.clone());

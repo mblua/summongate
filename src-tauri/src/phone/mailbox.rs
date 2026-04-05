@@ -828,7 +828,7 @@ impl MailboxPoller {
         // Check discovered teams for member paths
         let discovered_teams = teams::discover_teams();
         for team in &discovered_teams {
-            for agent_path in &team.agent_paths {
+            for agent_path in team.agent_paths.iter().flatten() {
                 let path_str = agent_path.to_string_lossy().to_string();
                 let normalized = path_str.replace('\\', "/");
                 if self.agent_name_from_path(&path_str) == agent_name
@@ -894,7 +894,7 @@ impl MailboxPoller {
         if discovered_teams.is_empty() {
             return false; // No teams discovered → no communication
         }
-        crate::phone::manager::can_communicate(from, to, discovered_teams)
+        crate::config::teams::can_communicate(from, to, discovered_teams)
     }
 
     /// Resolve which agent CLI to use for wake-and-sleep mode.
