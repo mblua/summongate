@@ -518,7 +518,12 @@ pub async fn delete_team(
         ));
     }
 
-    // Delete workgroups
+    // Delete team dir first — bail before touching workgroups if this fails
+    std::fs::remove_dir_all(&team_dir)
+        .map_err(|e| format!("Failed to delete team directory: {}", e))?;
+    log::info!("[entity_creation] Deleted team: {}", team_name);
+
+    // Then delete workgroups
     for wg_dir in &wg_dirs {
         let wg_name = wg_dir.file_name().unwrap_or_default().to_string_lossy();
         if let Err(e) = std::fs::remove_dir_all(wg_dir) {
@@ -527,11 +532,6 @@ pub async fn delete_team(
             log::info!("[entity_creation] Deleted workgroup: {}", wg_name);
         }
     }
-
-    std::fs::remove_dir_all(&team_dir)
-        .map_err(|e| format!("Failed to delete team directory: {}", e))?;
-
-    log::info!("[entity_creation] Deleted team: {}", team_name);
     Ok(())
 }
 
@@ -682,12 +682,16 @@ fn check_workgroup_repos_dirty(wg_dirs: &[PathBuf]) -> Vec<(String, String)> {
                 use std::os::windows::process::CommandExt;
                 cmd2.creation_flags(CREATE_NO_WINDOW);
             }
-            if let Ok(output) = cmd2.output() {
-                if output.status.success() {
+            match cmd2.output() {
+                Ok(output) if output.status.success() => {
                     let stdout = String::from_utf8_lossy(&output.stdout);
                     if !stdout.trim().is_empty() {
                         reasons.push("unpushed commits");
                     }
+                }
+                _ => {
+                    // No upstream configured — local-only branch = unpushed work
+                    reasons.push("no remote upstream");
                 }
             }
 
