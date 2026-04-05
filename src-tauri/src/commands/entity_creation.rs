@@ -22,11 +22,19 @@ pub struct AgentInfo {
     pub project_name: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoAssignment {
     pub url: String,
     pub agents: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamConfigResult {
+    pub agents: Vec<String>,
+    pub coordinator: String,
+    pub repos: Vec<RepoAssignment>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -66,6 +74,19 @@ fn sanitize_name(raw: &str) -> Result<String, String> {
         return Err("Name must contain at least one alphanumeric character".into());
     }
     Ok(sanitized)
+}
+
+/// Validate that an existing team name is safe for path operations.
+/// Unlike `sanitize_name`, this does NOT transform the name — it just rejects
+/// names that contain path traversal or separator characters.
+fn validate_existing_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("Team name cannot be empty".into());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err("Invalid team name".into());
+    }
+    Ok(())
 }
 
 /// Extract a repo directory name from a git URL.
@@ -441,6 +462,139 @@ pub async fn create_workgroup(
     Ok(WorkgroupCloneResult {
         path: result_path,
         clone_errors,
+    })
+}
+
+/// Delete a team directory from {project_path}/.ac-new/_team_{name}/
+#[tauri::command]
+pub async fn delete_team(
+    project_path: String,
+    team_name: String,
+) -> Result<(), String> {
+    validate_existing_name(&team_name)?;
+    let base = Path::new(&project_path).join(".ac-new");
+    if !base.is_dir() {
+        return Err(format!(".ac-new directory not found in {}", project_path));
+    }
+
+    let team_dir = base.join(format!("_team_{}", team_name));
+    if !team_dir.exists() {
+        return Err(format!("Team '{}' not found", team_name));
+    }
+
+    std::fs::remove_dir_all(&team_dir)
+        .map_err(|e| format!("Failed to delete team directory: {}", e))?;
+
+    log::info!("[entity_creation] Deleted team: {}", team_name);
+    Ok(())
+}
+
+/// Update an existing team's config.json in {project_path}/.ac-new/_team_{name}/
+#[tauri::command]
+pub async fn update_team(
+    project_path: String,
+    team_name: String,
+    agents: Vec<String>,
+    coordinator: String,
+    repos: Vec<RepoAssignment>,
+) -> Result<(), String> {
+    validate_existing_name(&team_name)?;
+    let base = Path::new(&project_path).join(".ac-new");
+    if !base.is_dir() {
+        return Err(format!(".ac-new directory not found in {}", project_path));
+    }
+
+    let team_dir = base.join(format!("_team_{}", team_name));
+    if !team_dir.exists() {
+        return Err(format!("Team '{}' not found", team_name));
+    }
+
+    if !coordinator.is_empty() && !agents.contains(&coordinator) {
+        return Err("Coordinator must be one of the selected agents".into());
+    }
+
+    let repos_json: Vec<serde_json::Value> = repos
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "url": r.url,
+                "agents": r.agents,
+            })
+        })
+        .collect();
+
+    let config = serde_json::json!({
+        "agents": agents,
+        "coordinator": coordinator,
+        "repos": repos_json,
+    });
+
+    let config_str = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize config.json: {}", e))?;
+    std::fs::write(team_dir.join("config.json"), &config_str)
+        .map_err(|e| format!("Failed to write config.json: {}", e))?;
+
+    log::info!("[entity_creation] Updated team: {}", team_name);
+    Ok(())
+}
+
+/// Read a team's config.json and return its contents.
+#[tauri::command]
+pub async fn get_team_config(
+    project_path: String,
+    team_name: String,
+) -> Result<TeamConfigResult, String> {
+    validate_existing_name(&team_name)?;
+    let base = Path::new(&project_path).join(".ac-new");
+    if !base.is_dir() {
+        return Err(format!(".ac-new directory not found in {}", project_path));
+    }
+
+    let team_dir = base.join(format!("_team_{}", team_name));
+    let config_path = team_dir.join("config.json");
+    if !config_path.exists() {
+        return Err(format!("Team '{}' config not found", team_name));
+    }
+
+    let content = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read config.json: {}", e))?;
+    let val: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config.json: {}", e))?;
+
+    let agents: Vec<String> = val
+        .get("agents")
+        .and_then(|a| a.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let coordinator = val
+        .get("coordinator")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let repos: Vec<RepoAssignment> = val
+        .get("repos")
+        .and_then(|r| r.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    let url = v.get("url")?.as_str()?.to_string();
+                    let agents = v
+                        .get("agents")
+                        .and_then(|a| a.as_array())
+                        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                        .unwrap_or_default();
+                    Some(RepoAssignment { url, agents })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(TeamConfigResult {
+        agents,
+        coordinator,
+        repos,
     })
 }
 
