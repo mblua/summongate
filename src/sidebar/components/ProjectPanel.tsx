@@ -96,13 +96,22 @@ const ProjectPanel: Component = () => {
       return;
     }
 
-    SessionAPI.create({
+    const newSession = await SessionAPI.create({
       cwd: replica.path,
       sessionName: replicaSessionName(wg, replica),
       agentId: replica.preferredAgentId,
       gitBranchSource,
       gitBranchPrefix,
     });
+    await SessionAPI.switch(newSession.id);
+    if (isTauri) {
+      const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+      const detachedLabel = `terminal-${newSession.id.replace(/-/g, "")}`;
+      const detachedWin = await WebviewWindow.getByLabel(detachedLabel);
+      if (!detachedWin) {
+        await WindowAPI.ensureTerminal();
+      }
+    }
   };
 
   const handleAgentClick = async (agent: { name: string; path: string; preferredAgentId?: string }) => {
@@ -125,11 +134,20 @@ const ProjectPanel: Component = () => {
       return;
     }
 
-    SessionAPI.create({
+    const newSession = await SessionAPI.create({
       cwd: agent.path,
       sessionName: agent.name,
       agentId: agent.preferredAgentId,
     });
+    await SessionAPI.switch(newSession.id);
+    if (isTauri) {
+      const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+      const detachedLabel = `terminal-${newSession.id.replace(/-/g, "")}`;
+      const detachedWin = await WebviewWindow.getByLabel(detachedLabel);
+      if (!detachedWin) {
+        await WindowAPI.ensureTerminal();
+      }
+    }
   };
 
   return (
@@ -540,15 +558,24 @@ const ProjectPanel: Component = () => {
       <Portal>
         <AgentPickerModal
           sessionName={pendingLaunch()!.sessionName}
-          onSelect={(agent) => {
+          onSelect={async (agent) => {
             const pending = pendingLaunch()!;
-            SessionAPI.create({
+            const newSession = await SessionAPI.create({
               cwd: pending.path,
               sessionName: pending.sessionName,
               agentId: agent.id,
               gitBranchSource: pending.gitBranchSource,
               gitBranchPrefix: pending.gitBranchPrefix,
             });
+            await SessionAPI.switch(newSession.id);
+            if (isTauri) {
+              const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+              const detachedLabel = `terminal-${newSession.id.replace(/-/g, "")}`;
+              const detachedWin = await WebviewWindow.getByLabel(detachedLabel);
+              if (!detachedWin) {
+                await WindowAPI.ensureTerminal();
+              }
+            }
             setPendingLaunch(null);
           }}
           onClose={() => setPendingLaunch(null)}
