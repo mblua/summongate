@@ -692,7 +692,14 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
           </For>
         </div>
 
-        {settings.data && (
+        <Show
+          when={settings.data}
+          fallback={
+            <div class="modal-body" style="display:flex;align-items:center;justify-content:center;min-height:200px;color:#555;font-size:13px">
+              Loading...
+            </div>
+          }
+        >
           <div class="modal-body">
             <Show when={activeTab() === "general"}>{renderGeneralTab()}</Show>
             <Show when={activeTab() === "agents"}>{renderAgentsTab()}</Show>
@@ -700,7 +707,7 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
               {renderIntegrationsTab()}
             </Show>
           </div>
-        )}
+        </Show>
 
         <div class="modal-footer">
           <Show when={saveError()}>

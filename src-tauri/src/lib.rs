@@ -553,6 +553,7 @@ pub fn run() {
             commands::config::start_web_server,
             commands::config::stop_web_server,
             commands::config::get_web_server_status,
+            commands::config::get_instance_label,
             commands::agent_creator::pick_folder,
             commands::agent_creator::create_agent_folder,
             commands::agent_creator::write_claude_settings_local,

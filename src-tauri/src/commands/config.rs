@@ -129,3 +129,10 @@ pub async fn get_web_server_status(
         Err(_) => Ok(false),
     }
 }
+
+/// Returns the runtime instance label for the titlebar badge.
+/// E.g. "STAGE", "STANDALONE", or "" for prod (no badge).
+#[tauri::command]
+pub fn get_instance_label() -> String {
+    crate::config::profile::instance_label().to_string()
+}

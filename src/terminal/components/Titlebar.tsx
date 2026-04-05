@@ -1,13 +1,23 @@
-import { Component, Show } from "solid-js";
+import { Component, Show, createSignal, onMount } from "solid-js";
 import { terminalStore } from "../stores/terminal";
 import iconUrl from "../../assets/icon-16.png";
 import { isTauri } from "../../shared/platform";
 declare const __APP_VERSION__: string;
-declare const __BUILD_PROFILE__: string;
 const APP_VERSION = __APP_VERSION__;
-const BUILD_PROFILE = __BUILD_PROFILE__;
 
 const Titlebar: Component<{ detached?: boolean }> = (props) => {
+  const [instanceLabel, setInstanceLabel] = createSignal("");
+
+  onMount(async () => {
+    if (isTauri) {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const label = await invoke<string>("get_instance_label");
+        if (label) setInstanceLabel(label);
+      } catch { /* non-Tauri or command unavailable */ }
+    }
+  });
+
   const handleMinimize = async () => {
     if (!isTauri) return;
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -42,8 +52,8 @@ const Titlebar: Component<{ detached?: boolean }> = (props) => {
         {import.meta.env.DEV && (
           <span class="titlebar-dev-badge" data-tauri-drag-region>DEV</span>
         )}
-        {BUILD_PROFILE === "stage" && (
-          <span class="titlebar-stage-badge" data-tauri-drag-region>STAGE</span>
+        {instanceLabel() && (
+          <span class="titlebar-stage-badge" data-tauri-drag-region>{instanceLabel()}</span>
         )}
         <Show when={props.detached}>
           <span class="titlebar-detached-badge">DETACHED</span>
