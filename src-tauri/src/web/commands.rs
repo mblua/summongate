@@ -206,6 +206,14 @@ async fn dispatch_inner(state: &WsState, cmd: &str, args: &Value) -> Result<Valu
             }
         }
 
+        // --- Cross-window event broadcast (theme sync, etc.) ---
+        "broadcast_event" => {
+            let event = require_str(args, "event")?;
+            let payload = args.get("payload").cloned().unwrap_or(json!(null));
+            broadcast_all(&state.app_handle, &state.broadcaster, &event, &payload);
+            Ok(json!(null))
+        }
+
         // --- Window commands (no-ops for web clients) ---
         "detach_terminal" | "close_detached_terminal" | "open_in_explorer"
         | "ensure_terminal_window" | "open_guide_window" => {

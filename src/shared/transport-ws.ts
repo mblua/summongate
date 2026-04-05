@@ -209,13 +209,7 @@ export class WsTransport implements Transport {
   }
 
   async emit<T>(event: string, payload: T): Promise<void> {
-    // Dispatch locally to listeners in this tab
-    const callbacks = this.listeners.get(event);
-    if (callbacks) {
-      for (const cb of callbacks) {
-        try { cb(payload); } catch {}
-      }
-    }
+    await this.invoke<void>("broadcast_event", { event, payload });
   }
 
   writePtyBinary(sessionId: string, data: Uint8Array): void {
