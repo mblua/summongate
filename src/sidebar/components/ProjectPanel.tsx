@@ -209,8 +209,7 @@ const ProjectPanel: Component = () => {
           });
         };
 
-        const hasTeamsWithCoord = () =>
-          proj.teams.some((t) => t.coordinator !== null && t.coordinator !== "");
+        const hasTeams = () => proj.teams.length > 0;
 
         const handleRemoveProject = () => {
           setShowCtxMenu(false);
@@ -271,10 +270,10 @@ const ProjectPanel: Component = () => {
                   </button>
                   <button
                     class="session-context-option"
-                    classList={{ "context-option-disabled": !hasTeamsWithCoord() }}
-                    disabled={!hasTeamsWithCoord()}
+                    classList={{ "context-option-disabled": !hasTeams() }}
+                    disabled={!hasTeams()}
                     onClick={() => {
-                      if (!hasTeamsWithCoord()) return;
+                      if (!hasTeams()) return;
                       setShowCtxMenu(false);
                       setShowNewWorkgroup(true);
                     }}

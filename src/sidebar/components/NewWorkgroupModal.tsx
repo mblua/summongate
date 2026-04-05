@@ -8,12 +8,8 @@ const NewWorkgroupModal: Component<{
   teams: AcTeam[];
   onClose: () => void;
 }> = (props) => {
-  const teamsWithCoord = createMemo(() =>
-    props.teams.filter((t) => t.coordinator !== null && t.coordinator !== "")
-  );
-
   const [selectedTeam, setSelectedTeam] = createSignal(
-    teamsWithCoord().length === 1 ? teamsWithCoord()[0].name : ""
+    props.teams.length === 1 ? props.teams[0].name : ""
   );
   const [brief, setBrief] = createSignal("");
   const [error, setError] = createSignal("");
@@ -69,7 +65,7 @@ const NewWorkgroupModal: Component<{
               onChange={(e) => setSelectedTeam(e.currentTarget.value)}
             >
               <option value="" disabled>Select a team...</option>
-              <For each={teamsWithCoord()}>
+              <For each={props.teams}>
                 {(team) => (
                   <option value={team.name}>{team.name}</option>
                 )}
