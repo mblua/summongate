@@ -614,6 +614,7 @@ pub fn run() {
             commands::entity_creation::update_team,
             commands::entity_creation::get_team_config,
             commands::entity_creation::create_workgroup,
+            commands::entity_creation::delete_workgroup,
         ])
         .build(tauri::generate_context!())
         .expect("error while building application")

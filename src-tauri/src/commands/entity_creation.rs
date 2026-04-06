@@ -535,6 +535,45 @@ pub async fn delete_team(
     Ok(())
 }
 
+/// Delete a single workgroup directory from {project_path}/.ac-new/{wg_name}/
+/// Returns dirty repo list as an Err if any repos have uncommitted/unpushed work.
+#[tauri::command]
+pub async fn delete_workgroup(
+    project_path: String,
+    workgroup_name: String,
+) -> Result<(), String> {
+    validate_existing_name(&workgroup_name)?;
+
+    let base = Path::new(&project_path).join(".ac-new");
+    if !base.is_dir() {
+        return Err(format!(".ac-new directory not found in {}", project_path));
+    }
+
+    let wg_dir = base.join(&workgroup_name);
+    if !wg_dir.exists() {
+        return Err(format!("Workgroup '{}' not found", workgroup_name));
+    }
+
+    // Safety check: detect dirty repos before deleting
+    let dirty_repos = check_workgroup_repos_dirty(&[wg_dir.clone()]);
+    if !dirty_repos.is_empty() {
+        let list = dirty_repos
+            .iter()
+            .map(|(repo, reason)| format!("  - {} ({})", repo, reason))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(format!(
+            "Cannot delete workgroup: the following repos have pending work:\n{}\n\nCommit or push changes before deleting.",
+            list
+        ));
+    }
+
+    std::fs::remove_dir_all(&wg_dir)
+        .map_err(|e| format!("Failed to delete workgroup directory: {}", e))?;
+    log::info!("[entity_creation] Deleted workgroup: {}", workgroup_name);
+    Ok(())
+}
+
 /// Update an existing team's config.json in {project_path}/.ac-new/_team_{name}/
 #[tauri::command]
 pub async fn update_team(

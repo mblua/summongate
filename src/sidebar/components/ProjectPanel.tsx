@@ -175,6 +175,10 @@ const ProjectPanel: Component = () => {
         const [deletingTeam, setDeletingTeam] = createSignal<AcTeam | null>(null);
         const [deleteError, setDeleteError] = createSignal("");
         const [deleteInProgress, setDeleteInProgress] = createSignal(false);
+        const [wgCtxMenu, setWgCtxMenu] = createSignal<{ wg: AcWorkgroup; x: number; y: number } | null>(null);
+        const [deletingWg, setDeletingWg] = createSignal<AcWorkgroup | null>(null);
+        const [wgDeleteError, setWgDeleteError] = createSignal("");
+        const [wgDeleteInProgress, setWgDeleteInProgress] = createSignal(false);
 
         let dismissCtx: (() => void) | null = null;
 
@@ -194,6 +198,7 @@ const ProjectPanel: Component = () => {
           e.stopPropagation();
           cleanupCtx();
           setTeamCtxMenu(null);
+          setWgCtxMenu(null);
           setCtxMenuPos({ x: e.clientX, y: e.clientY });
           setShowCtxMenu(true);
           const dismiss = (ev?: Event) => {
@@ -221,10 +226,31 @@ const ProjectPanel: Component = () => {
           e.stopPropagation();
           cleanupCtx();
           setShowCtxMenu(false);
+          setWgCtxMenu(null);
           setTeamCtxMenu({ team, x: e.clientX, y: e.clientY });
           const dismiss = (ev?: Event) => {
             if (ev instanceof KeyboardEvent && ev.key !== "Escape") return;
             setTeamCtxMenu(null);
+            cleanupCtx();
+          };
+          dismissCtx = dismiss;
+          setTimeout(() => {
+            window.addEventListener("click", dismiss);
+            window.addEventListener("contextmenu", dismiss);
+            window.addEventListener("keydown", dismiss as any);
+          });
+        };
+
+        const handleWgContextMenu = (e: MouseEvent, wg: AcWorkgroup) => {
+          e.preventDefault();
+          e.stopPropagation();
+          cleanupCtx();
+          setShowCtxMenu(false);
+          setTeamCtxMenu(null);
+          setWgCtxMenu({ wg, x: e.clientX, y: e.clientY });
+          const dismiss = (ev?: Event) => {
+            if (ev instanceof KeyboardEvent && ev.key !== "Escape") return;
+            setWgCtxMenu(null);
             cleanupCtx();
           };
           dismissCtx = dismiss;
@@ -353,6 +379,7 @@ const ProjectPanel: Component = () => {
                                     class="ac-wg-header ac-wg-header--collapsible"
                                     title={wg.path}
                                     onClick={() => setWgCollapsed((c) => !c)}
+                                    onContextMenu={(e) => handleWgContextMenu(e, wg)}
                                   >
                                     <span class="ac-discovery-chevron" classList={{ collapsed: wgCollapsed() }}>
                                       &#x25BE;
@@ -588,7 +615,7 @@ const ProjectPanel: Component = () => {
                     Edit Team
                   </button>
                   <button
-                    class="session-context-option session-context-option--danger"
+                    class="session-context-option context-option-danger"
                     onClick={() => {
                       const menu = teamCtxMenu();
                       if (menu) setDeletingTeam(menu.team);
@@ -597,6 +624,103 @@ const ProjectPanel: Component = () => {
                   >
                     Delete Team
                   </button>
+                </div>
+              </Portal>
+            )}
+
+            {/* WG context menu */}
+            {wgCtxMenu() && (
+              <Portal>
+                <div
+                  class="session-context-menu"
+                  style={{ left: `${wgCtxMenu()!.x}px`, top: `${wgCtxMenu()!.y}px` }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    class="session-context-option context-option-danger"
+                    onClick={() => {
+                      cleanupCtx();
+                      const menu = wgCtxMenu();
+                      if (menu) setDeletingWg(menu.wg);
+                      setWgCtxMenu(null);
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style={{ "flex-shrink": "0" }}>
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    </svg>
+                    Delete Workgroup
+                  </button>
+                </div>
+              </Portal>
+            )}
+
+            {/* Delete WG confirmation */}
+            {deletingWg() && (
+              <Portal>
+                <div
+                  class="modal-overlay"
+                  onClick={(e) => {
+                    if ((e.target as HTMLElement).classList.contains("modal-overlay")) {
+                      setWgDeleteError("");
+                      setDeletingWg(null);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setWgDeleteError("");
+                      setDeletingWg(null);
+                    }
+                  }}
+                >
+                  <div class="agent-modal" style={{ "max-width": "360px" }}>
+                    <div class="agent-modal-header">
+                      <span class="agent-modal-title">Delete Workgroup</span>
+                    </div>
+                    <div class="new-agent-form">
+                      <p style={{ margin: "0", "line-height": "1.5", opacity: 0.85 }}>
+                        Delete workgroup <strong>{deletingWg()!.name}</strong>? This will remove the workgroup directory and all its contents. This action cannot be undone.
+                      </p>
+                      <Show when={wgDeleteError()}>
+                        <div class="new-agent-error">{wgDeleteError()}</div>
+                      </Show>
+                    </div>
+                    <div class="new-agent-footer">
+                      <button
+                        class="new-agent-cancel-btn"
+                        onClick={() => {
+                          setWgDeleteError("");
+                          setDeletingWg(null);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        class="new-agent-create-btn"
+                        style={{ "background": "var(--danger, #c0392b)" }}
+                        disabled={wgDeleteInProgress()}
+                        onClick={async () => {
+                          if (wgDeleteInProgress()) return;
+                          setWgDeleteInProgress(true);
+                          const wg = deletingWg()!;
+                          try {
+                            await EntityAPI.deleteWorkgroup(proj.path, wg.name);
+                            await projectStore.reloadProject(proj.path);
+                          } catch (e: any) {
+                            console.error("delete_workgroup failed:", e);
+                            setWgDeleteError(typeof e === "string" ? e : e?.message ?? "Failed to delete workgroup");
+                            setWgDeleteInProgress(false);
+                            return;
+                          }
+                          setWgDeleteError("");
+                          setWgDeleteInProgress(false);
+                          setDeletingWg(null);
+                        }}
+                      >
+                        {wgDeleteInProgress() ? "Deleting..." : "Delete"}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </Portal>
             )}
