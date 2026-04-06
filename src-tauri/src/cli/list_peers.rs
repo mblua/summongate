@@ -310,6 +310,8 @@ fn build_wg_peer(agent_name: &str, wg_name: &str, agent_path: &Path, reachable: 
 /// WG-specific peer discovery — self-contained, returns exit code.
 fn execute_wg_discovery(wg: WgReplicaInfo) -> i32 {
     let mut peers: Vec<PeerInfo> = Vec::new();
+    let discovered = crate::config::teams::discover_teams();
+    let my_full_name = format!("{}/{}", wg.my_wg_name, wg.my_agent_name);
 
     let coordinator = resolve_wg_coordinator(&wg.ac_new_dir, &wg.my_wg_dir);
     let i_am_coordinator = coordinator.as_deref() == Some(wg.my_agent_name.as_str());
@@ -340,15 +342,8 @@ fn execute_wg_discovery(wg: WgReplicaInfo) -> i32 {
         if *agent_name == wg.my_agent_name {
             continue;
         }
-        // Reachability: non-coordinator can only reach the coordinator.
-        // Coordinator can reach all replicas. Unknown coordinator → flat topology.
-        let reachable = if coordinator.is_none() {
-            true // flat topology fallback
-        } else if i_am_coordinator {
-            true // coordinator reaches all replicas
-        } else {
-            coordinator.as_deref() == Some(agent_name.as_str())
-        };
+        let peer_full_name = format!("{}/{}", wg.my_wg_name, agent_name);
+        let reachable = crate::config::teams::can_communicate(&my_full_name, &peer_full_name, &discovered);
         peers.push(build_wg_peer(agent_name, &wg.my_wg_name, agent_path, reachable));
     }
 
@@ -374,7 +369,8 @@ fn execute_wg_discovery(wg: WgReplicaInfo) -> i32 {
                     if peers.iter().any(|p| p.name == peer_name) {
                         continue;
                     }
-                    peers.push(build_wg_peer(&other_coord, &other_wg_name, &coord_dir, true));
+                    let reachable = crate::config::teams::can_communicate(&my_full_name, &peer_name, &discovered);
+                    peers.push(build_wg_peer(&other_coord, &other_wg_name, &coord_dir, reachable));
                 }
             }
         }
