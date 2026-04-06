@@ -5,7 +5,6 @@ import type {
   AppSettings,
   AgentConfig,
   TelegramBotConfig,
-  RepoMatch,
 } from "../../shared/types";
 import { SettingsAPI, TelegramAPI, ReposAPI } from "../../shared/ipc";
 import { settingsStore } from "../../shared/stores/settings";
@@ -61,22 +60,6 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
   ) => {
     if (!settings.data) return;
     setSettings("data", key as any, value as any);
-  };
-
-  // ── Repo paths ──
-  const updateRepoPath = (index: number, value: string) => {
-    if (!settings.data) return;
-    setSettings("data", "repoPaths", index, value);
-  };
-
-  const addRepoPath = () => {
-    if (!settings.data) return;
-    setSettings("data", "repoPaths", (prev) => [...prev, ""]);
-  };
-
-  const removeRepoPath = (index: number) => {
-    if (!settings.data) return;
-    setSettings("data", "repoPaths", (prev) => prev.filter((_, i) => i !== index));
   };
 
   // ── Agents ──
@@ -233,7 +216,7 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
       <div class="settings-section">
         <div class="settings-section-title">Window</div>
         <label class="settings-field">
-          <span class="settings-label">Sidebar Style</span>
+          <span class="settings-label">App Theme</span>
           <select
             class="settings-input"
             value={settings.data!.sidebarStyle ?? "classic"}
@@ -325,31 +308,6 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
         </Show>
       </div>
 
-      <div class="settings-section">
-        <div class="settings-section-title">Agents Folders and Parent Folders</div>
-        <For each={settings.data!.repoPaths}>
-          {(path, i) => (
-            <div class="settings-path-row">
-              <input
-                class="settings-input settings-path-input"
-                value={path}
-                onInput={(e) => updateRepoPath(i(), e.currentTarget.value)}
-                placeholder="C:\path\to\repos"
-              />
-              <button
-                class="settings-path-remove"
-                onClick={() => removeRepoPath(i())}
-                title="Remove"
-              >
-                &#x2715;
-              </button>
-            </div>
-          )}
-        </For>
-        <button class="settings-add-btn" onClick={addRepoPath}>
-          + Add Path
-        </button>
-      </div>
     </>
   );
 
