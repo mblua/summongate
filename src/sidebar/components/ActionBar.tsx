@@ -3,14 +3,10 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { projectStore } from "../stores/project";
 import { sessionsStore } from "../stores/sessions";
 import { ProjectAPI, GuideAPI, emitThemeChanged } from "../../shared/ipc";
-import OpenAgentModal from "./OpenAgentModal";
-import NewAgentModal from "./NewAgentModal";
 import SettingsModal from "./SettingsModal";
 
 const ActionBar: Component = () => {
   const [showDropdown, setShowDropdown] = createSignal(false);
-  const [showOpenAgent, setShowOpenAgent] = createSignal(false);
-  const [showNewAgent, setShowNewAgent] = createSignal(false);
   const [showSettings, setShowSettings] = createSignal(false);
   const [confirmPath, setConfirmPath] = createSignal<string | null>(null);
   const [toastMsg, setToastMsg] = createSignal<string | null>(null);
@@ -103,12 +99,6 @@ const ActionBar: Component = () => {
               <button class="action-bar-menu-item" disabled={isPendingDialog()} onClick={handleOpenProject}>
                 &#x1F4C2; Open Project
               </button>
-              <button class="action-bar-menu-item" onClick={() => { setShowDropdown(false); setShowNewAgent(true); }}>
-                &#x2795; New Agent
-              </button>
-              <button class="action-bar-menu-item" onClick={() => { setShowDropdown(false); setShowOpenAgent(true); }}>
-                &#x25B6; Open Agent
-              </button>
             </div>
           </Show>
         </div>
@@ -144,8 +134,7 @@ const ActionBar: Component = () => {
           </button>
         </div>
       </div>
-      {showOpenAgent() && <OpenAgentModal onClose={() => setShowOpenAgent(false)} />}
-      {showNewAgent() && <NewAgentModal onClose={() => setShowNewAgent(false)} />}
+
       {showSettings() && <SettingsModal onClose={() => setShowSettings(false)} />}
       <Show when={confirmPath()}>
         <div class="confirm-overlay" onClick={() => setConfirmPath(null)}>
