@@ -517,7 +517,7 @@ pub async fn get_active_session(
 
 /// Create or reuse a root agent session.
 /// Derives the root agent path from the current binary name:
-///   C:\Users\maria\0_mmb\0_AC\.{binary_name}\ac-root-agent
+///   {exe_dir}/.{binary_name}/ac-root-agent
 /// If a session already exists at that path, switches to it instead.
 /// Uses the first configured coding agent from settings.
 /// Injects session credentials immediately after creation.
