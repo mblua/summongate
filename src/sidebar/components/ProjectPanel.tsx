@@ -438,6 +438,7 @@ const ProjectPanel: Component = () => {
                                         session={patched()}
                                         isActive={s().id === sessionsStore.activeId}
                                       />
+                                      <span class="coord-quick-wg">{item.wg.name}</span>
                                     </div>
                                   );
                                 }}
