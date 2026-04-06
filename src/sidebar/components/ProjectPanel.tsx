@@ -418,7 +418,10 @@ const ProjectPanel: Component = () => {
                                     <div class={`session-item-status ${item.dotClass}`} />
                                     <div class="coord-quick-info">
                                       <span class="coord-quick-name">{item.replica.name}</span>
-                                      <span class="coord-quick-wg">{item.wg.name}</span>
+                                      <div class="ac-discovery-badges">
+                                        <span class="ac-discovery-badge coord">coordinator</span>
+                                        <span class="ac-discovery-badge team">{item.wg.name}</span>
+                                      </div>
                                     </div>
                                   </div>
                                 }
@@ -438,7 +441,10 @@ const ProjectPanel: Component = () => {
                                         session={patched()}
                                         isActive={s().id === sessionsStore.activeId}
                                       />
-                                      <span class="coord-quick-wg">{item.wg.name}</span>
+                                      <div class="ac-discovery-badges">
+                                        <span class="ac-discovery-badge coord">coordinator</span>
+                                        <span class="ac-discovery-badge team">{item.wg.name}</span>
+                                      </div>
                                     </div>
                                   );
                                 }}
