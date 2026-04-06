@@ -538,10 +538,14 @@ pub async fn create_root_agent_session(
         .ok_or("Failed to extract binary name")?
         .to_string();
 
-    let root_agent_path = format!(
-        r"C:\Users\maria\0_mmb\0_AC\.{}\ac-root-agent",
-        binary_name
-    );
+    let exe_dir = exe_path
+        .parent()
+        .ok_or("Failed to get exe parent directory")?;
+    let root_agent_path = exe_dir
+        .join(format!(".{}", binary_name))
+        .join("ac-root-agent")
+        .to_string_lossy()
+        .to_string();
 
     // Check if a session already exists at this path — reuse it
     {
