@@ -193,6 +193,16 @@ const ProjectPanel: Component = () => {
         const [wgDeleteInProgress, setWgDeleteInProgress] = createSignal(false);
         const [wgDirtyRepos, setWgDirtyRepos] = createSignal(false);
         const [wgConfirmText, setWgConfirmText] = createSignal("");
+        const [agentCtxMenu, setAgentCtxMenu] = createSignal<{ agent: { name: string; path: string; preferredAgentId?: string }; x: number; y: number } | null>(null);
+        const [agentsHeaderCtxMenu, setAgentsHeaderCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
+        const [deletingAgent, setDeletingAgent] = createSignal<{ name: string; path: string } | null>(null);
+        const [agentDeleteError, setAgentDeleteError] = createSignal("");
+        const [agentDeleteInProgress, setAgentDeleteInProgress] = createSignal(false);
+        const closeAgentDeleteModal = () => {
+          setAgentDeleteError("");
+          setAgentDeleteInProgress(false);
+          setDeletingAgent(null);
+        };
         const closeWgDeleteModal = () => {
           setWgDeleteError("");
           setWgDirtyRepos(false);
@@ -224,6 +234,8 @@ const ProjectPanel: Component = () => {
           cleanupCtx();
           setTeamCtxMenu(null);
           setWgCtxMenu(null);
+          setAgentCtxMenu(null);
+          setAgentsHeaderCtxMenu(null);
           setCtxMenuPos({ x: e.clientX, y: e.clientY });
           setShowCtxMenu(true);
           const dismiss = (ev?: Event) => {
@@ -252,6 +264,8 @@ const ProjectPanel: Component = () => {
           cleanupCtx();
           setShowCtxMenu(false);
           setWgCtxMenu(null);
+          setAgentCtxMenu(null);
+          setAgentsHeaderCtxMenu(null);
           setTeamCtxMenu({ team, x: e.clientX, y: e.clientY });
           const dismiss = (ev?: Event) => {
             if (ev instanceof KeyboardEvent && ev.key !== "Escape") return;
@@ -272,6 +286,8 @@ const ProjectPanel: Component = () => {
           cleanupCtx();
           setShowCtxMenu(false);
           setTeamCtxMenu(null);
+          setAgentCtxMenu(null);
+          setAgentsHeaderCtxMenu(null);
           setWgCtxMenu({ wg, x: e.clientX, y: e.clientY });
           const dismiss = (ev?: Event) => {
             if (ev instanceof KeyboardEvent && ev.key !== "Escape") return;
@@ -492,17 +508,6 @@ const ProjectPanel: Component = () => {
                 {/* Agents */}
                 {(() => {
                   const [matrixCollapsed, setMatrixCollapsed] = createSignal(false);
-                  const [agentCtxMenu, setAgentCtxMenu] = createSignal<{ agent: { name: string; path: string; preferredAgentId?: string }; x: number; y: number } | null>(null);
-                  const [deletingAgent, setDeletingAgent] = createSignal<{ name: string; path: string } | null>(null);
-                  const [agentDeleteError, setAgentDeleteError] = createSignal("");
-                  const [agentDeleteInProgress, setAgentDeleteInProgress] = createSignal(false);
-                  const [agentsHeaderCtxMenu, setAgentsHeaderCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
-
-                  const closeAgentDeleteModal = () => {
-                    setAgentDeleteError("");
-                    setAgentDeleteInProgress(false);
-                    setDeletingAgent(null);
-                  };
 
                   const handleAgentContextMenu = (e: MouseEvent, agent: { name: string; path: string; preferredAgentId?: string }) => {
                     e.preventDefault();

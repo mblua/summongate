@@ -205,8 +205,9 @@ pub async fn delete_agent_matrix(
         return Err(format!("Agent '{}' not found", agent_name));
     }
 
-    // Referential integrity: check if any team references this agent
-    let agent_ref = format!("_agent_{}", agent_name);
+    // Referential integrity: check if any team references this agent.
+    // Team config.json stores agents as absolute paths; compare by directory name.
+    let agent_dir_name = format!("_agent_{}", agent_name);
     let mut referencing_teams: Vec<String> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&base) {
         for entry in entries.flatten() {
@@ -225,7 +226,14 @@ pub async fn delete_agent_matrix(
                         .and_then(|a| a.as_array())
                         .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
                         .unwrap_or_default();
-                    if agents.iter().any(|a| *a == agent_ref) {
+                    if agents.iter().any(|a| {
+                        // Match by final path component (handles both absolute and relative paths)
+                        Path::new(a)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .map(|n| n == agent_dir_name)
+                            .unwrap_or(false)
+                    }) {
                         let team_name = dir_name.strip_prefix("_team_").unwrap_or(&dir_name);
                         referencing_teams.push(team_name.to_string());
                     }
