@@ -537,10 +537,12 @@ pub async fn delete_team(
 
 /// Delete a single workgroup directory from {project_path}/.ac-new/{wg_name}/
 /// Returns dirty repo list as an Err if any repos have uncommitted/unpushed work.
+/// Pass `force = true` to skip the dirty-repo safety check (user already confirmed).
 #[tauri::command]
 pub async fn delete_workgroup(
     project_path: String,
     workgroup_name: String,
+    force: Option<bool>,
 ) -> Result<(), String> {
     validate_existing_name(&workgroup_name)?;
 
@@ -554,23 +556,30 @@ pub async fn delete_workgroup(
         return Err(format!("Workgroup '{}' not found", workgroup_name));
     }
 
-    // Safety check: detect dirty repos before deleting
-    let dirty_repos = check_workgroup_repos_dirty(&[wg_dir.clone()]);
-    if !dirty_repos.is_empty() {
-        let list = dirty_repos
-            .iter()
-            .map(|(repo, reason)| format!("  - {} ({})", repo, reason))
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Err(format!(
-            "Cannot delete workgroup: the following repos have pending work:\n{}\n\nCommit or push changes before deleting.",
-            list
-        ));
+    // Safety check: detect dirty repos before deleting (skip if force)
+    if !force.unwrap_or(false) {
+        let dirty_repos = check_workgroup_repos_dirty(&[wg_dir.clone()]);
+        if !dirty_repos.is_empty() {
+            let list = dirty_repos
+                .iter()
+                .map(|(repo, reason)| format!("  - {} ({})", repo, reason))
+                .collect::<Vec<_>>()
+                .join("\n");
+            // DIRTY_REPOS: prefix is a sentinel the frontend uses to detect this error type
+            return Err(format!(
+                "DIRTY_REPOS:Cannot delete workgroup: the following repos have pending work:\n{}\n\nCommit or push changes before deleting.",
+                list
+            ));
+        }
     }
 
     std::fs::remove_dir_all(&wg_dir)
         .map_err(|e| format!("Failed to delete workgroup directory: {}", e))?;
-    log::info!("[entity_creation] Deleted workgroup: {}", workgroup_name);
+    log::info!(
+        "[entity_creation] Deleted workgroup: {} (force={})",
+        workgroup_name,
+        force.unwrap_or(false)
+    );
     Ok(())
 }
 

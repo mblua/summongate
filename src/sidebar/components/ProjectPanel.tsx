@@ -179,6 +179,15 @@ const ProjectPanel: Component = () => {
         const [deletingWg, setDeletingWg] = createSignal<AcWorkgroup | null>(null);
         const [wgDeleteError, setWgDeleteError] = createSignal("");
         const [wgDeleteInProgress, setWgDeleteInProgress] = createSignal(false);
+        const [wgDirtyRepos, setWgDirtyRepos] = createSignal(false);
+        const [wgConfirmText, setWgConfirmText] = createSignal("");
+        const closeWgDeleteModal = () => {
+          setWgDeleteError("");
+          setWgDirtyRepos(false);
+          setWgConfirmText("");
+          setWgDeleteInProgress(false);
+          setDeletingWg(null);
+        };
 
         let dismissCtx: (() => void) | null = null;
 
@@ -661,16 +670,10 @@ const ProjectPanel: Component = () => {
                 <div
                   class="modal-overlay"
                   onClick={(e) => {
-                    if ((e.target as HTMLElement).classList.contains("modal-overlay")) {
-                      setWgDeleteError("");
-                      setDeletingWg(null);
-                    }
+                    if ((e.target as HTMLElement).classList.contains("modal-overlay")) closeWgDeleteModal();
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === "Escape") {
-                      setWgDeleteError("");
-                      setDeletingWg(null);
-                    }
+                    if (e.key === "Escape") closeWgDeleteModal();
                   }}
                 >
                   <div class="agent-modal" style={{ "max-width": "360px" }}>
@@ -684,37 +687,55 @@ const ProjectPanel: Component = () => {
                       <Show when={wgDeleteError()}>
                         <div class="new-agent-error">{wgDeleteError()}</div>
                       </Show>
+                      <Show when={wgDirtyRepos()}>
+                        <div style={{ "margin-top": "10px" }}>
+                          <label style={{ "font-size": "12px", opacity: 0.8, display: "block", "margin-bottom": "6px" }}>
+                            To delete anyway, type <strong>{deletingWg()!.name}</strong> below:
+                          </label>
+                          <input
+                            type="text"
+                            class="new-agent-input"
+                            placeholder={deletingWg()!.name}
+                            value={wgConfirmText()}
+                            onInput={(e) => setWgConfirmText(e.currentTarget.value)}
+                            spellcheck={false}
+                            autocomplete="off"
+                          />
+                        </div>
+                      </Show>
                     </div>
                     <div class="new-agent-footer">
-                      <button
-                        class="new-agent-cancel-btn"
-                        onClick={() => {
-                          setWgDeleteError("");
-                          setDeletingWg(null);
-                        }}
-                      >
+                      <button class="new-agent-cancel-btn" onClick={closeWgDeleteModal}>
                         Cancel
                       </button>
                       <button
                         class="new-agent-create-btn"
                         style={{ "background": "var(--danger, #c0392b)" }}
-                        disabled={wgDeleteInProgress()}
+                        disabled={wgDeleteInProgress() || (wgDirtyRepos() && wgConfirmText() !== deletingWg()!.name)}
                         onClick={async () => {
                           if (wgDeleteInProgress()) return;
                           setWgDeleteInProgress(true);
                           const wg = deletingWg()!;
+                          const forceDelete = wgDirtyRepos();
                           try {
-                            await EntityAPI.deleteWorkgroup(proj.path, wg.name);
+                            await EntityAPI.deleteWorkgroup(proj.path, wg.name, forceDelete);
                             await projectStore.reloadProject(proj.path);
                           } catch (e: any) {
                             console.error("delete_workgroup failed:", e);
-                            setWgDeleteError(typeof e === "string" ? e : e?.message ?? "Failed to delete workgroup");
+                            const msg = typeof e === "string" ? e : e?.message ?? "Failed to delete workgroup";
+                            // DIRTY_REPOS: sentinel prefix — switch to force-confirm mode
+                            if (!forceDelete && msg.startsWith("DIRTY_REPOS:")) {
+                              setWgDeleteError(msg.slice("DIRTY_REPOS:".length));
+                              setWgDirtyRepos(true);
+                              setWgConfirmText("");
+                              setWgDeleteInProgress(false);
+                              return;
+                            }
+                            setWgDeleteError(msg);
                             setWgDeleteInProgress(false);
                             return;
                           }
-                          setWgDeleteError("");
-                          setWgDeleteInProgress(false);
-                          setDeletingWg(null);
+                          closeWgDeleteModal();
                         }}
                       >
                         {wgDeleteInProgress() ? "Deleting..." : "Delete"}
