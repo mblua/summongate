@@ -371,6 +371,68 @@ const ProjectPanel: Component = () => {
 
             <Show when={!collapsed()}>
               <div class="project-content">
+                {/* Coordinator Quick-Access — shown by styles that enable it via CSS */}
+                {(() => {
+                  const coordinators = createMemo(() => {
+                    const result: { replica: AcAgentReplica; wg: AcWorkgroup; dotClass: string }[] = [];
+                    for (const wg of proj.workgroups) {
+                      for (const replica of wg.agents) {
+                        if (isReplicaCoordinator(replica, proj.folderName, proj.teams, wg.teamName)) {
+                          result.push({ replica, wg, dotClass: replicaDotClass(wg, replica) });
+                        }
+                      }
+                    }
+                    return result;
+                  });
+                  return (
+                    <Show when={coordinators().length > 0}>
+                      <div class="coord-quick-access">
+                        <For each={coordinators()}>
+                          {(item) => {
+                            const session = () => replicaSession(item.wg, item.replica);
+                            return (
+                              <Show
+                                when={session()}
+                                fallback={
+                                  <div
+                                    class="coord-quick-item"
+                                    onClick={() => handleReplicaClick(item.replica, item.wg)}
+                                    title={item.replica.path}
+                                  >
+                                    <div class={`session-item-status ${item.dotClass}`} />
+                                    <div class="coord-quick-info">
+                                      <span class="coord-quick-name">{item.replica.name}</span>
+                                      <span class="coord-quick-wg">{item.wg.name}</span>
+                                    </div>
+                                  </div>
+                                }
+                              >
+                                {(s) => {
+                                  const patched = () => {
+                                    const sess = s();
+                                    const repoName = replicaRepoName(item.replica);
+                                    if (sess.gitBranch && !sess.gitBranch.includes("/") && repoName) {
+                                      return { ...sess, gitBranch: `${repoName}/${sess.gitBranch}` };
+                                    }
+                                    return sess;
+                                  };
+                                  return (
+                                    <div class="coord-quick-item coord-quick-item--session">
+                                      <SessionItem
+                                        session={patched()}
+                                        isActive={s().id === sessionsStore.activeId}
+                                      />
+                                    </div>
+                                  );
+                                }}
+                              </Show>
+                            );
+                          }}
+                        </For>
+                      </div>
+                    </Show>
+                  );
+                })()}
                 {/* Workgroups */}
                 {(() => {
                   const [wgsCollapsed, setWgsCollapsed] = createSignal(false);

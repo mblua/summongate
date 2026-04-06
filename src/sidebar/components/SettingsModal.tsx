@@ -229,6 +229,11 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
             <option value="noir-minimal">Noir Minimal</option>
             <option value="card-sections">Card Sections</option>
             <option value="command-center">Command Center</option>
+            <option value="deep-space">Deep Space</option>
+            <option value="signal-grid">Signal Grid</option>
+            <option value="arctic-ops">Arctic Ops</option>
+            <option value="obsidian-mesh">Obsidian Mesh</option>
+            <option value="neon-circuit">Neon Circuit</option>
           </select>
         </label>
         <label class="settings-checkbox-field">

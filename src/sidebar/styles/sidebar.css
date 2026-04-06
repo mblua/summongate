@@ -2693,6 +2693,1207 @@ html.light-theme[data-sidebar-style="card-sections"] .ac-wg-subgroup {
   padding: 3px var(--spacing-md) 3px 0;
 }
 
+/* =============================================================================
+   SIDEBAR STYLE: Deep Space
+   NASA JPL mission control — layered depth, atmospheric glow, status-forward.
+   Coordinators get a warm amber beacon; everything else recedes into deep blue.
+   ============================================================================= */
+
+[data-sidebar-style="deep-space"] .project-panel {
+  margin: 6px 8px;
+  background: linear-gradient(
+    180deg,
+    rgba(12, 18, 40, 0.7) 0%,
+    rgba(8, 10, 28, 0.5) 100%
+  );
+  border: 1px solid rgba(60, 100, 180, 0.12);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+[data-sidebar-style="deep-space"] .project-header {
+  padding: 10px 14px;
+  background: linear-gradient(
+    135deg,
+    rgba(20, 30, 70, 0.6) 0%,
+    rgba(10, 15, 45, 0.4) 100%
+  );
+  border-bottom: 1px solid rgba(60, 130, 220, 0.15);
+  position: relative;
+}
+
+[data-sidebar-style="deep-space"] .project-header::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 14px;
+  right: 14px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(60, 150, 255, 0.3) 50%,
+    transparent 100%
+  );
+}
+
+[data-sidebar-style="deep-space"] .project-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(140, 180, 240, 0.9);
+}
+
+[data-sidebar-style="deep-space"] .project-content {
+  padding: 6px 4px 8px;
+}
+
+[data-sidebar-style="deep-space"] .ac-wg-group {
+  margin: 3px 6px;
+  background: rgba(15, 22, 55, 0.4);
+  border: 1px solid rgba(60, 100, 180, 0.08);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+[data-sidebar-style="deep-space"] .ac-wg-group:last-child {
+  border-color: rgba(234, 179, 8, 0.12);
+  background: rgba(30, 25, 15, 0.3);
+}
+
+html.light-theme[data-sidebar-style="deep-space"] .ac-wg-group {
+  background: rgba(200, 215, 240, 0.25);
+  border-color: rgba(60, 100, 180, 0.15);
+}
+
+html.light-theme[data-sidebar-style="deep-space"] .ac-wg-group:last-child {
+  background: rgba(240, 220, 160, 0.15);
+  border-color: rgba(180, 140, 20, 0.15);
+}
+
+[data-sidebar-style="deep-space"] .ac-wg-subgroup {
+  margin: 2px 4px;
+  border-radius: 4px;
+  padding-left: 10px;
+  border-left: 2px solid rgba(60, 130, 220, 0.15);
+}
+
+[data-sidebar-style="deep-space"] .ac-wg-name {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(100, 150, 220, 0.6);
+}
+
+[data-sidebar-style="deep-space"] .ac-wg-header--collapsible {
+  padding: 5px 10px 5px 0;
+}
+
+[data-sidebar-style="deep-space"] .ac-discovery-item {
+  padding: 5px 12px 5px 18px;
+  border-radius: 4px;
+  margin: 1px 4px;
+  transition: background 200ms, box-shadow 200ms;
+}
+
+[data-sidebar-style="deep-space"] .ac-discovery-item:hover {
+  background: rgba(40, 60, 120, 0.25);
+  box-shadow: inset 0 0 12px rgba(60, 130, 255, 0.06);
+}
+
+[data-sidebar-style="deep-space"] .ac-discovery-badge.coord {
+  background: rgba(255, 180, 40, 0.2);
+  color: #ffb828;
+  box-shadow: 0 0 8px rgba(255, 180, 40, 0.15);
+}
+
+[data-sidebar-style="deep-space"] .project-content .session-item {
+  margin: 1px 4px;
+  border-radius: 4px;
+  border-left-width: 2px;
+}
+
+[data-sidebar-style="deep-space"] .session-item.active {
+  background: rgba(30, 50, 110, 0.35);
+  border-left-color: rgba(80, 160, 255, 0.7);
+  box-shadow: inset 0 0 20px rgba(60, 130, 255, 0.08);
+}
+
+[data-sidebar-style="deep-space"] .session-item-status.active {
+  box-shadow: 0 0 8px var(--status-active), 0 0 16px rgba(0, 212, 255, 0.2);
+}
+
+/* --- Deep Space: COORDINATOR-FIRST LAYOUT ---
+   Coordinators float to the top of each workgroup via flex order.
+   They get an enlarged, beacon-style treatment so they dominate the hierarchy. */
+
+[data-sidebar-style="deep-space"] .ac-wg-subgroup {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Coordinator agents float to top of their workgroup */
+[data-sidebar-style="deep-space"] .ac-wg-subgroup > .ac-discovery-item:has(.ac-discovery-badge.coord),
+[data-sidebar-style="deep-space"] .ac-wg-subgroup > .session-item:has(.ac-discovery-badge.coord) {
+  order: -1;
+}
+
+/* Coordinator beacon — enlarged, highlighted, unmissable */
+[data-sidebar-style="deep-space"] .ac-discovery-item:has(.ac-discovery-badge.coord) {
+  padding: 8px 12px 8px 14px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 180, 40, 0.06) 0%,
+    rgba(255, 140, 20, 0.03) 100%
+  );
+  border: 1px solid rgba(255, 180, 40, 0.12);
+  border-radius: 6px;
+  margin: 3px 4px 4px;
+}
+
+[data-sidebar-style="deep-space"] .ac-discovery-item:has(.ac-discovery-badge.coord):hover {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 180, 40, 0.1) 0%,
+    rgba(255, 140, 20, 0.06) 100%
+  );
+  border-color: rgba(255, 180, 40, 0.25);
+  box-shadow: 0 0 16px rgba(255, 180, 40, 0.06);
+}
+
+[data-sidebar-style="deep-space"] .ac-discovery-item:has(.ac-discovery-badge.coord) .ac-discovery-item-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 210, 130, 0.95);
+}
+
+html.light-theme[data-sidebar-style="deep-space"] .ac-discovery-item:has(.ac-discovery-badge.coord) {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 180, 40, 0.08) 0%,
+    rgba(255, 160, 30, 0.04) 100%
+  );
+  border-color: rgba(200, 140, 20, 0.2);
+}
+
+html.light-theme[data-sidebar-style="deep-space"] .ac-discovery-item:has(.ac-discovery-badge.coord) .ac-discovery-item-name {
+  color: rgba(140, 80, 0, 0.9);
+}
+
+/* Non-coordinator agents in Deep Space — recede visually */
+[data-sidebar-style="deep-space"] .ac-discovery-item:not(:has(.ac-discovery-badge.coord)) .ac-discovery-item-name {
+  opacity: 0.7;
+  font-size: 11px;
+}
+
+/* Separator between coordinator and worker agents */
+[data-sidebar-style="deep-space"] .ac-wg-subgroup > .ac-discovery-item:has(.ac-discovery-badge.coord) + .ac-discovery-item:not(:has(.ac-discovery-badge.coord)) {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(60, 100, 180, 0.1);
+}
+
+/* =============================================================================
+   SIDEBAR STYLE: Signal Grid
+   Phosphor-green radar display — monochrome green palette, scan-line texture,
+   CRT terminal warmth. Every element reads like a sonar return.
+   ============================================================================= */
+
+[data-sidebar-style="signal-grid"] .project-panel {
+  margin: 4px 6px;
+  border: 1px solid rgba(0, 255, 80, 0.1);
+  border-radius: 2px;
+  position: relative;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(0, 255, 80, 0.015) 3px,
+    rgba(0, 255, 80, 0.015) 4px
+  );
+}
+
+[data-sidebar-style="signal-grid"] .project-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(0, 255, 80, 0.12);
+  background: rgba(0, 255, 80, 0.03);
+}
+
+[data-sidebar-style="signal-grid"] .project-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: rgba(0, 255, 80, 0.75);
+  font-family: var(--font-mono);
+}
+
+[data-sidebar-style="signal-grid"] .project-content {
+  padding: 4px 0 6px;
+}
+
+[data-sidebar-style="signal-grid"] .ac-wg-group {
+  margin: 2px 0;
+  border-top: 1px dashed rgba(0, 255, 80, 0.08);
+  padding-top: 2px;
+}
+
+[data-sidebar-style="signal-grid"] .ac-wg-group:last-child {
+  border-top-color: rgba(255, 200, 0, 0.12);
+}
+
+html.light-theme[data-sidebar-style="signal-grid"] .ac-wg-group {
+  border-top-color: rgba(0, 120, 40, 0.12);
+}
+
+[data-sidebar-style="signal-grid"] .ac-wg-subgroup {
+  padding-left: 12px;
+  border-left: 1px solid rgba(0, 255, 80, 0.08);
+  margin-left: 8px;
+}
+
+[data-sidebar-style="signal-grid"] .ac-wg-name {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(0, 255, 80, 0.45);
+  font-family: var(--font-mono);
+}
+
+[data-sidebar-style="signal-grid"] .ac-wg-header--collapsible {
+  padding: 3px 10px 3px 0;
+}
+
+[data-sidebar-style="signal-grid"] .ac-discovery-item {
+  padding: 4px 10px 4px 16px;
+  transition: background 150ms;
+  border-left: 2px solid transparent;
+}
+
+[data-sidebar-style="signal-grid"] .ac-discovery-item:hover {
+  background: rgba(0, 255, 80, 0.04);
+  border-left-color: rgba(0, 255, 80, 0.3);
+}
+
+[data-sidebar-style="signal-grid"] .ac-discovery-item-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: rgba(0, 255, 80, 0.7);
+}
+
+html.light-theme[data-sidebar-style="signal-grid"] .ac-discovery-item-name {
+  color: rgba(0, 100, 40, 0.8);
+}
+
+[data-sidebar-style="signal-grid"] .ac-discovery-badge {
+  font-family: var(--font-mono);
+  border-radius: 1px;
+  border: 1px solid rgba(0, 255, 80, 0.15);
+  background: transparent;
+}
+
+[data-sidebar-style="signal-grid"] .ac-discovery-badge.coord {
+  border-color: rgba(255, 200, 0, 0.4);
+  color: rgba(255, 200, 0, 0.85);
+  background: rgba(255, 200, 0, 0.06);
+  text-shadow: 0 0 6px rgba(255, 200, 0, 0.3);
+}
+
+[data-sidebar-style="signal-grid"] .ac-discovery-badge.team {
+  color: rgba(0, 255, 80, 0.6);
+  border-color: rgba(0, 255, 80, 0.2);
+}
+
+[data-sidebar-style="signal-grid"] .project-content .session-item {
+  border-left-color: transparent;
+}
+
+[data-sidebar-style="signal-grid"] .session-item.active {
+  background: rgba(0, 255, 80, 0.04);
+  border-left-color: rgba(0, 255, 80, 0.5);
+}
+
+[data-sidebar-style="signal-grid"] .session-item-name {
+  font-family: var(--font-mono);
+}
+
+html.light-theme[data-sidebar-style="signal-grid"] .session-item-name {
+  color: rgba(0, 80, 30, 0.85);
+}
+
+[data-sidebar-style="signal-grid"] .session-item-status.active {
+  background: rgba(0, 255, 80, 0.9);
+  box-shadow: 0 0 6px rgba(0, 255, 80, 0.5), 0 0 12px rgba(0, 255, 80, 0.2);
+}
+
+/* --- Signal Grid: DENSE MONITORING GRID ---
+   Agent items wrap into a 2-column tile grid. Each tile is a compact
+   status readout — like blips on a radar display or a monitoring dashboard. */
+
+[data-sidebar-style="signal-grid"] .ac-wg-subgroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 4px 6px;
+}
+
+[data-sidebar-style="signal-grid"] .ac-wg-subgroup > .ac-wg-header,
+[data-sidebar-style="signal-grid"] .ac-wg-subgroup > .ac-wg-header--collapsible {
+  width: 100%;
+  flex-shrink: 0;
+}
+
+[data-sidebar-style="signal-grid"] .ac-wg-subgroup > .ac-discovery-item {
+  width: calc(50% - 2px);
+  padding: 5px 6px 5px 8px;
+  border: 1px solid rgba(0, 255, 80, 0.06);
+  border-radius: 2px;
+  background: rgba(0, 255, 80, 0.015);
+  margin: 0;
+  box-sizing: border-box;
+}
+
+[data-sidebar-style="signal-grid"] .ac-wg-subgroup > .ac-discovery-item:hover {
+  background: rgba(0, 255, 80, 0.05);
+  border-color: rgba(0, 255, 80, 0.2);
+  border-left-color: rgba(0, 255, 80, 0.2);
+}
+
+/* Coordinators in grid mode — span full width, visually dominant */
+[data-sidebar-style="signal-grid"] .ac-wg-subgroup > .ac-discovery-item:has(.ac-discovery-badge.coord) {
+  width: 100%;
+  border-color: rgba(255, 200, 0, 0.15);
+  background: rgba(255, 200, 0, 0.03);
+  padding: 6px 8px;
+}
+
+[data-sidebar-style="signal-grid"] .ac-wg-subgroup > .ac-discovery-item:has(.ac-discovery-badge.coord):hover {
+  border-color: rgba(255, 200, 0, 0.3);
+  background: rgba(255, 200, 0, 0.06);
+}
+
+/* Compact badges in grid tiles */
+[data-sidebar-style="signal-grid"] .ac-wg-subgroup .ac-discovery-badges {
+  gap: 2px;
+}
+
+[data-sidebar-style="signal-grid"] .ac-wg-subgroup .ac-discovery-badge {
+  font-size: 7px;
+  padding: 0px 3px;
+}
+
+/* Similarly tile the Agent Matrix list */
+[data-sidebar-style="signal-grid"] .ac-wg-group:last-child .ac-discovery-item {
+  border: 1px solid rgba(0, 255, 80, 0.06);
+  border-radius: 2px;
+  margin: 1px 6px;
+  background: rgba(0, 255, 80, 0.015);
+}
+
+/* Session items inside workgroups also get compact grid treatment */
+[data-sidebar-style="signal-grid"] .ac-wg-subgroup > .session-item {
+  width: calc(50% - 2px);
+  padding: 4px 6px;
+  border: 1px solid rgba(0, 255, 80, 0.06);
+  border-radius: 2px;
+  border-left-width: 1px;
+}
+
+[data-sidebar-style="signal-grid"] .ac-wg-subgroup > .session-item.active {
+  border-color: rgba(0, 255, 80, 0.2);
+  width: 100%;
+}
+
+/* =============================================================================
+   SIDEBAR STYLE: Arctic Ops
+   Polar research station — frosted glass panels, icy blue-white palette,
+   sharp beveled edges. Clean, clinical, high-visibility.
+   ============================================================================= */
+
+[data-sidebar-style="arctic-ops"] .project-panel {
+  margin: 6px 8px;
+  background: rgba(180, 210, 240, 0.06);
+  border: 1px solid rgba(160, 200, 255, 0.12);
+  border-radius: 3px;
+  backdrop-filter: blur(2px);
+}
+
+html.light-theme[data-sidebar-style="arctic-ops"] .project-panel {
+  background: rgba(220, 235, 255, 0.5);
+  border-color: rgba(140, 180, 220, 0.3);
+}
+
+[data-sidebar-style="arctic-ops"] .project-header {
+  padding: 9px 14px;
+  background: rgba(160, 200, 255, 0.05);
+  border-bottom: 2px solid rgba(160, 200, 255, 0.1);
+}
+
+html.light-theme[data-sidebar-style="arctic-ops"] .project-header {
+  background: rgba(200, 225, 255, 0.3);
+  border-bottom-color: rgba(140, 180, 220, 0.2);
+}
+
+[data-sidebar-style="arctic-ops"] .project-title {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(180, 215, 255, 0.85);
+}
+
+html.light-theme[data-sidebar-style="arctic-ops"] .project-title {
+  color: rgba(30, 60, 120, 0.8);
+}
+
+[data-sidebar-style="arctic-ops"] .project-content {
+  padding: 6px 4px 8px;
+}
+
+[data-sidebar-style="arctic-ops"] .ac-wg-group {
+  margin: 4px 6px;
+  background: rgba(160, 200, 255, 0.04);
+  border: 1px solid rgba(160, 200, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+html.light-theme[data-sidebar-style="arctic-ops"] .ac-wg-group {
+  background: rgba(220, 235, 255, 0.35);
+  border-color: rgba(140, 180, 220, 0.2);
+}
+
+[data-sidebar-style="arctic-ops"] .ac-wg-group:last-child {
+  border-color: rgba(200, 180, 100, 0.12);
+}
+
+[data-sidebar-style="arctic-ops"] .ac-wg-subgroup {
+  margin: 2px 4px;
+  padding-left: 10px;
+  border-left: 2px solid rgba(160, 200, 255, 0.1);
+}
+
+[data-sidebar-style="arctic-ops"] .ac-wg-name {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(140, 180, 240, 0.5);
+}
+
+html.light-theme[data-sidebar-style="arctic-ops"] .ac-wg-name {
+  color: rgba(40, 80, 150, 0.5);
+}
+
+[data-sidebar-style="arctic-ops"] .ac-wg-header--collapsible {
+  padding: 5px 10px 5px 0;
+}
+
+[data-sidebar-style="arctic-ops"] .ac-discovery-item {
+  padding: 5px 12px 5px 18px;
+  margin: 1px 4px;
+  border-radius: 2px;
+  transition: background 150ms, border-color 150ms;
+  border-left: 2px solid transparent;
+}
+
+[data-sidebar-style="arctic-ops"] .ac-discovery-item:hover {
+  background: rgba(160, 200, 255, 0.08);
+  border-left-color: rgba(160, 200, 255, 0.4);
+}
+
+html.light-theme[data-sidebar-style="arctic-ops"] .ac-discovery-item:hover {
+  background: rgba(180, 210, 255, 0.2);
+  border-left-color: rgba(40, 100, 200, 0.4);
+}
+
+[data-sidebar-style="arctic-ops"] .ac-discovery-badge.coord {
+  background: rgba(255, 160, 40, 0.18);
+  color: #f0a030;
+  border: 1px solid rgba(255, 160, 40, 0.25);
+  border-radius: 2px;
+}
+
+html.light-theme[data-sidebar-style="arctic-ops"] .ac-discovery-badge.coord {
+  background: rgba(200, 120, 0, 0.12);
+  color: #b07000;
+  border-color: rgba(200, 120, 0, 0.25);
+}
+
+[data-sidebar-style="arctic-ops"] .ac-discovery-badge.team {
+  background: rgba(160, 200, 255, 0.1);
+  color: rgba(160, 200, 255, 0.7);
+  border: 1px solid rgba(160, 200, 255, 0.15);
+  border-radius: 2px;
+}
+
+[data-sidebar-style="arctic-ops"] .project-content .session-item {
+  margin: 1px 4px;
+  border-radius: 2px;
+  border-left-width: 2px;
+}
+
+[data-sidebar-style="arctic-ops"] .session-item.active {
+  background: rgba(160, 200, 255, 0.08);
+  border-left-color: rgba(100, 180, 255, 0.6);
+}
+
+html.light-theme[data-sidebar-style="arctic-ops"] .session-item.active {
+  background: rgba(180, 215, 255, 0.25);
+  border-left-color: rgba(40, 100, 200, 0.5);
+}
+
+[data-sidebar-style="arctic-ops"] .session-item-status.active {
+  box-shadow: 0 0 6px rgba(100, 180, 255, 0.5);
+}
+
+/* =============================================================================
+   SIDEBAR STYLE: Obsidian Mesh
+   Submarine control room — volcanic dark with amber warnings, crosshatch
+   patterns on headers, heavy industrial weight. Dense, utilitarian.
+   ============================================================================= */
+
+[data-sidebar-style="obsidian-mesh"] .project-panel {
+  margin: 4px 4px;
+}
+
+[data-sidebar-style="obsidian-mesh"] .project-header {
+  padding: 8px 12px;
+  background: linear-gradient(
+    135deg,
+    rgba(40, 30, 15, 0.6) 0%,
+    rgba(25, 20, 10, 0.4) 100%
+  );
+  border-bottom: 2px solid rgba(220, 160, 40, 0.25);
+  border-top: 1px solid rgba(220, 160, 40, 0.1);
+  position: relative;
+}
+
+[data-sidebar-style="obsidian-mesh"] .project-header::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 4px,
+    rgba(220, 160, 40, 0.02) 4px,
+    rgba(220, 160, 40, 0.02) 5px
+  );
+  pointer-events: none;
+}
+
+html.light-theme[data-sidebar-style="obsidian-mesh"] .project-header {
+  background: linear-gradient(
+    135deg,
+    rgba(240, 220, 170, 0.25) 0%,
+    rgba(230, 210, 150, 0.15) 100%
+  );
+  border-bottom-color: rgba(180, 130, 20, 0.3);
+}
+
+[data-sidebar-style="obsidian-mesh"] .project-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(220, 170, 60, 0.85);
+}
+
+html.light-theme[data-sidebar-style="obsidian-mesh"] .project-title {
+  color: rgba(140, 90, 10, 0.85);
+}
+
+[data-sidebar-style="obsidian-mesh"] .project-content {
+  padding: 2px 0 4px;
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-wg-group {
+  margin: 1px 0;
+  border-left: 3px solid rgba(220, 160, 40, 0.15);
+  padding-left: 6px;
+  background: rgba(30, 22, 10, 0.2);
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-wg-group:last-child {
+  border-left-color: rgba(255, 80, 60, 0.2);
+  background: rgba(40, 15, 10, 0.2);
+}
+
+html.light-theme[data-sidebar-style="obsidian-mesh"] .ac-wg-group {
+  background: rgba(240, 220, 170, 0.1);
+  border-left-color: rgba(180, 130, 20, 0.2);
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-wg-subgroup {
+  padding-left: 8px;
+  border-left: 2px solid rgba(220, 160, 40, 0.08);
+  margin-left: 4px;
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-wg-name {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(220, 160, 40, 0.5);
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-wg-header--collapsible {
+  padding: 4px 8px 4px 0;
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-discovery-item {
+  padding: 3px 10px 3px 14px;
+  transition: background 150ms;
+  border-left: 2px solid transparent;
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:hover {
+  background: rgba(220, 160, 40, 0.06);
+  border-left-color: rgba(220, 160, 40, 0.35);
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-discovery-item-name {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-discovery-badge.coord {
+  background: rgba(255, 80, 40, 0.15);
+  color: #ff6830;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-discovery-badge.team {
+  background: rgba(220, 160, 40, 0.1);
+  color: rgba(220, 160, 40, 0.7);
+}
+
+[data-sidebar-style="obsidian-mesh"] .project-content .session-item {
+  border-left-width: 3px;
+  border-left-color: transparent;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+[data-sidebar-style="obsidian-mesh"] .session-item.active {
+  background: rgba(220, 160, 40, 0.06);
+  border-left-color: rgba(220, 160, 40, 0.6);
+}
+
+[data-sidebar-style="obsidian-mesh"] .session-item-status.active {
+  background: rgba(220, 170, 40, 0.9);
+  box-shadow: 0 0 6px rgba(220, 170, 40, 0.4);
+}
+
+/* --- Obsidian Mesh: COLLAPSE-FRIENDLY LAYOUT ---
+   Worker agents are visually minimized (small, dim, tight spacing).
+   Coordinators remain full-size and prominent. Workgroup headers are
+   ultra-compact. The effect: a dense status board where only coordinators
+   demand attention; workers are visible but recede. */
+
+/* Coordinators — full prominence, expanded */
+[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:has(.ac-discovery-badge.coord) {
+  padding: 7px 10px 7px 12px;
+  background: rgba(255, 80, 40, 0.05);
+  border-left: 3px solid rgba(255, 100, 40, 0.35);
+  margin: 2px 0;
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:has(.ac-discovery-badge.coord):hover {
+  background: rgba(255, 80, 40, 0.1);
+  border-left-color: rgba(255, 100, 40, 0.6);
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:has(.ac-discovery-badge.coord) .ac-discovery-item-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 180, 100, 0.95);
+}
+
+html.light-theme[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:has(.ac-discovery-badge.coord) {
+  background: rgba(200, 100, 20, 0.06);
+  border-left-color: rgba(200, 100, 20, 0.35);
+}
+
+html.light-theme[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:has(.ac-discovery-badge.coord) .ac-discovery-item-name {
+  color: rgba(160, 70, 0, 0.9);
+}
+
+/* Worker agents — minimized, receded */
+[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:not(:has(.ac-discovery-badge.coord)) {
+  padding: 2px 8px 2px 14px;
+  opacity: 0.55;
+  transition: opacity 150ms, background 150ms;
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:not(:has(.ac-discovery-badge.coord)):hover {
+  opacity: 1;
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:not(:has(.ac-discovery-badge.coord)) .ac-discovery-item-name {
+  font-size: 10px;
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:not(:has(.ac-discovery-badge.coord)) .ac-discovery-badges {
+  display: none;
+}
+
+/* Reveal worker badges on hover */
+[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:not(:has(.ac-discovery-badge.coord)):hover .ac-discovery-badges {
+  display: flex;
+}
+
+/* Worker status dots — smaller */
+[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:not(:has(.ac-discovery-badge.coord)) > .session-item-status {
+  width: 5px;
+  height: 5px;
+}
+
+/* Compact workgroup headers */
+[data-sidebar-style="obsidian-mesh"] .ac-wg-header--collapsible {
+  padding: 2px 8px 2px 0;
+}
+
+[data-sidebar-style="obsidian-mesh"] .ac-wg-subgroup {
+  padding-left: 6px;
+  margin-left: 6px;
+}
+
+/* Session items for workers — also compact */
+[data-sidebar-style="obsidian-mesh"] .ac-wg-subgroup > .session-item:not(:has(.ac-discovery-badge.coord)) {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+/* =============================================================================
+   SIDEBAR STYLE: Neon Circuit
+   PCB trace aesthetics — electric magenta on dark substrate, circuit-trace
+   borders, cyberpunk hardware hacker. Hot pink coordinators, cool data paths.
+   ============================================================================= */
+
+[data-sidebar-style="neon-circuit"] .project-panel {
+  margin: 6px 6px;
+  border: 1px solid rgba(255, 0, 180, 0.1);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+[data-sidebar-style="neon-circuit"] .project-panel::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 0, 180, 0.4) 20%,
+    rgba(0, 220, 255, 0.3) 50%,
+    rgba(255, 0, 180, 0.4) 80%,
+    transparent 100%
+  );
+}
+
+[data-sidebar-style="neon-circuit"] .project-header {
+  padding: 9px 14px;
+  background: rgba(255, 0, 180, 0.03);
+  border-bottom: 1px solid rgba(255, 0, 180, 0.1);
+}
+
+html.light-theme[data-sidebar-style="neon-circuit"] .project-header {
+  background: rgba(255, 0, 180, 0.04);
+}
+
+[data-sidebar-style="neon-circuit"] .project-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 80, 200, 0.85);
+}
+
+html.light-theme[data-sidebar-style="neon-circuit"] .project-title {
+  color: rgba(180, 0, 120, 0.8);
+}
+
+[data-sidebar-style="neon-circuit"] .project-content {
+  padding: 4px 4px 6px;
+}
+
+[data-sidebar-style="neon-circuit"] .ac-wg-group {
+  margin: 3px 4px;
+  border-left: 2px solid rgba(0, 220, 255, 0.15);
+  padding-left: 8px;
+  position: relative;
+}
+
+[data-sidebar-style="neon-circuit"] .ac-wg-group::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -2px;
+  width: 6px;
+  height: 6px;
+  background: rgba(0, 220, 255, 0.2);
+  border-radius: 50%;
+  transform: translate(-2px, -50%);
+}
+
+[data-sidebar-style="neon-circuit"] .ac-wg-group:last-child {
+  border-left-color: rgba(255, 0, 180, 0.2);
+}
+
+[data-sidebar-style="neon-circuit"] .ac-wg-group:last-child::before {
+  background: rgba(255, 0, 180, 0.25);
+}
+
+html.light-theme[data-sidebar-style="neon-circuit"] .ac-wg-group {
+  border-left-color: rgba(0, 150, 200, 0.2);
+}
+
+[data-sidebar-style="neon-circuit"] .ac-wg-subgroup {
+  padding-left: 10px;
+  margin-left: 4px;
+  border-left: 1px dotted rgba(0, 220, 255, 0.12);
+}
+
+[data-sidebar-style="neon-circuit"] .ac-wg-name {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(0, 220, 255, 0.5);
+  font-family: var(--font-mono);
+}
+
+html.light-theme[data-sidebar-style="neon-circuit"] .ac-wg-name {
+  color: rgba(0, 120, 160, 0.55);
+}
+
+[data-sidebar-style="neon-circuit"] .ac-wg-header--collapsible {
+  padding: 4px 10px 4px 0;
+}
+
+[data-sidebar-style="neon-circuit"] .ac-discovery-item {
+  padding: 4px 12px 4px 16px;
+  margin: 1px 2px;
+  border-radius: 3px;
+  transition: background 150ms, box-shadow 150ms;
+}
+
+[data-sidebar-style="neon-circuit"] .ac-discovery-item:hover {
+  background: rgba(255, 0, 180, 0.05);
+  box-shadow: inset 2px 0 0 rgba(255, 0, 180, 0.3);
+}
+
+html.light-theme[data-sidebar-style="neon-circuit"] .ac-discovery-item:hover {
+  background: rgba(255, 0, 180, 0.06);
+}
+
+[data-sidebar-style="neon-circuit"] .ac-discovery-badge.coord {
+  background: rgba(255, 0, 180, 0.15);
+  color: #ff40c0;
+  text-shadow: 0 0 6px rgba(255, 0, 180, 0.3);
+  border-radius: 2px;
+}
+
+html.light-theme[data-sidebar-style="neon-circuit"] .ac-discovery-badge.coord {
+  background: rgba(200, 0, 140, 0.12);
+  color: #c0008a;
+  text-shadow: none;
+}
+
+[data-sidebar-style="neon-circuit"] .ac-discovery-badge.team {
+  background: rgba(0, 220, 255, 0.08);
+  color: rgba(0, 220, 255, 0.7);
+  border-radius: 2px;
+}
+
+[data-sidebar-style="neon-circuit"] .project-content .session-item {
+  margin: 1px 2px;
+  border-radius: 3px;
+  border-left-width: 2px;
+}
+
+[data-sidebar-style="neon-circuit"] .session-item.active {
+  background: rgba(255, 0, 180, 0.05);
+  border-left-color: rgba(255, 0, 180, 0.5);
+}
+
+html.light-theme[data-sidebar-style="neon-circuit"] .session-item.active {
+  background: rgba(255, 0, 180, 0.06);
+  border-left-color: rgba(200, 0, 140, 0.45);
+}
+
+[data-sidebar-style="neon-circuit"] .session-item-status.active {
+  box-shadow: 0 0 6px rgba(0, 220, 255, 0.5), 0 0 12px rgba(255, 0, 180, 0.2);
+}
+
+/* =============================================================================
+   COORDINATOR QUICK-ACCESS SECTION
+   Hidden by default. Styles that want coordinator-first layout enable it
+   via display override. Shows coordinators pulled out of workgroup nesting.
+   ============================================================================= */
+
+.coord-quick-access {
+  display: none;
+}
+
+.coord-quick-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.coord-quick-item:hover {
+  background: var(--sidebar-hover);
+}
+
+.coord-quick-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.coord-quick-name {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--sidebar-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.coord-quick-wg {
+  font-size: 9px;
+  color: var(--sidebar-fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* When a coord-quick-item wraps a SessionItem, remove redundant padding */
+.coord-quick-item--session {
+  padding: 0;
+}
+
+.coord-quick-item--session .session-item {
+  border-left-width: 0;
+}
+
+/* ---- Deep Space: coordinator quick-access enabled ---- */
+
+[data-sidebar-style="deep-space"] .coord-quick-access {
+  display: block;
+  margin: 4px 6px 2px;
+  padding: 4px 0;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 180, 40, 0.04) 0%,
+    rgba(255, 140, 20, 0.02) 100%
+  );
+  border: 1px solid rgba(255, 180, 40, 0.1);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+[data-sidebar-style="deep-space"] .coord-quick-access::before {
+  content: "COORDINATORS";
+  display: block;
+  padding: 3px 12px 5px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: rgba(255, 180, 40, 0.5);
+}
+
+[data-sidebar-style="deep-space"] .coord-quick-item {
+  padding: 7px 12px;
+  border-radius: 4px;
+  margin: 1px 4px;
+}
+
+[data-sidebar-style="deep-space"] .coord-quick-item:hover {
+  background: rgba(255, 180, 40, 0.08);
+}
+
+[data-sidebar-style="deep-space"] .coord-quick-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 210, 130, 0.95);
+}
+
+[data-sidebar-style="deep-space"] .coord-quick-wg {
+  color: rgba(100, 150, 220, 0.5);
+}
+
+html.light-theme[data-sidebar-style="deep-space"] .coord-quick-access {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 180, 40, 0.06) 0%,
+    rgba(255, 160, 30, 0.03) 100%
+  );
+  border-color: rgba(200, 140, 20, 0.15);
+}
+
+html.light-theme[data-sidebar-style="deep-space"] .coord-quick-name {
+  color: rgba(140, 80, 0, 0.9);
+}
+
+html.light-theme[data-sidebar-style="deep-space"] .coord-quick-access::before {
+  color: rgba(160, 100, 10, 0.5);
+}
+
+/* When session item is inside coord quick access in deep-space */
+[data-sidebar-style="deep-space"] .coord-quick-item--session .session-item {
+  border-radius: 4px;
+  margin: 1px 4px;
+}
+
+[data-sidebar-style="deep-space"] .coord-quick-item--session .session-item-name {
+  font-weight: 700;
+  color: rgba(255, 210, 130, 0.95);
+}
+
+/* ---- Obsidian Mesh: coordinator quick-access enabled ---- */
+
+[data-sidebar-style="obsidian-mesh"] .coord-quick-access {
+  display: block;
+  margin: 2px 0;
+  padding: 2px 0;
+  border-left: 3px solid rgba(255, 100, 40, 0.3);
+  background: rgba(255, 80, 40, 0.03);
+}
+
+[data-sidebar-style="obsidian-mesh"] .coord-quick-access::before {
+  content: "COORD";
+  display: block;
+  padding: 2px 10px 3px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  color: rgba(255, 100, 40, 0.45);
+}
+
+[data-sidebar-style="obsidian-mesh"] .coord-quick-item {
+  padding: 5px 10px;
+  border-left: 2px solid transparent;
+  transition: background 150ms, border-color 150ms;
+}
+
+[data-sidebar-style="obsidian-mesh"] .coord-quick-item:hover {
+  background: rgba(255, 80, 40, 0.08);
+  border-left-color: rgba(255, 100, 40, 0.5);
+}
+
+[data-sidebar-style="obsidian-mesh"] .coord-quick-name {
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(255, 180, 100, 0.95);
+}
+
+[data-sidebar-style="obsidian-mesh"] .coord-quick-wg {
+  color: rgba(220, 160, 40, 0.4);
+}
+
+html.light-theme[data-sidebar-style="obsidian-mesh"] .coord-quick-access {
+  border-left-color: rgba(200, 80, 20, 0.25);
+  background: rgba(200, 100, 20, 0.04);
+}
+
+html.light-theme[data-sidebar-style="obsidian-mesh"] .coord-quick-name {
+  color: rgba(160, 70, 0, 0.9);
+}
+
+[data-sidebar-style="obsidian-mesh"] .coord-quick-item--session .session-item-name {
+  font-weight: 800;
+  color: rgba(255, 180, 100, 0.95);
+}
+
+/* ---- Neon Circuit: coordinator quick-access enabled ---- */
+
+[data-sidebar-style="neon-circuit"] .coord-quick-access {
+  display: block;
+  margin: 4px 6px 2px;
+  padding: 4px 0;
+  border: 1px solid rgba(255, 0, 180, 0.1);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+[data-sidebar-style="neon-circuit"] .coord-quick-access::before {
+  content: "COORD";
+  display: block;
+  padding: 2px 10px 4px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: rgba(255, 0, 180, 0.45);
+  font-family: var(--font-mono);
+}
+
+[data-sidebar-style="neon-circuit"] .coord-quick-access::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 0, 180, 0.35) 50%,
+    transparent 100%
+  );
+}
+
+[data-sidebar-style="neon-circuit"] .coord-quick-item {
+  padding: 5px 10px;
+  border-radius: 3px;
+  margin: 1px 4px;
+}
+
+[data-sidebar-style="neon-circuit"] .coord-quick-item:hover {
+  background: rgba(255, 0, 180, 0.06);
+  box-shadow: inset 2px 0 0 rgba(255, 0, 180, 0.35);
+}
+
+[data-sidebar-style="neon-circuit"] .coord-quick-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 80, 200, 0.9);
+}
+
+html.light-theme[data-sidebar-style="neon-circuit"] .coord-quick-name {
+  color: rgba(180, 0, 120, 0.85);
+}
+
+[data-sidebar-style="neon-circuit"] .coord-quick-wg {
+  color: rgba(0, 220, 255, 0.4);
+  font-family: var(--font-mono);
+}
+
+html.light-theme[data-sidebar-style="neon-circuit"] .coord-quick-access {
+  border-color: rgba(200, 0, 140, 0.12);
+}
+
+[data-sidebar-style="neon-circuit"] .coord-quick-item--session .session-item-name {
+  font-weight: 700;
+  color: rgba(255, 80, 200, 0.9);
+}
+
 /* ===== Entity Creation Modals ===== */
 
 .entity-textarea {
