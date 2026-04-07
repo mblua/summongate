@@ -459,10 +459,10 @@ html, body, #root {
 .session-item-status.offline { background: #555; }
 /* .pending = agent finished but user hasn't focused yet (yellow) */
 .session-item .session-item-status.pending,
-.ac-discovery-item .session-item-status.pending { background: var(--status-pending); box-shadow: 0 0 6px var(--status-pending); }
+.replica-item .session-item-status.pending { background: var(--status-pending); box-shadow: 0 0 6px var(--status-pending); }
 /* .waiting must override all other status colors (active, running, idle, exited) */
 .session-item .session-item-status.waiting,
-.ac-discovery-item .session-item-status.waiting { background: var(--status-waiting); box-shadow: 0 0 6px var(--status-waiting); }
+.replica-item .session-item-status.waiting { background: var(--status-waiting); box-shadow: 0 0 6px var(--status-waiting); }
 
 /* Inactive team member (no active session) */
 .session-item.inactive-member {
@@ -2236,7 +2236,7 @@ html.light-theme .root-agent-avatar {
   padding: 0 0 var(--spacing-xs) 0;
 }
 
-.ac-discovery-item {
+.replica-item {
   display: flex;
   align-items: center;
   padding: 4px var(--spacing-md) 4px calc(var(--spacing-md) + 6px);
@@ -2244,15 +2244,22 @@ html.light-theme .root-agent-avatar {
   transition: background var(--transition-fast);
 }
 
-.ac-discovery-item:hover {
+.replica-item:hover {
   background: var(--sidebar-hover);
 }
 
-.ac-discovery-item > .session-item-status {
+/* Show action buttons on replica-item hover (same as session-item) */
+.replica-item:hover .session-item-mic { display: flex; }
+.replica-item:hover .session-item-explorer { display: flex; }
+.replica-item:hover .session-item-detach { display: flex; }
+.replica-item:hover .session-item-telegram { display: flex; }
+.replica-item:hover .session-item-close { display: flex; }
+
+.replica-item > .session-item-status {
   margin-right: 8px;
 }
 
-.ac-discovery-item-info {
+.replica-item-info {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2260,7 +2267,7 @@ html.light-theme .root-agent-avatar {
   flex: 1;
 }
 
-.ac-discovery-item-name {
+.replica-item-name {
   font-size: var(--font-size-sm);
   color: var(--sidebar-fg);
   white-space: nowrap;
@@ -2616,13 +2623,13 @@ html.light-theme .root-agent-avatar {
   color: var(--sidebar-fg-dim);
 }
 
-[data-sidebar-style="noir-minimal"] .ac-discovery-item {
+[data-sidebar-style="noir-minimal"] .replica-item {
   padding-left: calc(var(--spacing-md) + 16px);
   border-left: 2px solid transparent;
   transition: border-color 150ms, background 150ms;
 }
 
-[data-sidebar-style="noir-minimal"] .ac-discovery-item:hover {
+[data-sidebar-style="noir-minimal"] .replica-item:hover {
   border-left-color: var(--sidebar-accent);
 }
 
@@ -2707,7 +2714,7 @@ html.light-theme[data-sidebar-style="card-sections"] .ac-wg-subgroup {
   padding: 4px 6px;
 }
 
-[data-sidebar-style="card-sections"] .ac-discovery-item {
+[data-sidebar-style="card-sections"] .replica-item {
   padding-left: calc(var(--spacing-sm) + 8px);
   border-radius: 3px;
 }
@@ -2775,12 +2782,12 @@ html.light-theme[data-sidebar-style="card-sections"] .ac-wg-subgroup {
   font-style: italic;
 }
 
-[data-sidebar-style="command-center"] .ac-discovery-item {
+[data-sidebar-style="command-center"] .replica-item {
   padding: 3px 8px 3px 12px;
   gap: 6px;
 }
 
-[data-sidebar-style="command-center"] .ac-discovery-item-name {
+[data-sidebar-style="command-center"] .replica-item-name {
   font-size: 11px;
 }
 
@@ -2903,18 +2910,18 @@ html.light-theme[data-sidebar-style="deep-space"] .ac-wg-group:last-child {
   padding: 5px 10px 5px 0;
 }
 
-[data-sidebar-style="deep-space"] .ac-discovery-item {
+[data-sidebar-style="deep-space"] .replica-item {
   padding: 5px 12px 5px 18px;
   border-radius: 4px;
   margin: 1px 4px;
   transition: background 200ms, box-shadow 200ms;
 }
 
-[data-sidebar-style="deep-space"] .ac-discovery-item {
+[data-sidebar-style="deep-space"] .replica-item {
   color: rgba(200, 215, 240, 0.9);
 }
 
-[data-sidebar-style="deep-space"] .ac-discovery-item-name {
+[data-sidebar-style="deep-space"] .replica-item-name {
   color: rgba(200, 220, 255, 0.92);
 }
 
@@ -2926,7 +2933,7 @@ html.light-theme[data-sidebar-style="deep-space"] .ac-wg-group:last-child {
   opacity: 0.95;
 }
 
-[data-sidebar-style="deep-space"] .ac-discovery-item:hover {
+[data-sidebar-style="deep-space"] .replica-item:hover {
   background: rgba(40, 60, 120, 0.25);
   box-shadow: inset 0 0 12px rgba(60, 130, 255, 0.06);
 }
@@ -2963,13 +2970,13 @@ html.light-theme[data-sidebar-style="deep-space"] .ac-wg-group:last-child {
 }
 
 /* Coordinator agents float to top of their workgroup */
-[data-sidebar-style="deep-space"] .ac-wg-subgroup > .ac-discovery-item:has(.ac-discovery-badge.coord),
+[data-sidebar-style="deep-space"] .ac-wg-subgroup > .replica-item:has(.ac-discovery-badge.coord),
 [data-sidebar-style="deep-space"] .ac-wg-subgroup > .session-item:has(.ac-discovery-badge.coord) {
   order: -1;
 }
 
 /* Coordinator beacon — enlarged, highlighted, unmissable */
-[data-sidebar-style="deep-space"] .ac-discovery-item:has(.ac-discovery-badge.coord) {
+[data-sidebar-style="deep-space"] .replica-item:has(.ac-discovery-badge.coord) {
   padding: 8px 12px 8px 14px;
   background: linear-gradient(
     135deg,
@@ -2981,7 +2988,7 @@ html.light-theme[data-sidebar-style="deep-space"] .ac-wg-group:last-child {
   margin: 3px 4px 4px;
 }
 
-[data-sidebar-style="deep-space"] .ac-discovery-item:has(.ac-discovery-badge.coord):hover {
+[data-sidebar-style="deep-space"] .replica-item:has(.ac-discovery-badge.coord):hover {
   background: linear-gradient(
     135deg,
     rgba(255, 180, 40, 0.1) 0%,
@@ -2991,13 +2998,13 @@ html.light-theme[data-sidebar-style="deep-space"] .ac-wg-group:last-child {
   box-shadow: 0 0 16px rgba(255, 180, 40, 0.06);
 }
 
-[data-sidebar-style="deep-space"] .ac-discovery-item:has(.ac-discovery-badge.coord) .ac-discovery-item-name {
+[data-sidebar-style="deep-space"] .replica-item:has(.ac-discovery-badge.coord) .replica-item-name {
   font-size: 12px;
   font-weight: 600;
   color: rgba(255, 210, 130, 0.95);
 }
 
-html.light-theme[data-sidebar-style="deep-space"] .ac-discovery-item:has(.ac-discovery-badge.coord) {
+html.light-theme[data-sidebar-style="deep-space"] .replica-item:has(.ac-discovery-badge.coord) {
   background: linear-gradient(
     135deg,
     rgba(255, 180, 40, 0.08) 0%,
@@ -3006,18 +3013,18 @@ html.light-theme[data-sidebar-style="deep-space"] .ac-discovery-item:has(.ac-dis
   border-color: rgba(200, 140, 20, 0.2);
 }
 
-html.light-theme[data-sidebar-style="deep-space"] .ac-discovery-item:has(.ac-discovery-badge.coord) .ac-discovery-item-name {
+html.light-theme[data-sidebar-style="deep-space"] .replica-item:has(.ac-discovery-badge.coord) .replica-item-name {
   color: rgba(140, 80, 0, 0.9);
 }
 
 /* Non-coordinator agents in Deep Space — recede slightly but remain legible */
-[data-sidebar-style="deep-space"] .ac-discovery-item:not(:has(.ac-discovery-badge.coord)) .ac-discovery-item-name {
+[data-sidebar-style="deep-space"] .replica-item:not(:has(.ac-discovery-badge.coord)) .replica-item-name {
   opacity: 0.85;
   font-size: 11px;
 }
 
 /* Separator between coordinator and worker agents */
-[data-sidebar-style="deep-space"] .ac-wg-subgroup > .ac-discovery-item:has(.ac-discovery-badge.coord) + .ac-discovery-item:not(:has(.ac-discovery-badge.coord)) {
+[data-sidebar-style="deep-space"] .ac-wg-subgroup > .replica-item:has(.ac-discovery-badge.coord) + .replica-item:not(:has(.ac-discovery-badge.coord)) {
   margin-top: 4px;
   padding-top: 6px;
   border-top: 1px solid rgba(60, 100, 180, 0.1);
@@ -3131,7 +3138,7 @@ html.light-theme[data-sidebar-style="arctic-ops"] .ac-wg-name {
   padding: 5px 10px 5px 0;
 }
 
-[data-sidebar-style="arctic-ops"] .ac-discovery-item {
+[data-sidebar-style="arctic-ops"] .replica-item {
   padding: 5px 12px 5px 18px;
   margin: 1px 4px;
   border-radius: 2px;
@@ -3139,12 +3146,12 @@ html.light-theme[data-sidebar-style="arctic-ops"] .ac-wg-name {
   border-left: 2px solid transparent;
 }
 
-[data-sidebar-style="arctic-ops"] .ac-discovery-item:hover {
+[data-sidebar-style="arctic-ops"] .replica-item:hover {
   background: rgba(160, 200, 255, 0.08);
   border-left-color: rgba(160, 200, 255, 0.4);
 }
 
-html.light-theme[data-sidebar-style="arctic-ops"] .ac-discovery-item:hover {
+html.light-theme[data-sidebar-style="arctic-ops"] .replica-item:hover {
   background: rgba(180, 210, 255, 0.2);
   border-left-color: rgba(40, 100, 200, 0.4);
 }
@@ -3328,18 +3335,18 @@ html.light-theme[data-sidebar-style="obsidian-mesh"] .ac-wg-group {
   padding: 4px 8px 4px 0;
 }
 
-[data-sidebar-style="obsidian-mesh"] .ac-discovery-item {
+[data-sidebar-style="obsidian-mesh"] .replica-item {
   padding: 3px 10px 3px 14px;
   transition: background 150ms;
   border-left: 2px solid transparent;
 }
 
-[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:hover {
+[data-sidebar-style="obsidian-mesh"] .replica-item:hover {
   background: rgba(220, 160, 40, 0.06);
   border-left-color: rgba(220, 160, 40, 0.35);
 }
 
-[data-sidebar-style="obsidian-mesh"] .ac-discovery-item-name {
+[data-sidebar-style="obsidian-mesh"] .replica-item-name {
   font-size: 11px;
   font-weight: 600;
   color: rgba(230, 210, 170, 0.92);
@@ -3385,59 +3392,59 @@ html.light-theme[data-sidebar-style="obsidian-mesh"] .ac-wg-group {
    demand attention; workers are visible but recede. */
 
 /* Coordinators — full prominence, expanded */
-[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:has(.ac-discovery-badge.coord) {
+[data-sidebar-style="obsidian-mesh"] .replica-item:has(.ac-discovery-badge.coord) {
   padding: 7px 10px 7px 12px;
   background: rgba(255, 80, 40, 0.05);
   border-left: 3px solid rgba(255, 100, 40, 0.35);
   margin: 2px 0;
 }
 
-[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:has(.ac-discovery-badge.coord):hover {
+[data-sidebar-style="obsidian-mesh"] .replica-item:has(.ac-discovery-badge.coord):hover {
   background: rgba(255, 80, 40, 0.1);
   border-left-color: rgba(255, 100, 40, 0.6);
 }
 
-[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:has(.ac-discovery-badge.coord) .ac-discovery-item-name {
+[data-sidebar-style="obsidian-mesh"] .replica-item:has(.ac-discovery-badge.coord) .replica-item-name {
   font-size: 12px;
   font-weight: 700;
   color: rgba(255, 180, 100, 0.95);
 }
 
-html.light-theme[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:has(.ac-discovery-badge.coord) {
+html.light-theme[data-sidebar-style="obsidian-mesh"] .replica-item:has(.ac-discovery-badge.coord) {
   background: rgba(200, 100, 20, 0.06);
   border-left-color: rgba(200, 100, 20, 0.35);
 }
 
-html.light-theme[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:has(.ac-discovery-badge.coord) .ac-discovery-item-name {
+html.light-theme[data-sidebar-style="obsidian-mesh"] .replica-item:has(.ac-discovery-badge.coord) .replica-item-name {
   color: rgba(160, 70, 0, 0.9);
 }
 
 /* Worker agents — minimized, receded */
-[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:not(:has(.ac-discovery-badge.coord)) {
+[data-sidebar-style="obsidian-mesh"] .replica-item:not(:has(.ac-discovery-badge.coord)) {
   padding: 2px 8px 2px 14px;
   opacity: 0.75;
   transition: opacity 150ms, background 150ms;
 }
 
-[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:not(:has(.ac-discovery-badge.coord)):hover {
+[data-sidebar-style="obsidian-mesh"] .replica-item:not(:has(.ac-discovery-badge.coord)):hover {
   opacity: 1;
 }
 
-[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:not(:has(.ac-discovery-badge.coord)) .ac-discovery-item-name {
+[data-sidebar-style="obsidian-mesh"] .replica-item:not(:has(.ac-discovery-badge.coord)) .replica-item-name {
   font-size: 10px;
 }
 
-[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:not(:has(.ac-discovery-badge.coord)) .ac-discovery-badges {
+[data-sidebar-style="obsidian-mesh"] .replica-item:not(:has(.ac-discovery-badge.coord)) .ac-discovery-badges {
   display: none;
 }
 
 /* Reveal worker badges on hover */
-[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:not(:has(.ac-discovery-badge.coord)):hover .ac-discovery-badges {
+[data-sidebar-style="obsidian-mesh"] .replica-item:not(:has(.ac-discovery-badge.coord)):hover .ac-discovery-badges {
   display: flex;
 }
 
 /* Worker status dots — smaller */
-[data-sidebar-style="obsidian-mesh"] .ac-discovery-item:not(:has(.ac-discovery-badge.coord)) > .session-item-status {
+[data-sidebar-style="obsidian-mesh"] .replica-item:not(:has(.ac-discovery-badge.coord)) > .session-item-status {
   width: 6px;
   height: 6px;
 }
@@ -3595,19 +3602,19 @@ html.light-theme[data-sidebar-style="neon-circuit"] .ac-wg-name {
   padding: 4px 10px 4px 0;
 }
 
-[data-sidebar-style="neon-circuit"] .ac-discovery-item {
+[data-sidebar-style="neon-circuit"] .replica-item {
   padding: 4px 12px 4px 16px;
   margin: 1px 2px;
   border-radius: 3px;
   transition: background 150ms, box-shadow 150ms;
 }
 
-[data-sidebar-style="neon-circuit"] .ac-discovery-item:hover {
+[data-sidebar-style="neon-circuit"] .replica-item:hover {
   background: rgba(255, 0, 180, 0.05);
   box-shadow: inset 2px 0 0 rgba(255, 0, 180, 0.3);
 }
 
-html.light-theme[data-sidebar-style="neon-circuit"] .ac-discovery-item:hover {
+html.light-theme[data-sidebar-style="neon-circuit"] .replica-item:hover {
   background: rgba(255, 0, 180, 0.06);
 }
 

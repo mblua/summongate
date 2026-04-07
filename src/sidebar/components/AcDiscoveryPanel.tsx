@@ -232,12 +232,12 @@ const AcDiscoveryPanel: Component = () => {
                 const coord = () => isCoordinator(agent.name);
                 return (
                   <div
-                    class="ac-discovery-item"
+                    class="replica-item"
                     onClick={() => handleAgentClick(agent)}
                     title={agent.path}
                   >
-                    <div class="ac-discovery-item-info">
-                      <span class="ac-discovery-item-name">
+                    <div class="replica-item-info">
+                      <span class="replica-item-name">
                         <span class="ac-discovery-prefix">
                           {agent.name.slice(0, agent.name.lastIndexOf("/") + 1)}
                         </span>
@@ -295,13 +295,13 @@ const AcDiscoveryPanel: Component = () => {
                         };
                         return (
                           <div
-                            class="ac-discovery-item"
+                            class="replica-item"
                             onClick={() => handleReplicaClick(replica, wg)}
                             onContextMenu={(e) => handleReplicaContextMenu(e, replica)}
                             title={replica.path}
                           >
-                            <div class="ac-discovery-item-info">
-                              <span class="ac-discovery-item-name">{replica.name}</span>
+                            <div class="replica-item-info">
+                              <span class="replica-item-name">{replica.name}</span>
                               <div class="ac-discovery-badges">
                                 <Show when={branchLabel()}>
                                   <span class="ac-discovery-badge branch">{branchLabel()}</span>
