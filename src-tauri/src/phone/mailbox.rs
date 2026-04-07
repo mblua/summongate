@@ -891,9 +891,6 @@ impl MailboxPoller {
     /// Check if sender can reach destination via team membership.
     /// Only agents in the same team can communicate — no parent directory fallback.
     fn can_reach(&self, from: &str, to: &str, discovered_teams: &[teams::DiscoveredTeam]) -> bool {
-        if discovered_teams.is_empty() {
-            return false; // No teams discovered → no communication
-        }
         crate::config::teams::can_communicate(from, to, discovered_teams)
     }
 

@@ -152,7 +152,7 @@ pub fn execute(args: SendArgs) -> i32 {
         // Load discovered teams and check if sender can reach destination BEFORE
         // writing to outbox. Fail immediately with a clear error if not.
         let discovered = teams::discover_teams();
-        if discovered.is_empty() || !teams::can_communicate(&sender, &args.to, &discovered) {
+        if !teams::can_communicate(&sender, &args.to, &discovered) {
             eprintln!(
                 "Error: routing rejected — '{}' cannot reach '{}'. \
                  Check team membership and coordinator rules.",
