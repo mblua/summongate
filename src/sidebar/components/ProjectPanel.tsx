@@ -395,11 +395,11 @@ const ProjectPanel: Component = () => {
                 {/* Coordinator Quick-Access — shown by styles that enable it via CSS */}
                 {(() => {
                   const coordinators = createMemo(() => {
-                    const result: { replica: AcAgentReplica; wg: AcWorkgroup; dotClass: string }[] = [];
+                    const result: { replica: AcAgentReplica; wg: AcWorkgroup }[] = [];
                     for (const wg of proj.workgroups) {
                       for (const replica of wg.agents) {
                         if (isReplicaCoordinator(replica, proj.folderName, proj.teams, wg.teamName)) {
-                          result.push({ replica, wg, dotClass: replicaDotClass(wg, replica) });
+                          result.push({ replica, wg });
                         }
                       }
                     }
