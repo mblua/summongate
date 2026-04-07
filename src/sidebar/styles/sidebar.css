@@ -2241,6 +2241,7 @@ html.light-theme .root-agent-avatar {
   align-items: center;
   padding: 4px var(--spacing-md) 4px calc(var(--spacing-md) + 6px);
   cursor: pointer;
+  position: relative;
   transition: background var(--transition-fast);
 }
 

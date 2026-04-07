@@ -527,7 +527,8 @@ const ProjectPanel: Component = () => {
                                         };
                                         const handleOpenExplorer = async (e: MouseEvent) => {
                                           e.stopPropagation();
-                                          try { await WindowAPI.openInExplorer(replica.path); } catch (err) { console.error("Failed to open explorer:", err); }
+                                          const s = session();
+                                          try { await WindowAPI.openInExplorer(s ? s.workingDirectory : replica.path); } catch (err) { console.error("Failed to open explorer:", err); }
                                         };
                                         const handleDetach = (e: MouseEvent) => {
                                           e.stopPropagation();
@@ -587,9 +588,9 @@ const ProjectPanel: Component = () => {
                                                   <button class="session-item-mic-cancel" onClick={handleCancelRecording} title="Cancel recording">&#x2715;</button>
                                                 </Show>
                                                 <button
-                                                  class={`session-item-mic ${isRecording() ? "recording" : ""} ${isProcessing() ? "processing" : ""}`}
+                                                  class={`session-item-mic ${isRecording() ? "recording" : ""} ${isProcessing() ? "processing" : ""} ${voiceRecorder.micError() ? "error" : ""}`}
                                                   onClick={handleMicClick}
-                                                  title={isRecording() ? "Stop recording" : isProcessing() ? "Transcribing..." : "Voice to text"}
+                                                  title={isRecording() ? "Stop recording" : isProcessing() ? "Transcribing..." : voiceRecorder.micError() ? voiceRecorder.micError()! : "Voice to text"}
                                                 >&#x1F399;</button>
                                               </Show>
                                               <button class="session-item-explorer" onClick={handleOpenExplorer} title="Open folder in explorer">&#x1F4C2;</button>
