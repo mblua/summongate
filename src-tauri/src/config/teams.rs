@@ -99,6 +99,24 @@ fn resolve_agent_path(ac_new_dir: &Path, agent_ref: &str) -> Option<PathBuf> {
     None
 }
 
+/// Extract team name from a WG-style agent name.
+/// "wg-1-ac-devs/dev-rust" → Some("ac-devs")
+/// "some-project/agent" → None
+fn extract_wg_team(agent_name: &str) -> Option<&str> {
+    let prefix = agent_name.split('/').next()?;
+    if !prefix.starts_with("wg-") {
+        return None;
+    }
+    prefix
+        .strip_prefix("wg-")
+        .and_then(|s| s.split_once('-').map(|(_, team)| team))
+}
+
+/// Extract agent suffix (part after '/') from an agent name.
+fn agent_suffix(name: &str) -> &str {
+    name.split('/').last().unwrap_or(name)
+}
+
 /// Check if an agent name matches a team member (by display name or path-derived name).
 fn agent_matches_member(
     agent_name: &str,
@@ -132,6 +150,22 @@ pub fn is_in_team(agent_name: &str, team: &DiscoveredTeam) -> bool {
             return true;
         }
     }
+    // WG-aware: if agent is a WG replica belonging to this team, match by suffix
+    if let Some(wg_team) = extract_wg_team(agent_name) {
+        if wg_team == team.name {
+            let suffix = agent_suffix(agent_name);
+            for member_name in &team.agent_names {
+                if suffix == agent_suffix(member_name) {
+                    return true;
+                }
+            }
+            if let Some(ref coord_name) = team.coordinator_name {
+                if suffix == agent_suffix(coord_name) {
+                    return true;
+                }
+            }
+        }
+    }
     false
 }
 
@@ -140,6 +174,12 @@ fn is_coordinator(agent_name: &str, team: &DiscoveredTeam) -> bool {
     if let Some(ref coord_name) = team.coordinator_name {
         if agent_matches_member(agent_name, coord_name, team.coordinator_path.as_ref()) {
             return true;
+        }
+        // WG-aware: if agent is a WG replica of this team's coordinator, match by suffix
+        if let Some(wg_team) = extract_wg_team(agent_name) {
+            if wg_team == team.name && agent_suffix(agent_name) == agent_suffix(coord_name) {
+                return true;
+            }
         }
     }
     false

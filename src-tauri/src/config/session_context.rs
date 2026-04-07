@@ -353,29 +353,29 @@ fn simple_hash(s: &str) -> u64 {
 
 /// Generate the default agent context with profile-aware exe/product names.
 fn default_context() -> String {
-    let exe = super::profile::exe_name();
-    let product = super::profile::product_name();
-    format!(
+    String::from(
 r#"# AgentsCommander Context
 
 You are running inside an AgentsCommander session — a terminal session manager that coordinates multiple AI agents.
 
 ## CLI executable
 
-`{exe}` is **not** in PATH. Use the full path via the `LOCALAPPDATA` environment variable (the directory name contains a space, so always quote):
+Your Session Credentials include a `BinaryPath` field — **always use that path** to invoke the CLI. This ensures you use the correct binary for your instance, whether it is the installed version or a dev/WG build.
 
 ```
-"$LOCALAPPDATA/{product}/{exe}"
+"<YOUR_BINARY_PATH>" <subcommand> [args]
 ```
+
+**RULE:** Never hardcode or guess the binary path. Always read `BinaryPath` from your `# === Session Credentials ===` block and use that exact path.
 
 ## Self-discovery via --help
 
 The CLI `--help` output is the **primary and authoritative reference** for learning how to use AgentsCommander. Before guessing flags, modes, or behavior, always consult it:
 
 ```
-{exe} --help                  # List all subcommands
-{exe} send --help             # Full docs for sending messages
-{exe} list-peers --help       # Full docs for discovering peers
+"<YOUR_BINARY_PATH>" --help                  # List all subcommands
+"<YOUR_BINARY_PATH>" send --help             # Full docs for sending messages
+"<YOUR_BINARY_PATH>" list-peers --help       # Full docs for discovering peers
 ```
 
 The `--help` text documents every flag, its purpose, accepted values, priority rules, delivery modes, and discovery flows. It is designed to be self-contained — you should not need README, CLAUDE.md, or external docs to use any command correctly.
@@ -392,7 +392,13 @@ Your session token and agent root are provided on demand. To request them, outpu
 %%ACRC%%
 ```
 
-The system will inject a `# === Session Credentials ===` block into your console containing your current token and root. This also happens automatically whenever a `send` command fails due to a stale or missing token.
+The system will inject a `# === Session Credentials ===` block into your console containing your current token, root, and binary path. This also happens automatically whenever a `send` command fails due to a stale or missing token.
+
+The credentials block contains:
+- **Token**: your session authentication token
+- **Root**: your working directory (agent root)
+- **BinaryPath**: the full path to the CLI executable you must use
+- **LocalDir**: the config directory name for this instance
 
 Your agent root is your current working directory.
 
@@ -405,7 +411,7 @@ Your agent root is your current working directory.
 Fire-and-forget (do NOT use --get-output):
 
 ```
-{exe} send --token <YOUR_TOKEN> --root "<YOUR_ROOT>" --to "<agent_name>" --message "..." --mode wake
+"<YOUR_BINARY_PATH>" send --token <YOUR_TOKEN> --root "<YOUR_ROOT>" --to "<agent_name>" --message "..." --mode wake
 ```
 
 The other agent will reply back via your console as a new message.
@@ -415,10 +421,7 @@ After sending, you can stay idle and wait for the reply to arrive.
 ### List available peers
 
 ```
-{exe} list-peers --token <YOUR_TOKEN> --root "<YOUR_ROOT>"
+"<YOUR_BINARY_PATH>" list-peers --token <YOUR_TOKEN> --root "<YOUR_ROOT>"
 ```
-"#,
-    exe = exe,
-    product = product,
-    )
+"#)
 }

@@ -729,7 +729,11 @@ async fn inject_credentials(app: &AppHandle, session_id: Uuid) -> bool {
             .unwrap_or_else(|| "agentscommander.exe".to_string());
         raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string()
     };
-    let local_dir = format!(".{}", &binary_name);
+    let local_dir = exe_path.as_ref()
+        .and_then(|p| p.parent())
+        .map(|parent| parent.join(format!(".{}", &binary_name)).to_string_lossy().to_string())
+        .unwrap_or_else(|| format!(".{}", &binary_name));
+    let local_dir = local_dir.strip_prefix(r"\\?\").unwrap_or(&local_dir).to_string();
     log::info!("[ACRC] step 3: binary={}, path={}, localDir={}", binary_name, binary_path, local_dir);
 
     // Step 4: Format credential block
