@@ -2278,6 +2278,16 @@ html.light-theme .root-agent-avatar {
   flex-wrap: wrap;
 }
 
+/* Wrapper for SessionItem + badges in workgroup agent list */
+.ac-wg-session-wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.ac-wg-session-wrapper .ac-discovery-badges {
+  padding: 0 12px 2px;
+}
+
 .ac-discovery-badge {
   font-size: 8px;
   font-weight: 600;

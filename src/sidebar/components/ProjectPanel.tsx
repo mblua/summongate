@@ -427,7 +427,7 @@ const ProjectPanel: Component = () => {
                                 }
                               >
                                 {(s) => {
-                                  const repoName = () => replicaRepoName(item.replica);
+                                  const repoName = () => replicaRepoName(item.replica) || item.wg.repoPath?.replace(/\\/g, "/").split("/").pop() || proj.folderName;
                                   const branchLabel = () => {
                                     const sess = s();
                                     const rn = repoName();
@@ -546,22 +546,33 @@ const ProjectPanel: Component = () => {
                                             }
                                           >
                                             {(s) => {
-                                              const patched = () => {
+                                              const rn = () => replicaRepoName(replica) || wg.repoPath?.replace(/\\/g, "/").split("/").pop() || proj.folderName;
+                                              const branchLabel = () => {
                                                 const sess = s();
-                                                if (sess.gitBranch && !sess.gitBranch.includes("/")) {
-                                                  const repoName = replicaRepoName(replica);
-                                                  if (repoName) {
-                                                    return { ...sess, gitBranch: `${repoName}/${sess.gitBranch}` };
-                                                  }
+                                                const name = rn();
+                                                if (sess.gitBranch && name) {
+                                                  return sess.gitBranch.includes("/") ? sess.gitBranch : `${name}/${sess.gitBranch}`;
                                                 }
-                                                return sess;
+                                                return sess.gitBranch || null;
                                               };
+                                              const isCoord = () => isReplicaCoordinator(replica, proj.folderName, proj.teams, wg.teamName);
+                                              const stripped = () => ({ ...s(), gitBranch: null as string | null });
                                               return (
-                                                <SessionItem
-                                                  session={patched()}
-                                                  isActive={s().id === sessionsStore.activeId}
-                                                  originProject={replica.originProject}
-                                                />
+                                                <div class="ac-wg-session-wrapper">
+                                                  <SessionItem
+                                                    session={stripped()}
+                                                    isActive={s().id === sessionsStore.activeId}
+                                                    originProject={replica.originProject}
+                                                  />
+                                                  <div class="ac-discovery-badges">
+                                                    <Show when={branchLabel()}>
+                                                      <span class="ac-discovery-badge branch">{branchLabel()}</span>
+                                                    </Show>
+                                                    <Show when={isCoord()}>
+                                                      <span class="ac-discovery-badge coord">coordinator</span>
+                                                    </Show>
+                                                  </div>
+                                                </div>
                                               );
                                             }}
                                           </Show>
