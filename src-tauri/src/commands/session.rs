@@ -156,11 +156,81 @@ pub async fn create_session_inner(
         }
     }
 
+    // Grab acrc_delivered handle before spawning (need it for credential pre-injection)
+    let acrc_delivered = pty_mgr.lock().unwrap().acrc_delivered();
+
     pty_mgr
         .lock()
         .unwrap()
         .spawn(id, &shell, &shell_args, &cwd, 120, 30, app.clone())
         .map_err(|e| e.to_string())?;
+
+    // Auto-inject credentials for Claude sessions immediately after PTY spawn.
+    // Wait 2s for Claude Code to boot, then inject once and mark acrc_delivered
+    // so any subsequent %%ACRC%% markers from TUI repaints are ignored.
+    if is_claude {
+        let app_clone = app.clone();
+        let session_id = id;
+        let token = session.token.clone();
+        let cwd_clone = cwd.clone();
+        let delivered = Arc::clone(&acrc_delivered);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+
+            let exe = std::env::current_exe().ok();
+            let binary_name = exe.as_ref()
+                .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
+                .unwrap_or_else(|| "agentscommander".to_string());
+            let binary_path = {
+                let raw = exe.as_ref()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "agentscommander.exe".to_string());
+                raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string()
+            };
+            let local_dir = exe.as_ref()
+                .and_then(|p| p.parent())
+                .map(|parent| parent.join(format!(".{}", &binary_name)).to_string_lossy().to_string())
+                .unwrap_or_else(|| format!(".{}", &binary_name));
+            let local_dir = local_dir.strip_prefix(r"\\?\").unwrap_or(&local_dir).to_string();
+
+            let cred_block = format!(
+                concat!(
+                    "\n",
+                    "# === Session Credentials ===\n",
+                    "# Token: {token}\n",
+                    "# Root: {root}\n",
+                    "# Binary: {binary}\n",
+                    "# BinaryPath: {binary_path}\n",
+                    "# LocalDir: {local_dir}\n",
+                    "# === End Credentials ===\n",
+                ),
+                token = token,
+                root = cwd_clone,
+                binary = binary_name,
+                binary_path = binary_path,
+                local_dir = local_dir,
+            );
+
+            match crate::pty::inject::inject_text_into_session(
+                &app_clone,
+                session_id,
+                &cred_block,
+                true,
+                crate::pty::transcript::InjectReason::TokenRefresh,
+                None,
+            ).await {
+                Ok(()) => {
+                    if let Ok(mut set) = delivered.lock() {
+                        set.insert(session_id);
+                    }
+                    log::info!("[session] Credentials auto-injected for Claude session {}", session_id);
+                }
+                Err(e) => {
+                    log::warn!("[session] Failed to auto-inject credentials for {}: {}", session_id, e);
+                }
+            }
+        });
+    }
 
     let info = SessionInfo::from(&session);
     let _ = app.emit("session_created", info.clone());
@@ -199,11 +269,6 @@ pub async fn create_session_inner(
             }
         }
     }
-
-    // Init prompt via PTY injection is deprecated — agent context is now delivered via:
-    // - Claude: --append-system-prompt-file (AgentsCommanderContext.md)
-    // - Codex: developer_instructions in ~/.codex/config.toml
-    // Agents request their session token on demand via the %%ACRC%% marker.
 
     Ok(info)
 }

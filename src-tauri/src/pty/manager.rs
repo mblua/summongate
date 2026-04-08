@@ -532,6 +532,12 @@ impl PtyManager {
     }
 
     /// Register a watcher for response markers on a session's output.
+    /// Get a clone of the acrc_delivered set for external use (e.g., credential
+    /// pre-injection in create_session_inner).
+    pub fn acrc_delivered(&self) -> AcrcDeliveredSet {
+        Arc::clone(&self.acrc_delivered)
+    }
+
     pub fn register_response_watcher(
         &self,
         session_id: Uuid,
