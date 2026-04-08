@@ -74,6 +74,7 @@ pub async fn start_web_server(
     session_mgr: State<'_, Arc<tokio::sync::RwLock<SessionManager>>>,
     pty_mgr: State<'_, Arc<std::sync::Mutex<PtyManager>>>,
     broadcaster: State<'_, WsBroadcaster>,
+    shutdown: State<'_, crate::shutdown::ShutdownSignal>,
 ) -> Result<bool, String> {
     let s = settings.read().await;
     let bind = s.web_server_bind.clone();
@@ -95,6 +96,7 @@ pub async fn start_web_server(
         Arc::clone(&settings),
         (*broadcaster).clone(),
         app_handle,
+        shutdown.inner().clone(),
     );
 
     *ws_handle.lock().unwrap() = Some(join_handle);

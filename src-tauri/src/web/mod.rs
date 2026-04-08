@@ -41,6 +41,7 @@ pub fn start_server(
     settings: SettingsState,
     broadcaster: WsBroadcaster,
     app_handle: tauri::AppHandle,
+    shutdown: crate::shutdown::ShutdownSignal,
 ) -> tauri::async_runtime::JoinHandle<()> {
     // Resolve dist path BEFORE moving app_handle into WsState
     let dist_path = resolve_dist_path(&app_handle);
@@ -86,6 +87,10 @@ pub fn start_server(
             .expect("Failed to bind web server");
 
         axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                shutdown.token().cancelled().await;
+                log::info!("[web-server] Shutdown signal received, stopping");
+            })
             .await
             .expect("Web server error");
     });

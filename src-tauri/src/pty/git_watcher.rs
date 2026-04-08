@@ -34,14 +34,22 @@ impl GitWatcher {
         })
     }
 
-    pub fn start(self: &Arc<Self>) {
+    pub fn start(self: &Arc<Self>, shutdown: crate::shutdown::ShutdownSignal) {
         let watcher = Arc::clone(self);
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime for GitWatcher");
             rt.block_on(async move {
                 loop {
-                    tokio::time::sleep(POLL_INTERVAL).await;
-                    watcher.poll().await;
+                    tokio::select! {
+                        biased;
+                        _ = shutdown.token().cancelled() => {
+                            log::info!("[GitWatcher] Shutdown signal received, stopping");
+                            break;
+                        }
+                        _ = tokio::time::sleep(POLL_INTERVAL) => {
+                            watcher.poll().await;
+                        }
+                    }
                 }
             });
         });

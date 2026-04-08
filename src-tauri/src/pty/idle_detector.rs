@@ -81,11 +81,16 @@ impl IdleDetector {
     }
 
     /// Start the watcher thread that polls for idle transitions.
-    pub fn start(self: &Arc<Self>) {
+    pub fn start(self: &Arc<Self>, shutdown: crate::shutdown::ShutdownSignal) {
         let detector = Arc::clone(self);
         std::thread::spawn(move || {
             loop {
                 std::thread::sleep(CHECK_INTERVAL);
+
+                if shutdown.is_cancelled() {
+                    log::info!("[IdleDetector] Shutdown signal received, stopping");
+                    break;
+                }
 
                 let now = Instant::now();
                 let activity = detector.activity.lock().unwrap();

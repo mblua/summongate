@@ -289,7 +289,7 @@ impl DiscoveryBranchWatcher {
     }
 
     /// Start the polling loop on a dedicated thread.
-    pub fn start(self: &Arc<Self>) {
+    pub fn start(self: &Arc<Self>, shutdown: crate::shutdown::ShutdownSignal) {
         let watcher = Arc::clone(self);
         std::thread::spawn(move || {
             log::info!("[DiscoveryBranchWatcher] thread started, polling every {}s", BRANCH_POLL_INTERVAL.as_secs());
@@ -297,8 +297,16 @@ impl DiscoveryBranchWatcher {
                 .expect("Failed to create tokio runtime for DiscoveryBranchWatcher");
             rt.block_on(async move {
                 loop {
-                    tokio::time::sleep(BRANCH_POLL_INTERVAL).await;
-                    watcher.poll().await;
+                    tokio::select! {
+                        biased;
+                        _ = shutdown.token().cancelled() => {
+                            log::info!("[DiscoveryBranchWatcher] Shutdown signal received, stopping");
+                            break;
+                        }
+                        _ = tokio::time::sleep(BRANCH_POLL_INTERVAL) => {
+                            watcher.poll().await;
+                        }
+                    }
                 }
             });
         });

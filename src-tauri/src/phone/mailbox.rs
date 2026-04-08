@@ -39,13 +39,25 @@ impl MailboxPoller {
     }
 
     /// Start the poller as a background task.
-    pub fn start(mut self, app: tauri::AppHandle) {
+    pub fn start(mut self, app: tauri::AppHandle, shutdown: crate::shutdown::ShutdownSignal) {
         tauri::async_runtime::spawn(async move {
+            // Initial poll without delay (matches original behavior)
+            if let Err(e) = self.poll(&app).await {
+                log::warn!("MailboxPoller error: {}", e);
+            }
             loop {
-                if let Err(e) = self.poll(&app).await {
-                    log::warn!("MailboxPoller error: {}", e);
+                tokio::select! {
+                    biased;
+                    _ = shutdown.token().cancelled() => {
+                        log::info!("[MailboxPoller] Shutdown signal received, stopping");
+                        break;
+                    }
+                    _ = tokio::time::sleep(self.poll_interval) => {
+                        if let Err(e) = self.poll(&app).await {
+                            log::warn!("MailboxPoller error: {}", e);
+                        }
+                    }
                 }
-                tokio::time::sleep(self.poll_interval).await;
             }
         });
     }

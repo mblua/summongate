@@ -7,6 +7,7 @@ pub mod pty;
 pub mod session;
 pub mod telegram;
 pub mod voice;
+pub mod shutdown;
 pub mod web;
 
 use std::collections::{HashMap, HashSet};
@@ -23,6 +24,7 @@ use pty::transcript::{TranscriptWriter, MarkerKind};
 use session::manager::SessionManager;
 use telegram::manager::{OutputSenderMap, TelegramBridgeManager, TelegramBridgeState};
 use voice::tracker::{VoiceTracker, VoiceTrackingState};
+use shutdown::ShutdownSignal;
 use web::auth::WebAccessToken;
 use web::broadcast::WsBroadcaster;
 
@@ -170,6 +172,7 @@ pub fn run() {
     let broadcaster = WsBroadcaster::new();
 
     let session_mgr = Arc::new(tokio::sync::RwLock::new(SessionManager::new()));
+    let shutdown_signal = ShutdownSignal::new();
 
     let transcript_writer = TranscriptWriter::new();
 
@@ -214,7 +217,7 @@ pub fn run() {
             }
         },
     );
-    idle_detector.start();
+    idle_detector.start(shutdown_signal.clone());
 
     let session_mgr_for_git = Arc::clone(&session_mgr);
     let session_mgr_for_discovery = Arc::clone(&session_mgr);
@@ -235,6 +238,10 @@ pub fn run() {
     let detached_sessions: DetachedSessionsState = Arc::new(Mutex::new(HashSet::new()));
     let voice_tracking: VoiceTrackingState = Arc::new(Mutex::new(VoiceTracker::new()));
 
+    let shutdown_for_setup = shutdown_signal.clone();
+    let shutdown_for_exit = shutdown_signal.clone();
+    let tg_mgr_for_exit = tg_mgr.clone();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(master_token)
@@ -248,6 +255,7 @@ pub fn run() {
         .manage(web_access_token.clone())
         .manage(broadcaster.clone())
         .manage(WebServerHandle::default())
+        .manage(shutdown_signal)
         .setup(move |app| {
             use tauri::WebviewWindowBuilder;
             use tauri::WebviewUrl;
@@ -257,14 +265,14 @@ pub fn run() {
 
             // Git branch watcher: polls git branch for each session every 5s
             let git_watcher = GitWatcher::new(session_mgr_for_git, app.handle().clone());
-            git_watcher.start();
+            git_watcher.start(shutdown_for_setup.clone());
 
             // Discovery branch watcher: polls git branch for discovered replicas every 15s
             let discovery_branch_watcher = DiscoveryBranchWatcher::new(
                 app.handle().clone(),
                 session_mgr_for_discovery,
             );
-            discovery_branch_watcher.start();
+            discovery_branch_watcher.start(shutdown_for_setup.clone());
             app.manage(discovery_branch_watcher);
 
             // PtyManager needs GitWatcher for cleanup on session kill
@@ -294,6 +302,7 @@ pub fn run() {
                         settings_for_web,
                         broadcaster_for_web,
                         app.handle().clone(),
+                        shutdown_for_setup.clone(),
                     );
 
                     let ws_handle = app.state::<WebServerHandle>();
@@ -303,7 +312,7 @@ pub fn run() {
 
             // Start the mailbox poller for inter-agent message delivery
             let mailbox_poller = phone::mailbox::MailboxPoller::new();
-            mailbox_poller.start(app.handle().clone());
+            mailbox_poller.start(app.handle().clone(), shutdown_for_setup.clone());
 
             let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))
                 .expect("Failed to load app icon");
@@ -653,13 +662,22 @@ pub fn run() {
                     }
                 }
                 tauri::RunEvent::Exit => {
+                    // Cancel all active Telegram bridges before general shutdown
+                    {
+                        let tg = tauri::async_runtime::block_on(tg_mgr_for_exit.lock());
+                        tg.cancel_all();
+                    }
+
+                    log::info!("[shutdown] Triggering background task shutdown (async, not awaited)...");
+                    shutdown_for_exit.trigger();
+
                     log::info!("[shutdown] Persisting session state...");
                     let mgr_clone = session_mgr_for_exit.clone();
                     tauri::async_runtime::block_on(async move {
                         let mgr = mgr_clone.read().await;
                         sessions_persistence::persist_current_state(&mgr).await;
                     });
-                    log::info!("[shutdown] Session state persisted");
+                    log::info!("[shutdown] Session state persisted, process exiting");
                 }
                 _ => {}
             }

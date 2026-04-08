@@ -112,4 +112,14 @@ impl TelegramBridgeManager {
     pub fn has_bridge(&self, session_id: Uuid) -> bool {
         self.bridges.contains_key(&session_id)
     }
+
+    /// Cancel all active bridges. Called during app shutdown.
+    pub fn cancel_all(&self) {
+        for handle in self.bridges.values() {
+            handle.cancel.cancel();
+        }
+        if !self.bridges.is_empty() {
+            log::info!("[telegram] Cancelled {} active bridges for shutdown", self.bridges.len());
+        }
+    }
 }
