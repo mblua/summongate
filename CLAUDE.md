@@ -276,7 +276,7 @@ Config export/import, session history, notifications, snippets, cross-platform.
   - `fix/` — correccion de bug
   - `bug/` — investigacion/fix de bug
 - **ENFORCEMENT: Antes de escribir, editar, o crear CUALQUIER archivo del proyecto (código, config, docs, CLAUDE.md, README, CSS, etc.), verificar que NO estás en `main`. Si estás en `main`, crear el branch PRIMERO. No hay excepciones. Esto incluye cambios "pequeños" o "rápidos".**
-- Merge a `main` solo via PR o merge explícito del usuario
+- Merge a `main` siempre local (merge explícito tras pull de origin/main). **NUNCA crear GitHub Pull Requests (gh pr create)**
 - **SIEMPRE hacer `git fetch origin` antes de cualquier operación contra `main`**. Nunca operar contra un `main` local que puede estar desactualizado. Esto aplica a: merge, rebase, diff, log comparativo, o cualquier referencia a main. Usar `origin/main` después del fetch.
 
 ### Always Pull Before New Work — MANDATORY
