@@ -435,7 +435,7 @@ const ProjectPanel: Component = () => {
                 />
               </Portal>
             )}
-            {showProjectAgents() && (
+            <Show when={showProjectAgents()}>
               <Portal>
                 <ProjectAgentsModal
                   projectPath={proj.path}
@@ -448,7 +448,7 @@ const ProjectPanel: Component = () => {
                   }}
                 />
               </Portal>
-            )}
+            </Show>
 
             <Show when={!collapsed()}>
               <div class="project-content">
