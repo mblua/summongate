@@ -528,10 +528,24 @@ pub async fn create_workgroup(
         // Compute relative identity path from replica to matrix
         let identity_rel = compute_relative_identity(agent_path, &replica_dir, &base);
 
+        let mut context_entries: Vec<String> = vec![
+            "$AGENTSCOMMANDER_CONTEXT".to_string(),
+            "$REPOS_WORKSPACE_INFO".to_string(),
+        ];
+        // Resolve agent_path against base (.ac-new) for relative paths
+        let matrix_dir = if Path::new(agent_path).is_absolute() {
+            Path::new(agent_path).to_path_buf()
+        } else {
+            base.join(agent_path.trim_start_matches("../").trim_start_matches("./"))
+        };
+        if matrix_dir.join("Role.md").exists() {
+            context_entries.push(format!("{}/Role.md", identity_rel));
+        }
+
         let replica_config = serde_json::json!({
             "identity": identity_rel,
             "repos": assigned_repos,
-            "context": ["$AGENTSCOMMANDER_CONTEXT", "$REPOS_WORKSPACE_INFO"],
+            "context": context_entries,
         });
 
         let config_str = serde_json::to_string_pretty(&replica_config)
@@ -864,6 +878,18 @@ fn sync_workgroup_repos_inner(
                     new_context.push(entry.clone());
                 }
             }
+
+            // Auto-inject Role.md from identity if present and not already included
+            if let Some(identity) = config.get("identity").and_then(|v| v.as_str()) {
+                let role_entry = format!("{}/Role.md", identity);
+                if !new_context.contains(&role_entry) {
+                    let role_abs = replica_dir.join(&role_entry);
+                    if role_abs.exists() {
+                        new_context.push(role_entry);
+                    }
+                }
+            }
+
             config["context"] = serde_json::json!(new_context);
 
             // Write back

@@ -128,6 +128,9 @@ const CONTEXT_TOKEN_GLOBAL: &str = "$AGENTSCOMMANDER_CONTEXT";
 /// Special token in context[] that generates workspace repo info from the "repos" field.
 const CONTEXT_TOKEN_REPOS: &str = "$REPOS_WORKSPACE_INFO";
 
+/// Filename for the agent role definition, auto-injected from the identity matrix.
+const ROLE_MD_FILENAME: &str = "Role.md";
+
 /// Generate a markdown file with workspace repo information from the replica's config.
 /// Reads "repos" from `config`, resolves paths relative to `cwd_path`, detects git branches.
 /// Returns the path to the generated temp file.
@@ -238,6 +241,8 @@ fn detect_git_branch(dir: &str) -> Option<String> {
 /// - `$AGENTSCOMMANDER_CONTEXT` → resolves to the global AgentsCommanderContext.md
 /// - `$REPOS_WORKSPACE_INFO` → generates workspace repo info from the "repos" field
 /// - Any other string → resolved as a path relative to `cwd`
+/// After resolving context[], if `identity` is set in config.json and `<identity>/Role.md`
+/// exists on disk, it is auto-appended (unless already resolved from context[]).
 /// The global context is NOT auto-prepended — it is only included if the token is in the array.
 /// Returns Ok(Some(path)) with the combined temp file, Ok(None) if no context[] field,
 /// or Err with details about missing files.
@@ -286,6 +291,15 @@ pub fn build_replica_context(cwd: &str) -> Result<Option<String>, String> {
             } else {
                 missing.push(raw.to_string());
             }
+        }
+    }
+
+    // Auto-inject Role.md from identity matrix if present and not already resolved
+    if let Some(identity) = config.get("identity").and_then(|v| v.as_str()) {
+        let role_abs = cwd_path.join(format!("{}/{}", identity, ROLE_MD_FILENAME));
+        let already_included = resolved_paths.iter().any(|(_, p)| *p == role_abs);
+        if !already_included && role_abs.exists() {
+            resolved_paths.push((ROLE_MD_FILENAME.to_string(), role_abs));
         }
     }
 
