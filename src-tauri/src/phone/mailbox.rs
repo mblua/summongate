@@ -430,7 +430,6 @@ impl MailboxPoller {
                 None, // Temp session — don't update lastCodingAgent
                 None, // No agent label for temp sessions
                 true,  // Skip tooling save for temp sessions
-                false, // not a restore
                 None,  // git_branch_source
                 None,  // git_branch_prefix
             )
@@ -1274,7 +1273,6 @@ impl MailboxPoller {
                 Some(request.agent_id.clone()),
                 None,  // No agent label — auto-detected from shell
                 false, // Persist tooling
-                false, // not a restore
                 None,  // git_branch_source
                 None,  // git_branch_prefix
             )

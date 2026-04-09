@@ -14,9 +14,9 @@ use crate::DetachedSessionsState;
 
 /// Core session creation logic shared by the Tauri command and the restore path.
 /// Creates a session record, spawns a PTY, and emits the session_created event.
-/// Auto-detects agent from shell command if not provided, and auto-injects --continue for Claude.
+/// Auto-detects agent from shell command if not provided, and auto-injects --continue
+/// for Claude when a prior conversation exists (~/.claude/projects/{mangled-cwd}/).
 /// If `skip_tooling_save` is true, skips writing to the repo's config.json (for temp sessions).
-/// If `is_restore` is true, this is a session restore (app restart) and --continue may be injected.
 pub async fn create_session_inner(
     app: &AppHandle,
     session_mgr: &Arc<tokio::sync::RwLock<SessionManager>>,
@@ -28,7 +28,6 @@ pub async fn create_session_inner(
     agent_id: Option<String>,
     agent_label: Option<String>,
     skip_tooling_save: bool,
-    _is_restore: bool,
     git_branch_source: Option<String>,
     git_branch_prefix: Option<String>,
 ) -> Result<SessionInfo, String> {
@@ -86,12 +85,12 @@ pub async fn create_session_inner(
                     if let Some(last) = shell_args.last_mut() {
                         if executable_basename(last) == "claude" || last.to_lowercase().contains("claude") {
                             *last = format!("{} --continue", last);
-                            log::info!("Auto-injected --continue for agent '{}' (restore, cmd path)", aid);
+                            log::info!("Auto-injected --continue for agent '{}' (prior conversation exists, cmd path)", aid);
                         }
                     }
                 } else {
                     shell_args.push("--continue".to_string());
-                    log::info!("Auto-injected --continue for agent '{}' (restore)", aid);
+                    log::info!("Auto-injected --continue for agent '{}' (prior conversation exists)", aid);
                 }
             }
         }
@@ -361,7 +360,6 @@ pub async fn create_session(
         agent_id,
         agent_label,
         false, // persist tooling
-        false, // not a restore
         git_branch_source,
         git_branch_prefix,
     )
@@ -685,7 +683,6 @@ pub async fn create_root_agent_session(
         Some("Root Agent".to_string()),
         agent_id,
         agent_label,
-        false,
         false,
         None,
         None,

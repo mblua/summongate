@@ -523,7 +523,6 @@ pub fn run() {
                             None, // No agent_id on restore (auto-detected from shell)
                             None, // No agent label on restore (auto-detected from shell)
                             false, // Persist tooling on restore
-                            true,  // This IS a restore
                             ps.git_branch_source.clone(),
                             ps.git_branch_prefix.clone(),
                         ).await {
