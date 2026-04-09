@@ -1,12 +1,19 @@
-import { Component, Show, createSignal, onMount } from "solid-js";
+import { Component, Show, createSignal, createMemo, onMount } from "solid-js";
 import { terminalStore } from "../stores/terminal";
 import iconUrl from "../../assets/icon-16.png";
 import { isTauri } from "../../shared/platform";
 declare const __APP_VERSION__: string;
 const APP_VERSION = __APP_VERSION__;
 
+function extractProjectName(workDir: string): string | null {
+  const parts = workDir.replace(/\\/g, '/').split('/');
+  const idx = parts.indexOf('.ac-new');
+  return idx > 0 ? parts[idx - 1] : null;
+}
+
 const Titlebar: Component<{ detached?: boolean }> = (props) => {
   const [instanceLabel, setInstanceLabel] = createSignal("");
+  const projectName = createMemo(() => extractProjectName(terminalStore.activeWorkingDirectory));
 
   onMount(async () => {
     if (isTauri) {
@@ -73,6 +80,9 @@ const Titlebar: Component<{ detached?: boolean }> = (props) => {
         )}
         <Show when={props.detached}>
           <span class="titlebar-detached-badge">DETACHED</span>
+        </Show>
+        <Show when={projectName()}>
+          <span class="titlebar-project-badge" data-tauri-drag-region>{projectName()}</span>
         </Show>
         <Show
           when={terminalStore.activeSessionName}

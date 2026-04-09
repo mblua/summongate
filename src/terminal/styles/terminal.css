@@ -105,6 +105,19 @@ html, body, #root {
   vertical-align: middle;
 }
 
+.titlebar-project-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  margin-left: 6px;
+  background: rgba(130, 80, 255, 0.15);
+  color: #b490ff;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
 .titlebar-detached-badge {
   display: inline-block;
   padding: 1px 5px;
