@@ -1,20 +1,18 @@
 use std::path::PathBuf;
 
 /// Returns the path to the global AgentsCommanderContext.md file.
-/// Creates it with default content if it doesn't exist yet.
-/// This file is static — written once, never modified at runtime.
+/// Always regenerates it from the built-in template so that updates
+/// to the default content are picked up by existing installations.
 pub fn ensure_global_context() -> Result<String, String> {
     let config_dir = super::config_dir()
         .ok_or_else(|| "Could not resolve app config directory".to_string())?;
     let file_path = config_dir.join("AgentsCommanderContext.md");
 
-    if !file_path.exists() {
-        std::fs::create_dir_all(&config_dir)
-            .map_err(|e| format!("Failed to create config dir: {}", e))?;
-        std::fs::write(&file_path, &default_context())
-            .map_err(|e| format!("Failed to write AgentsCommanderContext.md: {}", e))?;
-        log::info!("Created global AgentsCommanderContext.md at {:?}", file_path);
-    }
+    std::fs::create_dir_all(&config_dir)
+        .map_err(|e| format!("Failed to create config dir: {}", e))?;
+    std::fs::write(&file_path, &default_context())
+        .map_err(|e| format!("Failed to write AgentsCommanderContext.md: {}", e))?;
+    log::info!("Refreshed global AgentsCommanderContext.md at {:?}", file_path);
 
     Ok(file_path.to_string_lossy().to_string())
 }
