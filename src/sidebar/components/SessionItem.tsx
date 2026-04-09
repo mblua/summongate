@@ -6,6 +6,8 @@ import { isTauri } from "../../shared/platform";
 import { bridgesStore } from "../stores/bridges";
 import { sessionsStore } from "../stores/sessions";
 import { settingsStore } from "../../shared/stores/settings";
+import { projectStore } from "../stores/project";
+import { extractProjectPath } from "../../shared/utils";
 import { voiceRecorder, formatRecordingTime } from "../../shared/voice-recorder";
 import OpenAgentModal from "./OpenAgentModal";
 
@@ -138,11 +140,13 @@ const SessionItem: Component<{
     SessionAPI.destroy(props.session.id);
   };
 
-  /** True if any configured coding agent is Claude-based */
-  const hasClaude = () =>
-    (settingsStore.current?.agents ?? []).some((a) =>
-      a.command.toLowerCase().includes("claude")
-    );
+  /** True if any resolved coding agent (project or global) is Claude-based */
+  const hasClaude = () => {
+    const projectPath = extractProjectPath(props.session.workingDirectory);
+    const resolved = projectPath ? projectStore.getResolvedAgents(projectPath) : null;
+    const agents = resolved ?? settingsStore.current?.agents ?? [];
+    return agents.some((a) => a.command.toLowerCase().includes("claude"));
+  };
 
   let dismissContextMenu: (() => void) | null = null;
 

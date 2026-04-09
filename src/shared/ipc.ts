@@ -6,6 +6,7 @@ import type {
   Session,
   PtyOutputEvent,
   AppSettings,
+  ProjectSettings,
   RepoMatch,
   BridgeInfo,
   PhoneMessage,
@@ -265,6 +266,16 @@ export const AcDiscoveryAPI = {
 
   setReplicaContextFiles: (path: string, files: string[]) =>
     transport.invoke<void>("set_replica_context_files", { path, files }),
+};
+
+// Project Settings API (per-project coding agents)
+export const ProjectSettingsAPI = {
+  get: (projectPath: string) =>
+    transport.invoke<ProjectSettings | null>("get_project_settings", { projectPath }),
+  update: (projectPath: string, settings: ProjectSettings) =>
+    transport.invoke<void>("update_project_settings", { projectPath, settings }),
+  delete: (projectPath: string) =>
+    transport.invoke<void>("delete_project_settings", { projectPath }),
 };
 
 // Project API

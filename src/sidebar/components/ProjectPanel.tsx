@@ -14,12 +14,14 @@ import NewTeamModal from "./NewTeamModal";
 import NewWorkgroupModal from "./NewWorkgroupModal";
 import AgentPickerModal from "./AgentPickerModal";
 import EditTeamModal from "./EditTeamModal";
+import ProjectAgentsModal from "./ProjectAgentsModal";
 
 interface PendingLaunch {
   path: string;
   sessionName: string;
   gitBranchSource?: string;
   gitBranchPrefix?: string;
+  projectPath?: string;
 }
 
 /** Strip 'repo-' prefix from a directory name */
@@ -87,7 +89,7 @@ const ProjectPanel: Component = () => {
 
   const [pendingLaunch, setPendingLaunch] = createSignal<PendingLaunch | null>(null);
 
-  const handleReplicaClick = async (replica: AcAgentReplica, wg: AcWorkgroup) => {
+  const handleReplicaClick = async (replica: AcAgentReplica, wg: AcWorkgroup, projectPath?: string) => {
     const existing = replicaSession(wg, replica);
     if (existing) {
       // Already instantiated — just switch to it
@@ -122,6 +124,7 @@ const ProjectPanel: Component = () => {
         sessionName: replicaSessionName(wg, replica),
         gitBranchSource,
         gitBranchPrefix,
+        projectPath,
       });
       return;
     }
@@ -144,7 +147,7 @@ const ProjectPanel: Component = () => {
     }
   };
 
-  const handleAgentClick = async (agent: { name: string; path: string; preferredAgentId?: string }) => {
+  const handleAgentClick = async (agent: { name: string; path: string; preferredAgentId?: string }, projectPath?: string) => {
     const existing = sessionsStore.findSessionByName(agent.name);
     if (existing) {
       await SessionAPI.switch(existing.id);
@@ -160,7 +163,7 @@ const ProjectPanel: Component = () => {
     }
 
     if (!agent.preferredAgentId) {
-      setPendingLaunch({ path: agent.path, sessionName: agent.name });
+      setPendingLaunch({ path: agent.path, sessionName: agent.name, projectPath });
       return;
     }
 
@@ -190,6 +193,7 @@ const ProjectPanel: Component = () => {
         const [showNewAgent, setShowNewAgent] = createSignal(false);
         const [showNewTeam, setShowNewTeam] = createSignal(false);
         const [showNewWorkgroup, setShowNewWorkgroup] = createSignal(false);
+        const [showProjectAgents, setShowProjectAgents] = createSignal(false);
         const [teamCtxMenu, setTeamCtxMenu] = createSignal<{ team: AcTeam; x: number; y: number } | null>(null);
         const [editingTeam, setEditingTeam] = createSignal<AcTeam | null>(null);
         const [deletingTeam, setDeletingTeam] = createSignal<AcTeam | null>(null);
@@ -348,6 +352,11 @@ const ProjectPanel: Component = () => {
                 &#x25BE;
               </span>
               <span class="project-title">Project: {proj.folderName}</span>
+              <Show when={proj.projectSettings}>
+                <span class="project-custom-agents-badge" title="Custom Coding Agents configured">
+                  Custom Agents
+                </span>
+              </Show>
             </button>
 
             {/* Project context menu */}
@@ -381,6 +390,13 @@ const ProjectPanel: Component = () => {
                     }}
                   >
                     New Workgroup
+                  </button>
+                  <div class="context-separator" />
+                  <button
+                    class="session-context-option"
+                    onClick={() => { setShowCtxMenu(false); setShowProjectAgents(true); }}
+                  >
+                    Coding Agents
                   </button>
                   <div class="context-separator" />
                   <button
@@ -419,6 +435,20 @@ const ProjectPanel: Component = () => {
                 />
               </Portal>
             )}
+            {showProjectAgents() && (
+              <Portal>
+                <ProjectAgentsModal
+                  projectPath={proj.path}
+                  projectName={proj.folderName}
+                  initialSettings={proj.projectSettings ?? null}
+                  onClose={() => setShowProjectAgents(false)}
+                  onSaved={() => {
+                    setShowProjectAgents(false);
+                    projectStore.reloadProject(proj.path);
+                  }}
+                />
+              </Portal>
+            )}
 
             <Show when={!collapsed()}>
               <div class="project-content">
@@ -454,7 +484,7 @@ const ProjectPanel: Component = () => {
                             return (
                               <div
                                 class="coord-quick-item"
-                                onClick={() => handleReplicaClick(item.replica, item.wg)}
+                                onClick={() => handleReplicaClick(item.replica, item.wg, proj.path)}
                                 title={item.replica.path}
                               >
                                 <div class={`session-item-status ${dotClass()}`} />
@@ -594,7 +624,7 @@ const ProjectPanel: Component = () => {
                                         return (
                                           <div
                                             class="replica-item"
-                                            onClick={() => handleReplicaClick(replica, wg)}
+                                            onClick={() => handleReplicaClick(replica, wg, proj.path)}
                                             onContextMenu={(e) => {
                                               const s = session();
                                               if (s && isLive()) handleReplicaContextMenu(e, s.id);
@@ -744,7 +774,7 @@ const ProjectPanel: Component = () => {
                                   fallback={
                                     <div
                                       class="replica-item"
-                                      onClick={() => handleAgentClick(agent)}
+                                      onClick={() => handleAgentClick(agent, proj.path)}
                                       onContextMenu={(e) => handleAgentContextMenu(e, agent)}
                                       title={agent.path}
                                     >
@@ -1233,6 +1263,7 @@ const ProjectPanel: Component = () => {
       <Portal>
         <AgentPickerModal
           sessionName={pendingLaunch()!.sessionName}
+          projectPath={pendingLaunch()!.projectPath}
           onSelect={async (agent) => {
             const pending = pendingLaunch()!;
             const newSession = await SessionAPI.create({

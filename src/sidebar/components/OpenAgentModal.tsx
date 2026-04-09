@@ -1,6 +1,8 @@
 import { Component, createSignal, createEffect, createMemo, For, Show, onMount, onCleanup } from "solid-js";
 import type { AgentConfig, RepoMatch } from "../../shared/types";
 import { ReposAPI, SessionAPI, SettingsAPI } from "../../shared/ipc";
+import { projectStore } from "../stores/project";
+import { extractProjectPath } from "../../shared/utils";
 
 const OpenAgentModal: Component<{ onClose: () => void; initialRepo?: RepoMatch }> = (props) => {
   const [query, setQuery] = createSignal("");
@@ -16,8 +18,20 @@ const OpenAgentModal: Component<{ onClose: () => void; initialRepo?: RepoMatch }
   let debounceTimer: number | undefined;
 
   onMount(async () => {
-    const settings = await SettingsAPI.get();
-    setAgents(settings.agents);
+    // Resolve agents: prefer project-level if within a project
+    const projectPath = props.initialRepo ? extractProjectPath(props.initialRepo.path) : null;
+    if (projectPath) {
+      const resolved = projectStore.getResolvedAgents(projectPath);
+      if (resolved) {
+        setAgents(resolved);
+      } else {
+        const settings = await SettingsAPI.get();
+        setAgents(settings.agents);
+      }
+    } else {
+      const settings = await SettingsAPI.get();
+      setAgents(settings.agents);
+    }
     if (!props.initialRepo) {
       // Load initial list (empty query = show all)
       const results = await ReposAPI.search("");

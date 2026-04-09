@@ -2073,6 +2073,33 @@ html.light-theme .root-agent-avatar {
   padding: 0 0 var(--spacing-xs) 0;
 }
 
+.project-custom-agents-badge {
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary, rgba(255, 255, 255, 0.5));
+  margin-left: 8px;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  vertical-align: middle;
+}
+
+.project-agents-toggle {
+  padding: var(--spacing-sm) 0;
+  margin-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--sidebar-border);
+}
+
+.project-agents-global-info {
+  padding: var(--spacing-md);
+  color: var(--sidebar-fg-dim, rgba(255, 255, 255, 0.5));
+  font-size: var(--font-size-sm, 12px);
+  text-align: center;
+  opacity: 0.7;
+}
+
 /* ===== Confirmation Dialog ===== */
 
 .confirm-overlay {

@@ -81,6 +81,10 @@ export interface AgentConfig {
   excludeGlobalClaudeMd: boolean;
 }
 
+export interface ProjectSettings {
+  agents: AgentConfig[];
+}
+
 export interface RepoMatch {
   name: string;
   path: string;

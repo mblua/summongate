@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
-import type { AcWorkgroup, AcAgentMatrix, AcTeam } from "../../shared/types";
-import { ProjectAPI, SettingsAPI, AgentCreatorAPI } from "../../shared/ipc";
+import type { AcWorkgroup, AcAgentMatrix, AcTeam, ProjectSettings, AgentConfig } from "../../shared/types";
+import { ProjectAPI, ProjectSettingsAPI, SettingsAPI, AgentCreatorAPI } from "../../shared/ipc";
 
 export interface ProjectState {
   path: string;
@@ -8,6 +8,7 @@ export interface ProjectState {
   workgroups: AcWorkgroup[];
   agents: AcAgentMatrix[];
   teams: AcTeam[];
+  projectSettings: ProjectSettings | null;
 }
 
 const [projects, setProjects] = createSignal<ProjectState[]>([]);
@@ -41,7 +42,10 @@ export const projectStore = {
     loadingCount++;
     setLoading(true);
     try {
-      const result = await ProjectAPI.discover(path);
+      const [result, projectSettings] = await Promise.all([
+        ProjectAPI.discover(path),
+        ProjectSettingsAPI.get(path).catch(() => null),
+      ]);
       const folderName = path.replace(/\\/g, "/").split("/").pop() ?? "unknown";
       setProjects((prev) => [
         ...prev,
@@ -51,6 +55,7 @@ export const projectStore = {
           workgroups: result.workgroups,
           agents: result.agents,
           teams: result.teams,
+          projectSettings,
         },
       ]);
       await persistProjectPaths();
@@ -113,11 +118,14 @@ export const projectStore = {
   async reloadProject(path: string) {
     const normalized = normalizePath(path);
     try {
-      const result = await ProjectAPI.discover(path);
+      const [result, projectSettings] = await Promise.all([
+        ProjectAPI.discover(path),
+        ProjectSettingsAPI.get(path).catch(() => null),
+      ]);
       setProjects((prev) =>
         prev.map((p) =>
           normalizePath(p.path) === normalized
-            ? { ...p, workgroups: result.workgroups, agents: result.agents, teams: result.teams }
+            ? { ...p, workgroups: result.workgroups, agents: result.agents, teams: result.teams, projectSettings }
             : p
         )
       );
@@ -131,6 +139,19 @@ export const projectStore = {
     const normalized = normalizePath(path);
     setProjects((prev) => prev.filter((p) => normalizePath(p.path) !== normalized));
     await persistProjectPaths();
+  },
+
+  /** Check if a project has custom agents configured */
+  hasCustomAgents(path: string): boolean {
+    const norm = normalizePath(path);
+    return projects().some((p) => normalizePath(p.path) === norm && p.projectSettings != null);
+  },
+
+  /** Get resolved agents for a project: project-level overrides global (null = use global) */
+  getResolvedAgents(path: string): AgentConfig[] | null {
+    const norm = normalizePath(path);
+    const proj = projects().find((p) => normalizePath(p.path) === norm);
+    return proj?.projectSettings?.agents ?? null;
   },
 
   clear() {

@@ -1,9 +1,11 @@
 import { Component, createSignal, createMemo, For, Show, onMount } from "solid-js";
 import type { AgentConfig } from "../../shared/types";
 import { SettingsAPI } from "../../shared/ipc";
+import { projectStore } from "../stores/project";
 
 const AgentPickerModal: Component<{
   sessionName: string;
+  projectPath?: string;
   onSelect: (agent: AgentConfig) => void;
   onClose: () => void;
 }> = (props) => {
@@ -19,6 +21,13 @@ const AgentPickerModal: Component<{
 
   onMount(async () => {
     overlayRef?.focus();
+    if (props.projectPath) {
+      const resolved = projectStore.getResolvedAgents(props.projectPath);
+      if (resolved) {
+        setAgents(resolved);
+        return;
+      }
+    }
     const settings = await SettingsAPI.get();
     setAgents(settings.agents);
   });
@@ -58,7 +67,13 @@ const AgentPickerModal: Component<{
         <div class="agent-modal-list">
           <Show
             when={sortedAgents().length > 0}
-            fallback={<div class="agent-modal-empty">No agents configured. Add agents in Settings.</div>}
+            fallback={
+              <div class="agent-modal-empty">
+                {props.projectPath
+                  ? "No agents configured for this project. Edit in project Coding Agents settings."
+                  : "No agents configured. Add agents in Settings."}
+              </div>
+            }
           >
             <For each={sortedAgents()}>
               {(agent, i) => (
