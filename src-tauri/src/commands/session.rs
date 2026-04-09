@@ -28,7 +28,7 @@ pub async fn create_session_inner(
     agent_id: Option<String>,
     agent_label: Option<String>,
     skip_tooling_save: bool,
-    is_restore: bool,
+    _is_restore: bool,
     git_branch_source: Option<String>,
     git_branch_prefix: Option<String>,
 ) -> Result<SessionInfo, String> {
@@ -63,7 +63,7 @@ pub async fn create_session_inner(
     let is_claude = cmd_basenames.iter().any(|b| b == "claude");
     let is_codex = cmd_basenames.iter().any(|b| b == "codex");
 
-    // Auto-inject --continue for Claude agents only on session restore (app restart)
+    // Auto-inject --continue for Claude agents when a prior conversation exists
     // Only if ~/.claude/projects/{mangled-cwd}/ exists (prior conversation exists)
     let claude_project_exists = {
         if let Some(home) = dirs::home_dir() {
@@ -75,7 +75,7 @@ pub async fn create_session_inner(
             false
         }
     };
-    if is_claude && is_restore && claude_project_exists {
+    if is_claude && claude_project_exists {
         if let Some(ref aid) = agent_id {
             let already_has_continue = full_cmd.split_whitespace().any(|t| {
                 let lower = t.to_lowercase();
