@@ -724,13 +724,72 @@ async fn poll_task(
                             offset = update.update_id + 1;
 
                             if update.chat_id != chat_id {
-                                logger.log("POLL_SKIP", &session_id_str, &format!("wrong chat_id={} from={}", update.chat_id, update.from_name));
+                                logger.log("POLL_SKIP", &session_id_str, &format!("wrong chat_id={}", update.chat_id));
                                 continue;
                             }
 
-                            logger.log("RECV_TG", &session_id_str, &format!("from={} text={}", update.from_name, update.text));
+                            let inject_text = match update.content {
+                                api::TelegramContent::Text(text) => {
+                                    logger.log("RECV_TG", &session_id_str, &format!("from={} text={}", update.from_name, text));
+                                    text
+                                }
+                                api::TelegramContent::Voice { file_id } => {
+                                    logger.log("RECV_TG_VOICE", &session_id_str, &format!("from={} file_id={}", update.from_name, file_id));
 
-                            if let Err(e) = crate::pty::inject::inject_text_into_session(&app, session_id, &update.text, true).await {
+                                    let settings = app.state::<crate::config::settings::SettingsState>();
+                                    let cfg = settings.read().await;
+                                    let api_key = cfg.gemini_api_key.clone();
+                                    let model_raw = cfg.gemini_model.clone();
+                                    drop(cfg);
+
+                                    let model = if model_raw.is_empty() { "gemini-2.5-flash".to_string() } else { model_raw };
+
+                                    if api_key.is_empty() {
+                                        log::warn!("[bridge] Voice message received but no Gemini API key configured");
+                                        let _ = api::send_message(&client, &token, chat_id, "Cannot transcribe voice: Gemini API key not configured").await;
+                                        continue;
+                                    }
+
+                                    let file_path = match api::get_file(&client, &token, &file_id).await {
+                                        Ok(fp) => fp,
+                                        Err(e) => {
+                                            logger.log("VOICE_ERR", &session_id_str, &format!("get_file failed: {}", e));
+                                            let _ = api::send_message(&client, &token, chat_id, &format!("Failed to get voice file: {}", e)).await;
+                                            continue;
+                                        }
+                                    };
+
+                                    let audio_bytes = match api::download_file(&client, &token, &file_path).await {
+                                        Ok(bytes) => bytes,
+                                        Err(e) => {
+                                            logger.log("VOICE_ERR", &session_id_str, &format!("download failed: {}", e));
+                                            let _ = api::send_message(&client, &token, chat_id, &format!("Failed to download voice: {}", e)).await;
+                                            continue;
+                                        }
+                                    };
+
+                                    // Dedicated client with 30s timeout for Gemini (poll client is 15s)
+                                    let gemini_client = reqwest::Client::builder()
+                                        .timeout(std::time::Duration::from_secs(30))
+                                        .build()
+                                        .unwrap_or_default();
+
+                                    match crate::commands::voice::transcribe_audio(&gemini_client, &audio_bytes, "audio/ogg", &api_key, &model).await {
+                                        Ok(text) => {
+                                            logger.log("VOICE_OK", &session_id_str, &format!("transcribed {} chars", text.len()));
+                                            let _ = api::send_message(&client, &token, chat_id, &format!("Transcribed: {}", text)).await;
+                                            text
+                                        }
+                                        Err(e) => {
+                                            logger.log("VOICE_ERR", &session_id_str, &format!("transcription failed: {}", e));
+                                            let _ = api::send_message(&client, &token, chat_id, &format!("Transcription failed: {}", e)).await;
+                                            continue;
+                                        }
+                                    }
+                                }
+                            };
+
+                            if let Err(e) = crate::pty::inject::inject_text_into_session(&app, session_id, &inject_text, true).await {
                                 logger.log("PTY_ERR", &session_id_str, &e.to_string());
                                 log::error!("Failed to write Telegram input to PTY: {}", e);
                             }
@@ -739,13 +798,12 @@ async fn poll_task(
                                 "telegram_incoming",
                                 serde_json::json!({
                                     "sessionId": session_id_str,
-                                    "text": update.text,
+                                    "text": inject_text,
                                     "from": update.from_name,
                                 }),
                             );
 
-                            // Persist last prompt in backend + emit to all windows
-                            let tg_prompt = format!("[TG] {}", update.text);
+                            let tg_prompt = format!("[TG] {}", inject_text);
                             {
                                 let mgr_state = app.state::<std::sync::Arc<tokio::sync::RwLock<crate::session::manager::SessionManager>>>();
                                 let mgr = mgr_state.read().await;
