@@ -486,3 +486,192 @@ No new crate dependencies. Uses only: `serde_json` (already in Cargo.toml), `std
 - **Low risk**: PTY pipeline unchanged — JSONL is an alternative path, not a modification
 - **Medium risk**: JSONL file path resolution depends on Claude Code's undocumented mangling convention — but we already implement it (`commands/session.rs:72-74`) and it works
 - **Low risk**: Polling approach has no race conditions (append-only file, single reader)
+
+---
+
+## Dev-Rust Review
+
+**Author:** Dev-Rust Agent
+**Date:** 2026-04-09
+
+After reading the full plan, the architect design, and all referenced source files, here are implementation-critical additions. Each item includes the reasoning behind it.
+
+---
+
+### 1. CRITICAL — `Session.is_claude` Won't Propagate to SessionManager
+
+The architect says to set `session.is_claude = is_claude` in `create_session_inner` after the session is created. But `SessionManager::create_session()` (manager.rs:26-71) returns a **clone** of the `Session` — the original lives inside `SessionManager.sessions: Arc<RwLock<HashMap<Uuid, Session>>>`.
+
+Setting `is_claude` on the returned clone does NOT update the HashMap. When `telegram.rs:telegram_attach` later calls `mgr.get_session(uuid)`, it reads from the HashMap — where `is_claude` is still `false`.
+
+**Fix options (pick one):**
+- **(A) Add `set_is_claude` method to `SessionManager`** — cleanest, follows existing pattern (`set_last_prompt`, `set_git_branch`):
+  ```rust
+  pub async fn set_is_claude(&self, id: Uuid, val: bool) {
+      let mut sessions = self.sessions.write().await;
+      if let Some(s) = sessions.get_mut(&id) { s.is_claude = val; }
+  }
+  ```
+  Then in `create_session_inner`: `mgr.set_is_claude(id, is_claude).await;`
+
+- **(B) Pass `is_claude` to `SessionManager::create_session`** — adds a parameter to the function signature but avoids the extra async call.
+
+**Recommendation: Option A** — it doesn't change `create_session`'s signature (which is called from manager.rs too) and follows the established pattern.
+
+---
+
+### 2. `chunk_text` Has a Latent UTF-8 Panic
+
+`bridge.rs:634-636`:
+```rust
+let end = (start + max_len).min(text.len());
+let actual_end = if end < text.len() {
+    text[start..end].rfind('\n')  // ← panics if `end` not on char boundary
+```
+
+`text[start..end]` will panic at runtime if `end` lands in the middle of a multi-byte UTF-8 character. The PTY pipeline rarely hits this because `vt100::Screen::contents_between` produces clean ASCII-heavy strings. But JSONL content from Claude contains arbitrary Unicode (emoji, CJK, accented chars, code with Unicode identifiers).
+
+**Why this matters now:** The JSONL watcher feeds raw UTF-8 text from JSONL directly into `flush_buffer` → `chunk_text`. A 4001-byte assistant message with a 3-byte emoji near the 4000 boundary WILL panic.
+
+**Fix:** Snap `end` backward to the nearest char boundary before slicing:
+```rust
+let mut end = (start + max_len).min(text.len());
+while end > start && !text.is_char_boundary(end) {
+    end -= 1;
+}
+```
+
+This fix benefits both the existing PTY pipeline and the new JSONL path.
+
+---
+
+### 3. Windows File Sharing — Open Mode Matters
+
+The architect says "polling is simple: compare file size vs last offset, read delta." True, but on Windows, file reads can fail with `ERROR_SHARING_VIOLATION` if the writer (Claude Code) holds a conflicting lock.
+
+`std::fs::File::open()` on Windows uses `FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE` by default, so our reads will succeed even while Claude writes. **However**, `std::fs::metadata()` (used for checking file size) can also contend with the writer.
+
+**Implementation guideline:** Use `File::open()` + `file.metadata()` on the already-opened handle, rather than calling `std::fs::metadata(path)` separately. The handle-based metadata avoids a second filesystem access that could race.
+
+**Recommended `read_new_lines` pattern:**
+```rust
+fn read_new_lines(path: &Path, offset: &mut u64, remainder: &mut String) -> io::Result<Vec<String>> {
+    let mut file = File::open(path)?;
+    let file_len = file.metadata()?.len();  // metadata on open handle, not path
+    if file_len <= *offset { return Ok(vec![]); }
+    file.seek(SeekFrom::Start(*offset))?;
+    let mut buf = String::new();
+    file.read_to_string(&mut buf)?;
+    *offset = file_len;
+    // ... split lines, handle remainder ...
+}
+```
+
+Re-opening the file each poll cycle (instead of keeping a persistent handle) is actually preferable here:
+- Avoids stale handles across file rotation
+- Avoids holding a handle that could interfere with Claude Code
+- Simpler state management (no handle in the watcher struct)
+
+---
+
+### 4. Project Directory May Not Exist Yet
+
+When the Telegram bridge is attached to a freshly created Claude session, Claude Code may not have written any output yet. The directory `~/.claude/projects/{mangled_cwd}/` might not exist at attach time.
+
+The architect's `watch_loop` initializes `project_dir` and immediately starts polling, but `find_latest_jsonl` will fail on a non-existent directory.
+
+**Fix:** `find_latest_jsonl` should return `None` gracefully when the directory doesn't exist (not error). The watcher should keep polling — the directory will appear once Claude writes its first message. Log `JSONL_WAIT` on first poll where the directory doesn't exist, then `JSONL_INIT` when it appears.
+
+---
+
+### 5. Extract `mangle_cwd` as Shared Utility
+
+The mangling logic exists in `commands/session.rs:72-74` as inline code:
+```rust
+let mangled: String = cwd.chars().map(|c| {
+    if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' }
+}).collect();
+```
+
+The architect's plan places a second copy in `jsonl_watcher.rs`. Two copies = guaranteed drift when Claude Code changes its mangling convention.
+
+**Fix:** Extract to a shared utility function (e.g., in `session/session.rs` or a `utils.rs`):
+```rust
+pub fn mangle_cwd_for_claude(cwd: &str) -> String {
+    cwd.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' }).collect()
+}
+```
+
+Then both `commands/session.rs` and `jsonl_watcher.rs` call the same function.
+
+---
+
+### 6. File Rotation Flicker Risk
+
+`find_latest_jsonl` sorts by modified time and returns the most recent. If Claude Code creates a new session file while the old one's modified time is within the same second (filesystem granularity), the "latest" could flicker between files across polls.
+
+**Mitigation:** Once tracking a file, only switch to a different file if:
+1. The new file has a strictly newer modified time, AND
+2. The current file's modified time is older than 3 seconds (stale)
+
+This prevents oscillation during file transitions. Simple to implement as a guard in the `if latest != current_file` block.
+
+---
+
+### 7. Session Restore Must Also Pass `jsonl_cwd`
+
+The app restores sessions on startup via `create_session_inner` → auto-attach Telegram (in `create_session`, lines 378-403 and `create_root_agent_session`, lines 801-821). All three `tg.attach()` call sites need the `jsonl_cwd` parameter.
+
+Currently identified call sites for `tg.attach()`:
+1. `commands/session.rs:397` — `create_session` (auto-attach after creation)
+2. `commands/session.rs:575` — `restart_session` (re-attach after restart)
+3. `commands/session.rs:815` — `create_root_agent_session` (auto-attach)
+4. `commands/telegram.rs:34` — `telegram_attach` (manual attach from UI)
+
+**All four** need the `jsonl_cwd` parameter. The architect only explicitly mentions 1, 2, 3, and 4 but the implementation must not miss any. Use `grep -rn "tg.attach\|\.attach("` on the telegram-related files to catch any future additions.
+
+**Additionally:** The `is_claude` flag must be available at all attach sites. For sites 1-3, `create_session_inner` already computes `is_claude`. For site 4, the architect correctly notes we need to look up the session. But since `is_claude` needs to be stored on the `Session` in the manager (see point #1), site 4 becomes:
+```rust
+let session = mgr.get_session(uuid).await.ok_or("Session not found")?;
+let jsonl_cwd = if session.is_claude { Some(session.working_directory.clone()) } else { None };
+```
+
+---
+
+### 8. `read_to_string` Can Fail on Invalid UTF-8
+
+JSONL files from Claude Code should always be valid UTF-8, but if a file gets corrupted or truncated mid-write (crash, power loss), `read_to_string` will return `Err`. The watcher should handle this gracefully:
+- If `read_to_string` fails, log the error and skip this poll cycle
+- Do NOT reset `offset` — retry from the same position next time
+- Consider using `read_to_end` (returns bytes) + `String::from_utf8_lossy` as a more resilient alternative
+
+---
+
+### 9. Visibility Changes Should Be `pub(crate)` Not `pub(super)`
+
+The architect proposes making `flush_buffer`, `chunk_text`, `BridgeLogger`, `DiagLogger` as `pub(super)`. This limits visibility to the `telegram` module. While correct for the current design, using `pub(crate)` instead costs nothing extra and allows future modules outside `telegram/` to reuse the buffer/send logic without a second visibility change. Minor preference — `pub(super)` is also acceptable.
+
+---
+
+### 10. Additional Risk — `home_dir()` Returns `None`
+
+`dirs::home_dir()` can return `None` on unusual system configurations (no `USERPROFILE` on Windows, containerized environments). The existing code in `commands/session.rs:71` handles this by short-circuiting. The watcher must do the same — if `home_dir()` returns `None`, the watcher should log an error and enter a dormant state (keep running but skip polling), not panic.
+
+---
+
+### Implementation Sequence Recommendation
+
+Based on the dependency graph, I recommend this build order:
+
+1. **Session struct + manager** — Add `is_claude: bool` to `Session`, add `set_is_claude()` to `SessionManager`, update `SessionManager::create_session` struct literal
+2. **Shared utility** — Extract `mangle_cwd_for_claude()`, update `commands/session.rs` to use it
+3. **Set `is_claude` in `create_session_inner`** — After session creation, call `mgr.set_is_claude(id, is_claude).await`
+4. **`chunk_text` UTF-8 fix** — Fix char boundary bug (benefits both pipelines)
+5. **Visibility changes in `bridge.rs`** — Make `flush_buffer`, `chunk_text`, `BridgeLogger`, `DiagLogger` pub(super)
+6. **New module `jsonl_watcher.rs`** — Core implementation with polling, parsing, buffer/send
+7. **Wire into `bridge.rs`** — Add `jsonl_cwd` to `spawn_bridge`
+8. **Wire into `manager.rs`** — Add `jsonl_cwd` to `attach`, conditional sender registration
+9. **Wire into all `tg.attach()` call sites** — `commands/session.rs` (3 sites) + `commands/telegram.rs` (1 site)
+10. **Register module in `telegram/mod.rs`**
+
+Each step should compile independently. Steps 1-5 can be done as a preparatory commit before the main feature commit (6-10).
