@@ -401,9 +401,14 @@ impl MailboxPoller {
         })?;
 
         let dest_path = self.resolve_repo_path(&msg.to, app).await;
-        let cwd = dest_path.ok_or_else(|| {
-            format!("Cannot resolve repo path for '{}' — cannot spawn session", msg.to)
-        })?;
+        let cwd = match dest_path {
+            Some(path) => path,
+            None => {
+                // Fallback: for WG agents (wg-name/agent), derive path from sibling session CWDs
+                self.resolve_wg_path_from_sessions(app, &msg.to).await
+                    .ok_or_else(|| format!("Cannot resolve repo path for '{}' — cannot spawn session", msg.to))?
+            }
+        };
 
         // Resolve agent_id and label from lastCodingAgent config
         let (agent_id, agent_label) = self.resolve_agent_id_and_label(app, &cwd).await;
@@ -1228,6 +1233,35 @@ impl MailboxPoller {
             .map(|a| a.label.clone());
 
         (last_agent_id, label)
+    }
+
+    /// Fallback path resolution for WG agents: find a sibling session in the same WG,
+    /// derive the WG directory from its CWD, and construct the target agent path.
+    async fn resolve_wg_path_from_sessions(&self, app: &tauri::AppHandle, agent_name: &str) -> Option<String> {
+        let (wg_name, agent_short) = agent_name.split_once('/')?;
+        if !wg_name.starts_with("wg-") {
+            return None;
+        }
+
+        let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
+        let mgr = session_mgr.read().await;
+        let dirs = mgr.get_sessions_directories().await;
+        drop(mgr);
+
+        let wg_marker = format!("/{}/", wg_name);
+        for (_, cwd, _, _) in &dirs {
+            let normalized = cwd.replace('\\', "/");
+            if let Some(wg_pos) = normalized.rfind(&wg_marker) {
+                let wg_dir = &normalized[..wg_pos + 1 + wg_name.len()];
+                let candidate = format!("{}/__agent_{}", wg_dir, agent_short);
+                if std::path::Path::new(&candidate).is_dir() {
+                    log::info!("[mailbox] wake: resolved WG agent path from sibling session: {}", candidate);
+                    return Some(candidate);
+                }
+            }
+        }
+
+        None
     }
 
     /// Move an outbox message to outbox/delivered/ with token stripped.
