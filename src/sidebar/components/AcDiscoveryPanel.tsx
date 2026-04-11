@@ -74,10 +74,15 @@ const AcDiscoveryPanel: Component = () => {
       return;
     }
 
+    const resolved = projectPath ? projectStore.getResolvedAgents(projectPath) : null;
+    const agent = resolved?.find(a => a.id === replica.preferredAgentId);
+    const cmdParts = agent?.command.split(/\s+/).filter(Boolean);
     SessionAPI.create({
       cwd: replica.path,
       sessionName: `${wg.name}/${replica.name}`,
       agentId: replica.preferredAgentId,
+      shell: cmdParts?.[0],
+      shellArgs: cmdParts?.slice(1),
       gitBranchSource,
       gitBranchPrefix,
     });
@@ -353,12 +358,15 @@ const AcDiscoveryPanel: Component = () => {
                         const projectPath = extractProjectPath(replica.path);
                         const resolved = projectPath ? projectStore.getResolvedAgents(projectPath) : null;
                         if (resolved && resolved.length > 0) {
-                          const agentId = resolved.find(a => a.id === replica.preferredAgentId)?.id ?? resolved[0].id;
+                          const agent = resolved.find(a => a.id === replica.preferredAgentId) ?? resolved[0];
+                          const cmdParts = agent.command.split(/\s+/).filter(Boolean);
                           await SessionAPI.destroy(session.id);
                           await SessionAPI.create({
                             cwd: replica.path,
                             sessionName: session.name,
-                            agentId,
+                            agentId: agent.id,
+                            shell: cmdParts[0],
+                            shellArgs: cmdParts.slice(1),
                             gitBranchSource: session.gitBranchSource ?? undefined,
                             gitBranchPrefix: session.gitBranchPrefix ?? undefined,
                           });

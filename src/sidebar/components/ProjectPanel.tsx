@@ -1065,11 +1065,15 @@ const ProjectPanel: Component = () => {
                           if (resolved && resolved.length > 0) {
                             const session = sessionsStore.sessions.find(s => s.id === menu.sessionId);
                             if (session) {
+                              const agent = resolved.find(a => a.id === menu.preferredAgentId) ?? resolved[0];
+                              const cmdParts = agent.command.split(/\s+/).filter(Boolean);
                               await SessionAPI.destroy(menu.sessionId);
                               await SessionAPI.create({
                                 cwd: session.workingDirectory,
                                 sessionName: session.name,
-                                agentId: resolved.find(a => a.id === menu.preferredAgentId)?.id ?? resolved[0].id,
+                                agentId: agent.id,
+                                shell: cmdParts[0],
+                                shellArgs: cmdParts.slice(1),
                                 gitBranchSource: session.gitBranchSource ?? undefined,
                                 gitBranchPrefix: session.gitBranchPrefix ?? undefined,
                               });
