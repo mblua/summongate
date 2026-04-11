@@ -20,16 +20,17 @@ pub async fn telegram_attach(
 ) -> Result<BridgeInfo, String> {
     let uuid = Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
 
-    // Look up session to check is_claude flag for JSONL watcher mode
-    let jsonl_cwd = {
+    // Look up session to check is_claude flag and shell info for JSONL watcher mode
+    let (jsonl_cwd, session_shell, session_shell_args) = {
         let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
         let mgr = session_mgr.read().await;
         let session = mgr.get_session(uuid).await.ok_or("Session not found")?;
-        if session.is_claude {
+        let jcwd = if session.is_claude {
             Some(session.working_directory.clone())
         } else {
             None
-        }
+        };
+        (jcwd, session.shell.clone(), session.shell_args.clone())
     };
 
     let cfg = settings.read().await;
@@ -41,10 +42,11 @@ pub async fn telegram_attach(
         .clone();
     drop(cfg);
 
+    let bridge_config_dir = crate::commands::session::resolve_config_dir(None, &session_shell, &session_shell_args);
     let pty_arc = pty_mgr.inner().clone();
     let mut tg = tg_mgr.lock().await;
     let info = tg
-        .attach(uuid, &bot, pty_arc, app.clone(), jsonl_cwd)
+        .attach(uuid, &bot, pty_arc, app.clone(), jsonl_cwd, bridge_config_dir)
         .map_err(|e| e.to_string())?;
 
     let _ = app.emit("telegram_bridge_attached", info.clone());

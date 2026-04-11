@@ -18,6 +18,10 @@ pub struct AgentConfig {
     /// If true, auto-generate .claude/settings.local.json with claudeMdExcludes on agent creation
     #[serde(default)]
     pub exclude_global_claude_md: bool,
+    /// Optional override for the binary's config directory (e.g. "~/.claude-phi").
+    /// When None, resolved from the command's binary name via known defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

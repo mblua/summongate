@@ -432,7 +432,6 @@ impl MailboxPoller {
             None,                     // git_branch_source
             None,                     // git_branch_prefix
             false,                    // skip_continue = false → allow --continue
-            false,                    // shell_was_explicit
         ).await.map_err(|e| format!("Failed to spawn session for '{}': {}", msg.to, e))?;
 
         let session_id = Uuid::parse_str(&info.id)
@@ -515,7 +514,6 @@ impl MailboxPoller {
                 None,  // git_branch_source
                 None,  // git_branch_prefix
                 false, // skip_continue
-                false, // shell_was_explicit
             )
             .await
             {
@@ -1418,7 +1416,6 @@ impl MailboxPoller {
                 None,  // git_branch_source
                 None,  // git_branch_prefix
                 false, // skip_continue
-                false, // shell_was_explicit
             )
             .await
             {

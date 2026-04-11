@@ -762,3 +762,112 @@ Concretely:
 3. **Phase B+C combined**: Rewrite `--continue` block using configDir AND simultaneously remove `shell_was_explicit` from signature + all call sites
 4. Phase D: JSONL watcher (unchanged)
 5. Phase E: Frontend UI (unchanged)
+
+---
+
+## [GRINCH] Adversarial Review
+
+**Reviewed by:** dev-rust-grinch  
+**Date:** 2026-04-11  
+**Verdict:** Plan is implementable. Five findings — one medium, two low, two informational.
+
+---
+
+### [GRINCH] G1 (MEDIUM): `expand_tilde` silently produces a relative path when `home_dir()` returns `None`
+
+**What:** The proposed `expand_tilde` function (section 2.1) falls through to `PathBuf::from(path)` when `dirs::home_dir()` returns `None`. This means `expand_tilde("~/.claude-phi")` returns a **relative** `PathBuf` containing the literal string `~/.claude-phi`.
+
+**Why it matters:** The subsequent `is_dir()` check would interpret this as a relative path from the process's current working directory. It would NOT crash — it would just silently check the wrong location and return `false`, so `--continue` would not be injected. But the failure is completely invisible: no log, no error, no indication that configDir resolution failed. If a user sets `configDir: "~/.claude-phi"` and `--continue` never works, they'll have no idea why.
+
+On Windows, `dirs::home_dir()` should always succeed (reads `USERPROFILE`), so this is unlikely in practice. But "unlikely" is not "impossible" — service accounts, broken profiles, or containers could hit this.
+
+**Fix:** Log a warning when `home_dir()` is None and a tilde-prefixed path was requested:
+
+```rust
+fn expand_tilde(path: &str) -> std::path::PathBuf {
+    if path.starts_with('~') {
+        match dirs::home_dir() {
+            Some(home) => {
+                let rest = path.strip_prefix("~/")
+                    .or_else(|| path.strip_prefix("~\\"))
+                    .unwrap_or(if path == "~" { "" } else { path });
+                return home.join(rest);
+            }
+            None => {
+                log::warn!("Cannot expand '~' in configDir '{}': home directory not found", path);
+                // Fall through to raw path — caller's is_dir() will return false
+            }
+        }
+    }
+    std::path::PathBuf::from(path)
+}
+```
+
+This preserves the safe "skip `--continue`" behavior but makes the failure diagnosable.
+
+---
+
+### [GRINCH] G2 (LOW): Frontend `isClaudeBased` / `getDefaultConfigDir` break on commands with spaces in path
+
+**What:** The proposed `isClaudeBased` (section 3.1) extracts the binary via `command.split(/\s+/)[0]`. If the command includes a path with spaces (e.g., `C:\Program Files\claude-phi\claude-phi.cmd --flag`), the split produces `C:\Program` as the "binary", and `isClaudeBased` returns `false`.
+
+**Why it matters:** On Windows, `.cmd` wrappers for custom Claude binaries could live anywhere, including paths with spaces. The configDir field would not be shown in the UI for these agents, so users would have no way to set it. `getDefaultConfigDir` has the same bug (same split logic).
+
+**Realistic impact:** LOW — most custom `.cmd` wrappers are registered on PATH and invoked by name only (e.g., `claude-phi`), not by full path. But if someone enters a full path, the UI silently hides the configDir field.
+
+**Fix:** Use quoted-string-aware parsing, or check all space-separated tokens against `startsWith("claude")`:
+
+```typescript
+export function isClaudeBased(command: string): boolean {
+  // Check all tokens — handles both "claude-phi" and "C:\...\claude-phi.cmd --flags"
+  return command.split(/\s+/).some(token => {
+    const basename = token.replace(/\\/g, "/").split("/").pop()
+      ?.replace(/\.(exe|cmd|bat)$/i, "") ?? "";
+    return basename.startsWith("claude");
+  });
+}
+```
+
+This also matches the Rust-side `resolve_config_dir` which already checks `basenames` (plural) from the full command. Keeps TS and Rust behavior aligned.
+
+---
+
+### [GRINCH] G3 (LOW): `find_agent_in_project_settings` does blocking I/O inside async context
+
+**What:** Section 2.5 proposes `find_agent_in_project_settings` which does a synchronous directory walk with up to `MAX_DEPTH` (10) calls to `is_file()`, `read_to_string()`, and JSON parsing. This is called from `create_session_inner`, which is an async Tauri command handler running on the tokio runtime.
+
+**Why it matters:** Each `is_file()` / `is_dir()` is a blocking syscall. On local NVMe, this is sub-millisecond. On a network drive, USB drive, or under antivirus scanning, each call could take 10-100ms. 10 blocking calls at 50ms each = 500ms blocking the tokio worker thread. During this time, no other async tasks on that worker make progress.
+
+**Realistic impact:** LOW at current scale (single user, local disk, few sessions). But this is the exact pattern that causes mysterious "UI hangs for half a second" bugs later.
+
+**Fix (for implementation, not plan change):** Either:
+1. Wrap the call in `tokio::task::spawn_blocking()` (safest)
+2. Or accept the risk and add a code comment noting the blocking I/O is intentional for simplicity — but cap `MAX_DEPTH` at 5 (sufficient for all real AC directory structures and cuts worst-case in half)
+
+Note: existing `load_project_settings` already does blocking I/O in async context, so this is a pre-existing pattern, not newly introduced. The walk-up just amplifies it.
+
+---
+
+### [GRINCH] G4 (INFO): `expand_tilde` doesn't handle `%USERPROFILE%` or other Windows env vars
+
+**What:** The plan's `expand_tilde` only handles Unix-style `~` prefix. On Windows, users might enter `%USERPROFILE%\.claude-phi` or `$env:USERPROFILE\.claude-phi` in the configDir field.
+
+**Why it matters:** Low — `~` is widely understood even on Windows. But the UI should make this explicit.
+
+**Recommendation:** Add a hint below the configDir input field: "Use `~/` for home directory (e.g., `~/.claude-phi`). Windows environment variables like `%USERPROFILE%` are not expanded." This is a frontend-only change in the hint text already proposed in section 3.2.
+
+---
+
+### [GRINCH] G5 (INFO): Phase F test plan missing negative/edge-case scenarios for configDir values
+
+**What:** Section 4 Phase F lists 7 test cases, all on happy or semi-happy paths. Missing:
+
+| Test | Why it matters |
+|------|---------------|
+| F8: `configDir` set to non-existent path (e.g., `~/.claude-nonexistent`) | Should NOT crash — `is_dir()` returns false, `--continue` skipped silently. Verify no panic. |
+| F9: `configDir` set to a file instead of a directory (e.g., `~/.bashrc`) | `is_dir()` returns false — same as above but worth confirming. |
+| F10: `configDir` with trailing slash/backslash (`~/.claude/`) | `PathBuf::join` handles this, but verify. |
+| F11: `configDir` is empty string `""` | Proposed code checks `!dir.is_empty()` — verify this skips to fallback, not panic. |
+| F12: Two agents with DIFFERENT `configDir` values in same project | Verify each session checks its own agent's dir, not a shared/cached one. |
+
+**Recommendation:** Add these to Phase F. They're all "verify it doesn't crash" checks — fast to run, high confidence gain.

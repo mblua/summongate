@@ -2,7 +2,7 @@ import { Component, createSignal, For, Show, onMount } from "solid-js";
 import { createStore } from "solid-js/store";
 import type { AgentConfig, ProjectSettings } from "../../shared/types";
 import { ProjectSettingsAPI, SettingsAPI } from "../../shared/ipc";
-import { AGENT_PRESET_MAP, newAgentId } from "../../shared/agent-presets";
+import { AGENT_PRESET_MAP, newAgentId, isClaudeBased, getDefaultConfigDir } from "../../shared/agent-presets";
 
 const ProjectAgentsModal: Component<{
   projectPath: string;
@@ -24,7 +24,7 @@ const ProjectAgentsModal: Component<{
 
   // ── Agent mutations ──
 
-  const updateAgent = (index: number, field: keyof AgentConfig, value: string | boolean) => {
+  const updateAgent = (index: number, field: keyof AgentConfig, value: string | boolean | undefined) => {
     setLocalAgents("list", index, field as any, value as any);
   };
 
@@ -206,6 +206,25 @@ const ProjectAgentsModal: Component<{
                       />
                       <span>Exclude global CLAUDE.md on agent creation</span>
                     </label>
+                    <Show when={isClaudeBased(agent.command)}>
+                      <label class="settings-field">
+                        <span class="settings-field-label">Config Directory</span>
+                        <input
+                          type="text"
+                          class="settings-input"
+                          placeholder={getDefaultConfigDir(agent.command) || "~/.claude-custom"}
+                          value={agent.configDir ?? getDefaultConfigDir(agent.command) ?? ""}
+                          onInput={(e) =>
+                            updateAgent(i(), "configDir", e.currentTarget.value || undefined)
+                          }
+                        />
+                        <span class="settings-hint">
+                          {getDefaultConfigDir(agent.command)
+                            ? "Auto-detected. Override only if this binary uses a different config path."
+                            : "Required: specify config directory (use ~/ for home). E.g. ~/.claude-phi"}
+                        </span>
+                      </label>
+                    </Show>
                   </div>
                 )}
               </For>

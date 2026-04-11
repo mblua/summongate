@@ -418,6 +418,7 @@ pub fn spawn_bridge(
     pty_mgr: Arc<Mutex<PtyManager>>,
     app_handle: tauri::AppHandle,
     jsonl_cwd: Option<String>,
+    config_dir: Option<std::path::PathBuf>,
 ) -> BridgeHandle {
     let cancel = CancellationToken::new();
     let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
@@ -434,6 +435,7 @@ pub fn spawn_bridge(
             session_id_str.clone(),
             cancel.clone(),
             app_handle.clone(),
+            config_dir,
         );
     } else {
         // PTY mode: existing 6-phase pipeline

@@ -79,6 +79,7 @@ export interface AgentConfig {
   color: string;
   gitPullBefore: boolean;
   excludeGlobalClaudeMd: boolean;
+  configDir?: string;
 }
 
 export interface ProjectSettings {

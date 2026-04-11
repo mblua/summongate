@@ -106,3 +106,31 @@ pub fn delete_project_settings(project_path: &str) -> Result<(), String> {
         Err(e) => Err(format!("Failed to delete project-settings.json: {}", e)),
     }
 }
+
+/// Search project-settings.json files for an agent by ID.
+/// Walks up from `cwd` looking for `.ac-new/project-settings.json`.
+/// Capped at 5 levels to avoid traversing to filesystem root (G3).
+pub fn find_agent_in_project_settings(cwd: &str, agent_id: &str) -> Option<AgentConfig> {
+    let mut dir = Path::new(cwd);
+    let mut depth = 0;
+    const MAX_DEPTH: usize = 5;
+    loop {
+        if depth >= MAX_DEPTH {
+            break;
+        }
+        depth += 1;
+        let settings_file = dir.join(".ac-new").join("project-settings.json");
+        if settings_file.is_file() {
+            if let Some(ps) = load_project_settings(&dir.to_string_lossy()) {
+                if let Some(agent) = ps.agents.iter().find(|a| a.id == agent_id) {
+                    return Some(agent.clone());
+                }
+            }
+        }
+        match dir.parent() {
+            Some(parent) if parent != dir => dir = parent,
+            _ => break,
+        }
+    }
+    None
+}

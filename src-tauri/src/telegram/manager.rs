@@ -38,6 +38,7 @@ impl TelegramBridgeManager {
         pty_mgr: Arc<Mutex<PtyManager>>,
         app_handle: tauri::AppHandle,
         jsonl_cwd: Option<String>,
+        config_dir: Option<std::path::PathBuf>,
     ) -> Result<BridgeInfo, AppError> {
         // Exclusivity: one bot can only be attached to one session
         if let Some(existing) = self.bot_assignments.get(&bot.id) {
@@ -71,6 +72,7 @@ impl TelegramBridgeManager {
             pty_mgr,
             app_handle,
             jsonl_cwd.clone(),
+            config_dir,
         );
 
         // Only register output sender for PTY mode.

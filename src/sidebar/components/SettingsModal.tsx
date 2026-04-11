@@ -9,7 +9,7 @@ import type {
 import { SettingsAPI, TelegramAPI, ReposAPI } from "../../shared/ipc";
 import { settingsStore } from "../../shared/stores/settings";
 import { sessionsStore } from "../stores/sessions";
-import { AGENT_PRESET_MAP, newAgentId } from "../../shared/agent-presets";
+import { AGENT_PRESET_MAP, newAgentId, isClaudeBased, getDefaultConfigDir } from "../../shared/agent-presets";
 
 const GEMINI_MODELS = [
   { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash (recommended)" },
@@ -66,7 +66,7 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
   const updateAgent = (
     index: number,
     field: keyof AgentConfig,
-    value: string | boolean | string[]
+    value: string | boolean | string[] | undefined
   ) => {
     if (!settings.data) return;
     setSettings("data", "agents", index, field as any, value as any);
@@ -399,6 +399,25 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
               />
               <span>Exclude global CLAUDE.md on agent creation</span>
             </label>
+            <Show when={isClaudeBased(agent.command)}>
+              <label class="settings-field">
+                <span class="settings-field-label">Config Directory</span>
+                <input
+                  type="text"
+                  class="settings-input"
+                  placeholder={getDefaultConfigDir(agent.command) || "~/.claude-custom"}
+                  value={agent.configDir ?? getDefaultConfigDir(agent.command) ?? ""}
+                  onInput={(e) =>
+                    updateAgent(i(), "configDir", e.currentTarget.value || undefined)
+                  }
+                />
+                <span class="settings-hint">
+                  {getDefaultConfigDir(agent.command)
+                    ? "Auto-detected. Override only if this binary uses a different config path."
+                    : "Required: specify config directory (use ~/ for home). E.g. ~/.claude-phi"}
+                </span>
+              </label>
+            </Show>
           </div>
         )}
       </For>

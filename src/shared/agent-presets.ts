@@ -54,6 +54,40 @@ export const AGENT_PRESETS: AgentPreset[] = [
 export const AGENT_PRESET_MAP: Record<string, Omit<AgentConfig, "id">> =
   Object.fromEntries(AGENT_PRESETS.map((p) => [p.key, p.config]));
 
+/** Known config directories by binary basename */
+export const KNOWN_CONFIG_DIRS: Record<string, string> = {
+  claude: "~/.claude",
+};
+
+/** Extract basename without extension from a path token */
+function extractBasename(token: string): string {
+  return (
+    token
+      .replace(/\\/g, "/")
+      .split("/")
+      .pop()
+      ?.replace(/\.(exe|cmd|bat)$/i, "") ?? ""
+  );
+}
+
+/** Get the default config directory for a command's binary, if known */
+export function getDefaultConfigDir(command: string): string | undefined {
+  // Check all tokens to handle paths with spaces (G2 fix)
+  for (const token of command.split(/\s+/)) {
+    const basename = extractBasename(token);
+    if (KNOWN_CONFIG_DIRS[basename]) return KNOWN_CONFIG_DIRS[basename];
+  }
+  return undefined;
+}
+
+/** Check if a command appears to be Claude-based (any token's basename starts with "claude") */
+export function isClaudeBased(command: string): boolean {
+  return command.split(/\s+/).some((token) => {
+    const basename = extractBasename(token);
+    return basename.startsWith("claude");
+  });
+}
+
 let idCounter = 0;
 export function newAgentId(): string {
   return `agent_${Date.now()}_${idCounter++}`;

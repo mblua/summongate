@@ -27,9 +27,10 @@ pub fn spawn_watch_task(
     session_id: String,
     cancel: CancellationToken,
     app: tauri::AppHandle,
+    config_dir: Option<PathBuf>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        watch_loop(cwd, bot_token, chat_id, session_id.clone(), cancel, app.clone()).await;
+        watch_loop(cwd, bot_token, chat_id, session_id.clone(), cancel, app.clone(), config_dir).await;
         log::info!("[JSONL_EXIT] Watcher task ended for session {}", session_id);
     })
 }
@@ -171,15 +172,18 @@ async fn watch_loop(
     session_id: String,
     cancel: CancellationToken,
     app: tauri::AppHandle,
+    config_dir: Option<PathBuf>,
 ) {
-    let project_dir = match dirs::home_dir() {
-        Some(home) => home.join(".claude").join("projects").join(mangle_cwd_for_claude(&cwd)),
-        None => {
-            log::error!("[JSONL_ERR] Cannot resolve home directory — JSONL watcher dormant");
-            // Stay alive but dormant until cancelled
-            cancel.cancelled().await;
-            return;
-        }
+    let project_dir = match config_dir {
+        Some(dir) => dir.join("projects").join(mangle_cwd_for_claude(&cwd)),
+        None => match dirs::home_dir() {
+            Some(home) => home.join(".claude").join("projects").join(mangle_cwd_for_claude(&cwd)),
+            None => {
+                log::error!("[JSONL_ERR] Cannot resolve home directory — JSONL watcher dormant");
+                cancel.cancelled().await;
+                return;
+            }
+        },
     };
 
     let client = reqwest::Client::builder()
