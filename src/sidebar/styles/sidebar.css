@@ -3668,40 +3668,21 @@ html.light-theme[data-sidebar-style="neon-circuit"] .session-item.active {
   display: none;
 }
 
-.coord-quick-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  cursor: pointer;
-  transition: background var(--transition-fast);
+/* Neutralize coordinator beacon styling inside coord-quick-access —
+   the container already provides its own visual framing */
+.coord-quick-access .replica-item:has(.ac-discovery-badge.coord) {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 4px var(--spacing-md) 4px calc(var(--spacing-md) + 6px);
+  box-shadow: none;
 }
 
-.coord-quick-item:hover {
+.coord-quick-access .replica-item:has(.ac-discovery-badge.coord):hover {
   background: var(--sidebar-hover);
-}
-
-.coord-quick-info {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-
-.coord-quick-name {
-  font-size: var(--font-size-md);
-  font-weight: 600;
-  color: var(--sidebar-fg);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.coord-quick-wg {
-  font-size: 9px;
-  color: var(--sidebar-fg-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  border: none;
+  box-shadow: none;
 }
 
 /* ---- Deep Space: coordinator quick-access enabled ---- */
@@ -3730,26 +3711,6 @@ html.light-theme[data-sidebar-style="neon-circuit"] .session-item.active {
   color: rgba(255, 180, 40, 0.5);
 }
 
-[data-sidebar-style="deep-space"] .coord-quick-item {
-  padding: 7px 12px;
-  border-radius: 4px;
-  margin: 1px 4px;
-}
-
-[data-sidebar-style="deep-space"] .coord-quick-item:hover {
-  background: rgba(255, 180, 40, 0.08);
-}
-
-[data-sidebar-style="deep-space"] .coord-quick-name {
-  font-size: 13px;
-  font-weight: 700;
-  color: rgba(255, 210, 130, 0.95);
-}
-
-[data-sidebar-style="deep-space"] .coord-quick-wg {
-  color: rgba(100, 150, 220, 0.5);
-}
-
 html.light-theme[data-sidebar-style="deep-space"] .coord-quick-access {
   background: linear-gradient(
     135deg,
@@ -3757,10 +3718,6 @@ html.light-theme[data-sidebar-style="deep-space"] .coord-quick-access {
     rgba(255, 160, 30, 0.03) 100%
   );
   border-color: rgba(200, 140, 20, 0.15);
-}
-
-html.light-theme[data-sidebar-style="deep-space"] .coord-quick-name {
-  color: rgba(140, 80, 0, 0.9);
 }
 
 html.light-theme[data-sidebar-style="deep-space"] .coord-quick-access::before {
@@ -3787,34 +3744,9 @@ html.light-theme[data-sidebar-style="deep-space"] .coord-quick-access::before {
   color: rgba(255, 100, 40, 0.45);
 }
 
-[data-sidebar-style="obsidian-mesh"] .coord-quick-item {
-  padding: 5px 10px;
-  border-left: 2px solid transparent;
-  transition: background 150ms, border-color 150ms;
-}
-
-[data-sidebar-style="obsidian-mesh"] .coord-quick-item:hover {
-  background: rgba(255, 80, 40, 0.08);
-  border-left-color: rgba(255, 100, 40, 0.5);
-}
-
-[data-sidebar-style="obsidian-mesh"] .coord-quick-name {
-  font-size: 13px;
-  font-weight: 800;
-  color: rgba(255, 180, 100, 0.95);
-}
-
-[data-sidebar-style="obsidian-mesh"] .coord-quick-wg {
-  color: rgba(220, 160, 40, 0.4);
-}
-
 html.light-theme[data-sidebar-style="obsidian-mesh"] .coord-quick-access {
   border-left-color: rgba(200, 80, 20, 0.25);
   background: rgba(200, 100, 20, 0.04);
-}
-
-html.light-theme[data-sidebar-style="obsidian-mesh"] .coord-quick-name {
-  color: rgba(160, 70, 0, 0.9);
 }
 
 /* ---- Neon Circuit: coordinator quick-access enabled ---- */
@@ -3853,32 +3785,6 @@ html.light-theme[data-sidebar-style="obsidian-mesh"] .coord-quick-name {
     rgba(255, 0, 180, 0.35) 50%,
     transparent 100%
   );
-}
-
-[data-sidebar-style="neon-circuit"] .coord-quick-item {
-  padding: 5px 10px;
-  border-radius: 3px;
-  margin: 1px 4px;
-}
-
-[data-sidebar-style="neon-circuit"] .coord-quick-item:hover {
-  background: rgba(255, 0, 180, 0.06);
-  box-shadow: inset 2px 0 0 rgba(255, 0, 180, 0.35);
-}
-
-[data-sidebar-style="neon-circuit"] .coord-quick-name {
-  font-size: 13px;
-  font-weight: 700;
-  color: rgba(255, 80, 200, 0.9);
-}
-
-html.light-theme[data-sidebar-style="neon-circuit"] .coord-quick-name {
-  color: rgba(180, 0, 120, 0.85);
-}
-
-[data-sidebar-style="neon-circuit"] .coord-quick-wg {
-  color: rgba(0, 220, 255, 0.4);
-  font-family: var(--font-mono);
 }
 
 html.light-theme[data-sidebar-style="neon-circuit"] .coord-quick-access {

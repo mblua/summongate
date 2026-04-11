@@ -337,6 +337,144 @@ const ProjectPanel: Component = () => {
           });
         };
 
+        const renderReplicaItem = (
+          replica: AcAgentReplica,
+          wg: AcWorkgroup,
+          extraBadge?: string
+        ) => {
+          const dotClass = () => replicaDotClass(wg, replica);
+          const isCoord = () => isReplicaCoordinator(replica, proj.folderName, proj.teams, wg.teamName);
+          const rn = () => replicaRepoName(replica) || stripRepoPrefix(wg.repoPath?.replace(/\\/g, "/").split("/").pop() ?? "") || proj.folderName;
+          const branchLabel = () => {
+            const s = replicaSession(wg, replica);
+            if (s?.gitBranch) {
+              const name = rn();
+              return name && !s.gitBranch.includes("/") ? `${name}/${s.gitBranch}` : s.gitBranch;
+            }
+            const name = rn();
+            return name ? (replica.repoBranch ? `${name}/${replica.repoBranch}` : name) : null;
+          };
+          const session = () => replicaSession(wg, replica);
+          const isLive = () => isSessionLive(session());
+          const bridge = () => { const s = session(); return s ? bridgesStore.getBridge(s.id) : undefined; };
+          const isRecording = () => { const s = session(); return s ? voiceRecorder.recordingSessionId() === s.id : false; };
+          const isProcessing = () => { const s = session(); return s ? voiceRecorder.processingSessionId() === s.id : false; };
+          const [showBotMenu, setShowBotMenu] = createSignal(false);
+          const [availableBots, setAvailableBots] = createSignal<TelegramBotConfig[]>([]);
+
+          const handleMicClick = (e: MouseEvent) => {
+            e.stopPropagation();
+            const s = session();
+            if (s) voiceRecorder.toggle(s.id);
+          };
+          const handleCancelRecording = (e: MouseEvent) => {
+            e.stopPropagation();
+            voiceRecorder.cancel();
+          };
+          const handleOpenExplorer = async (e: MouseEvent) => {
+            e.stopPropagation();
+            const s = session();
+            try { await WindowAPI.openInExplorer(s ? s.workingDirectory : replica.path); } catch (err) { console.error("Failed to open explorer:", err); }
+          };
+          const handleDetach = (e: MouseEvent) => {
+            e.stopPropagation();
+            const s = session();
+            if (s) WindowAPI.detach(s.id);
+          };
+          const handleTelegramClick = async (e: MouseEvent) => {
+            e.stopPropagation();
+            const s = session();
+            if (!s) return;
+            const b = bridge();
+            if (b) {
+              await TelegramAPI.detach(s.id);
+            } else {
+              const settings = await SettingsAPI.get();
+              const bots = settings.telegramBots || [];
+              if (bots.length === 1) {
+                await TelegramAPI.attach(s.id, bots[0].id);
+              } else if (bots.length > 1) {
+                setAvailableBots(bots);
+                setShowBotMenu(true);
+              }
+            }
+          };
+          const handleBotSelect = async (botId: string) => {
+            setShowBotMenu(false);
+            const s = session();
+            if (s) await TelegramAPI.attach(s.id, botId);
+          };
+          const handleClose = (e: MouseEvent) => {
+            e.stopPropagation();
+            const s = session();
+            if (s) SessionAPI.destroy(s.id);
+          };
+
+          return (
+            <div
+              class="replica-item"
+              onClick={() => handleReplicaClick(replica, wg)}
+              onContextMenu={(e) => {
+                const s = session();
+                if (s && isLive()) handleReplicaContextMenu(e, s.id);
+              }}
+              title={replica.path}
+            >
+              <div class={`session-item-status ${dotClass()}`} />
+              <div class="replica-item-info">
+                <span class="replica-item-name">{replica.originProject ? `${replica.name}@${replica.originProject}` : replica.name}</span>
+                <div class="ac-discovery-badges">
+                  <Show when={branchLabel()}>
+                    <span class="ac-discovery-badge branch">{branchLabel()}</span>
+                  </Show>
+                  <Show when={isCoord()}>
+                    <span class="ac-discovery-badge coord">coordinator</span>
+                  </Show>
+                  <Show when={extraBadge}>
+                    <span class="ac-discovery-badge team">{extraBadge}</span>
+                  </Show>
+                </div>
+              </div>
+              <Show when={isLive()}>
+                <Show when={settingsStore.voiceEnabled}>
+                  <Show when={isRecording()}>
+                    <button class="session-item-mic-cancel" onClick={handleCancelRecording} title="Cancel recording">&#x2715;</button>
+                  </Show>
+                  <button
+                    class={`session-item-mic ${isRecording() ? "recording" : ""} ${isProcessing() ? "processing" : ""} ${voiceRecorder.micError() ? "error" : ""}`}
+                    onClick={handleMicClick}
+                    title={isRecording() ? "Stop recording" : isProcessing() ? "Transcribing..." : voiceRecorder.micError() ? voiceRecorder.micError()! : "Voice to text"}
+                  >&#x1F399;</button>
+                </Show>
+                <button class="session-item-explorer" onClick={handleOpenExplorer} title="Open folder in explorer">&#x1F4C2;</button>
+                <button class="session-item-detach" onClick={handleDetach} title="Detach to own window">&#x29C9;</button>
+                <Show when={bridge()}>
+                  <div class="session-item-bridge-dot" style={{ background: bridge()!.color }} title={`Telegram: ${bridge()!.botLabel}`} />
+                </Show>
+                <button
+                  class={`session-item-telegram ${bridge() ? "active" : ""}`}
+                  onClick={handleTelegramClick}
+                  title={bridge() ? "Detach Telegram" : "Attach Telegram"}
+                  style={bridge() ? { color: bridge()!.color } : {}}
+                >T</button>
+                <Show when={showBotMenu()}>
+                  <div class="session-item-bot-menu" onClick={(e) => e.stopPropagation()}>
+                    <For each={availableBots()}>
+                      {(bot) => (
+                        <button class="session-item-bot-option" onClick={() => handleBotSelect(bot.id)}>
+                          <span class="settings-color-dot" style={{ background: bot.color }} />
+                          {bot.label}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+                <button class="session-item-close" onClick={handleClose} title="Close session">&#x2715;</button>
+              </Show>
+            </div>
+          );
+        };
+
         return (
           <div class="project-panel">
             <button
@@ -439,38 +577,7 @@ const ProjectPanel: Component = () => {
                     <Show when={coordinators().length > 0}>
                       <div class="coord-quick-access">
                         <For each={coordinators()}>
-                          {(item) => {
-                            const dotClass = () => replicaDotClass(item.wg, item.replica);
-                            const rn = () => replicaRepoName(item.replica) || stripRepoPrefix(item.wg.repoPath?.replace(/\\/g, "/").split("/").pop() ?? "") || proj.folderName;
-                            const branchLabel = () => {
-                              const s = replicaSession(item.wg, item.replica);
-                              if (s?.gitBranch) {
-                                const name = rn();
-                                return name && !s.gitBranch.includes("/") ? `${name}/${s.gitBranch}` : s.gitBranch;
-                              }
-                              const name = rn();
-                              return name ? (item.replica.repoBranch ? `${name}/${item.replica.repoBranch}` : name) : null;
-                            };
-                            return (
-                              <div
-                                class="coord-quick-item"
-                                onClick={() => handleReplicaClick(item.replica, item.wg)}
-                                title={item.replica.path}
-                              >
-                                <div class={`session-item-status ${dotClass()}`} />
-                                <div class="coord-quick-info">
-                                  <span class="coord-quick-name">{item.replica.name}</span>
-                                  <div class="ac-discovery-badges">
-                                    <Show when={branchLabel()}>
-                                      <span class="ac-discovery-badge branch">{branchLabel()}</span>
-                                    </Show>
-                                    <span class="ac-discovery-badge coord">coordinator</span>
-                                    <span class="ac-discovery-badge team">{item.wg.name}</span>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          }}
+                          {(item) => renderReplicaItem(item.replica, item.wg, item.wg.name)}
                         </For>
                       </div>
                     </Show>
@@ -522,136 +629,7 @@ const ProjectPanel: Component = () => {
                                   </div>
                                   <Show when={!wgCollapsed()}>
                                     <For each={wg.agents}>
-                                      {(replica) => {
-                                        const dotClass = () => replicaDotClass(wg, replica);
-                                        const isCoord = () => isReplicaCoordinator(replica, proj.folderName, proj.teams, wg.teamName);
-                                        const rn = () => replicaRepoName(replica) || stripRepoPrefix(wg.repoPath?.replace(/\\/g, "/").split("/").pop() ?? "") || proj.folderName;
-                                        const branchLabel = () => {
-                                          const s = replicaSession(wg, replica);
-                                          if (s?.gitBranch) {
-                                            const name = rn();
-                                            return name && !s.gitBranch.includes("/") ? `${name}/${s.gitBranch}` : s.gitBranch;
-                                          }
-                                          const name = rn();
-                                          return name ? (replica.repoBranch ? `${name}/${replica.repoBranch}` : name) : null;
-                                        };
-                                        const session = () => replicaSession(wg, replica);
-                                        const isLive = () => isSessionLive(session());
-                                        const bridge = () => { const s = session(); return s ? bridgesStore.getBridge(s.id) : undefined; };
-                                        const isRecording = () => { const s = session(); return s ? voiceRecorder.recordingSessionId() === s.id : false; };
-                                        const isProcessing = () => { const s = session(); return s ? voiceRecorder.processingSessionId() === s.id : false; };
-                                        const [showBotMenu, setShowBotMenu] = createSignal(false);
-                                        const [availableBots, setAvailableBots] = createSignal<TelegramBotConfig[]>([]);
-
-                                        const handleMicClick = (e: MouseEvent) => {
-                                          e.stopPropagation();
-                                          const s = session();
-                                          if (s) voiceRecorder.toggle(s.id);
-                                        };
-                                        const handleCancelRecording = (e: MouseEvent) => {
-                                          e.stopPropagation();
-                                          voiceRecorder.cancel();
-                                        };
-                                        const handleOpenExplorer = async (e: MouseEvent) => {
-                                          e.stopPropagation();
-                                          const s = session();
-                                          try { await WindowAPI.openInExplorer(s ? s.workingDirectory : replica.path); } catch (err) { console.error("Failed to open explorer:", err); }
-                                        };
-                                        const handleDetach = (e: MouseEvent) => {
-                                          e.stopPropagation();
-                                          const s = session();
-                                          if (s) WindowAPI.detach(s.id);
-                                        };
-                                        const handleTelegramClick = async (e: MouseEvent) => {
-                                          e.stopPropagation();
-                                          const s = session();
-                                          if (!s) return;
-                                          const b = bridge();
-                                          if (b) {
-                                            await TelegramAPI.detach(s.id);
-                                          } else {
-                                            const settings = await SettingsAPI.get();
-                                            const bots = settings.telegramBots || [];
-                                            if (bots.length === 1) {
-                                              await TelegramAPI.attach(s.id, bots[0].id);
-                                            } else if (bots.length > 1) {
-                                              setAvailableBots(bots);
-                                              setShowBotMenu(true);
-                                            }
-                                          }
-                                        };
-                                        const handleBotSelect = async (botId: string) => {
-                                          setShowBotMenu(false);
-                                          const s = session();
-                                          if (s) await TelegramAPI.attach(s.id, botId);
-                                        };
-                                        const handleClose = (e: MouseEvent) => {
-                                          e.stopPropagation();
-                                          const s = session();
-                                          if (s) SessionAPI.destroy(s.id);
-                                        };
-
-                                        return (
-                                          <div
-                                            class="replica-item"
-                                            onClick={() => handleReplicaClick(replica, wg)}
-                                            onContextMenu={(e) => {
-                                              const s = session();
-                                              if (s && isLive()) handleReplicaContextMenu(e, s.id);
-                                            }}
-                                            title={replica.path}
-                                          >
-                                            <div class={`session-item-status ${dotClass()}`} />
-                                            <div class="replica-item-info">
-                                              <span class="replica-item-name">{replica.originProject ? `${replica.name}@${replica.originProject}` : replica.name}</span>
-                                              <div class="ac-discovery-badges">
-                                                <Show when={branchLabel()}>
-                                                  <span class="ac-discovery-badge branch">{branchLabel()}</span>
-                                                </Show>
-                                                <Show when={isCoord()}>
-                                                  <span class="ac-discovery-badge coord">coordinator</span>
-                                                </Show>
-                                              </div>
-                                            </div>
-                                            <Show when={isLive()}>
-                                              <Show when={settingsStore.voiceEnabled}>
-                                                <Show when={isRecording()}>
-                                                  <button class="session-item-mic-cancel" onClick={handleCancelRecording} title="Cancel recording">&#x2715;</button>
-                                                </Show>
-                                                <button
-                                                  class={`session-item-mic ${isRecording() ? "recording" : ""} ${isProcessing() ? "processing" : ""} ${voiceRecorder.micError() ? "error" : ""}`}
-                                                  onClick={handleMicClick}
-                                                  title={isRecording() ? "Stop recording" : isProcessing() ? "Transcribing..." : voiceRecorder.micError() ? voiceRecorder.micError()! : "Voice to text"}
-                                                >&#x1F399;</button>
-                                              </Show>
-                                              <button class="session-item-explorer" onClick={handleOpenExplorer} title="Open folder in explorer">&#x1F4C2;</button>
-                                              <button class="session-item-detach" onClick={handleDetach} title="Detach to own window">&#x29C9;</button>
-                                              <Show when={bridge()}>
-                                                <div class="session-item-bridge-dot" style={{ background: bridge()!.color }} title={`Telegram: ${bridge()!.botLabel}`} />
-                                              </Show>
-                                              <button
-                                                class={`session-item-telegram ${bridge() ? "active" : ""}`}
-                                                onClick={handleTelegramClick}
-                                                title={bridge() ? "Detach Telegram" : "Attach Telegram"}
-                                                style={bridge() ? { color: bridge()!.color } : {}}
-                                              >T</button>
-                                              <Show when={showBotMenu()}>
-                                                <div class="session-item-bot-menu" onClick={(e) => e.stopPropagation()}>
-                                                  <For each={availableBots()}>
-                                                    {(bot) => (
-                                                      <button class="session-item-bot-option" onClick={() => handleBotSelect(bot.id)}>
-                                                        <span class="settings-color-dot" style={{ background: bot.color }} />
-                                                        {bot.label}
-                                                      </button>
-                                                    )}
-                                                  </For>
-                                                </div>
-                                              </Show>
-                                              <button class="session-item-close" onClick={handleClose} title="Close session">&#x2715;</button>
-                                            </Show>
-                                          </div>
-                                        );
-                                      }}
+                                      {(replica) => renderReplicaItem(replica, wg)}
                                     </For>
                                   </Show>
                                 </div>
