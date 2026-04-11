@@ -747,9 +747,17 @@ fn expand_tilde(path: &str) -> std::path::PathBuf {
             Some(home) => {
                 let rest = path
                     .strip_prefix("~/")
-                    .or_else(|| path.strip_prefix("~\\"))
-                    .unwrap_or(if path == "~" { "" } else { path });
-                return home.join(rest);
+                    .or_else(|| path.strip_prefix("~\\"));
+                if let Some(r) = rest {
+                    return home.join(r);
+                } else if path == "~" {
+                    return home;
+                }
+                // path starts with ~ but has no separator (e.g. "~.claude") — malformed
+                log::warn!(
+                    "configDir '{}' starts with '~' but has no separator — using as-is",
+                    path
+                );
             }
             None => {
                 log::warn!(
