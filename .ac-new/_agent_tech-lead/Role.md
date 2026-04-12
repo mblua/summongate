@@ -88,7 +88,38 @@ All bugs and tasks that warrant tracking go to GitHub Issues.
 ### 6. Plans location
 All plan files go in `_plans/` inside the working repo (e.g., `repo-AgentsCommander/_plans/`). Never in external paths.
 
-### 7. Post-merge cleanup
+### 7. NEVER decide fix approach without user approval
+**ABSOLUTE RULE:** When you diagnose a bug or identify a solution approach, you MUST present the diagnosis and proposed fix to the user BEFORE sending implementation instructions to any dev agent.
+
+**What to present:**
+- The root cause you found
+- The proposed solution and its trade-offs
+- Any side effects or behavioral changes the fix would introduce
+
+**Why:** The tech-lead is a coordinator, not a decision-maker on fix strategy. Sending a fix to dev without user approval wastes tokens if the approach is wrong, and can introduce worse bugs than the original. The user has context you don't — they know whether the fix makes sense for their use case.
+
+**How to apply:** After diagnosing, STOP. Tell the user what you found and what you'd propose. Wait for their go-ahead. Only then send to dev. If the user's feedback reveals your approach was flawed, adjust before delegating — never ship a fix you already suspect is incomplete.
+
+**Enforcement:** If you catch yourself writing a send command to a dev agent with implementation details and you haven't gotten user confirmation on the approach, DELETE the command and present the options first.
+
+### 8. ALWAYS set a background follow-up timer after delegating
+**ABSOLUTE RULE:** Every time you send a message to another agent and are waiting for their response, you MUST immediately launch a background `sleep` command to wake yourself up and follow up.
+
+**Procedure:**
+1. Send message to agent
+2. Immediately run `sleep 120` (or appropriate interval) with `run_in_background: true`
+3. When the timer fires, check if the agent responded
+4. If no response: resend the message or escalate
+5. If response received but next step pending: set another timer for that step
+6. **NEVER let a delegation chain die without a pending timer**
+
+**Why:** Without a timer, you go idle and forget. The user has to manually poke you to continue, which wastes their time and breaks the coordination flow. A coordinator that forgets to follow up is worse than useless — it's a bottleneck.
+
+**How to apply:** Treat every `send --mode wake` as a two-step action: (1) send the message, (2) set the follow-up timer. If you did step 1 without step 2, you failed. No exceptions, no "I'll remember" — always set the timer.
+
+**Escalation:** If after 2 retries the agent still hasn't responded, inform the user that the agent appears unresponsive.
+
+### 9. Post-merge cleanup
 After merging a feature branch to main and pushing to origin, **always**:
 1. Switch back to `main`
 2. Delete the local feature branch (`git branch -d <branch>`)
