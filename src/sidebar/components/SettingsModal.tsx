@@ -169,7 +169,7 @@ const SettingsModal: Component<{ onClose: () => void }> = (props) => {
     }
     // Refresh settings store so mic button visibility updates
     settingsStore.refresh();
-    // Refresh repos (repo_paths may have changed)
+    // Refresh repos (project_paths may have changed)
     try {
       const allRepos = await ReposAPI.search("");
       sessionsStore.setRepos(allRepos.filter((r) => r.agents.length > 0));

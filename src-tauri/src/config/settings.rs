@@ -34,8 +34,6 @@ pub struct WindowGeometry {
 pub struct AppSettings {
     pub default_shell: String,
     pub default_shell_args: Vec<String>,
-    /// Agent folders and parent folders to scan for potential agents
-    pub repo_paths: Vec<String>,
     /// Available coding agents
     pub agents: Vec<AgentConfig>,
     /// Configured Telegram bots for bridge
@@ -140,24 +138,21 @@ fn default_sidebar_style() -> String {
 
 impl Default for AppSettings {
     fn default() -> Self {
-        let (default_shell, default_shell_args, repo_paths) = if cfg!(target_os = "windows") {
+        let (default_shell, default_shell_args) = if cfg!(target_os = "windows") {
             (
                 "powershell.exe".to_string(),
                 vec!["-NoLogo".to_string()],
-                vec![],
             )
         } else {
             (
                 "/bin/bash".to_string(),
                 vec![],
-                vec![format!("{}/repos", dirs::home_dir().unwrap_or_default().display())],
             )
         };
 
         Self {
             default_shell,
             default_shell_args,
-            repo_paths,
             agents: vec![],
             telegram_bots: vec![],
             start_only_coordinators: true,

@@ -421,7 +421,7 @@ pub async fn discover_ac_agents(
     let mut teams: Vec<AcTeam> = Vec::new();
     let mut workgroups: Vec<AcWorkgroup> = Vec::new();
 
-    for base_path in &cfg.repo_paths {
+    for base_path in &cfg.project_paths {
         let base = Path::new(base_path);
         if !base.is_dir() {
             continue;
@@ -740,7 +740,7 @@ pub async fn create_ac_project(path: String) -> Result<(), String> {
 }
 
 /// Discover AC agents/workgroups from a single project path.
-/// Unlike discover_ac_agents which scans repo_paths from settings,
+/// Unlike discover_ac_agents which scans project_paths from settings,
 /// this targets a specific folder.
 #[tauri::command]
 pub async fn discover_project(

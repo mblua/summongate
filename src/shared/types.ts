@@ -115,7 +115,6 @@ export interface WindowGeometry {
 export interface AppSettings {
   defaultShell: string;
   defaultShellArgs: string[];
-  repoPaths: string[];
   agents: AgentConfig[];
   telegramBots: TelegramBotConfig[];
   startOnlyCoordinators: boolean;

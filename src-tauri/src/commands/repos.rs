@@ -95,7 +95,7 @@ pub async fn search_repos(
     let mut results: Vec<RepoMatch> = Vec::new();
     let mut seen_paths = std::collections::HashSet::new();
 
-    for base_path in &cfg.repo_paths {
+    for base_path in &cfg.project_paths {
         let base = Path::new(base_path);
         if !base.is_dir() {
             continue;

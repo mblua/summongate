@@ -224,7 +224,7 @@ async fn dispatch_inner(state: &WsState, cmd: &str, args: &Value) -> Result<Valu
         "search_repos" => {
             let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let cfg = state.settings.read().await;
-            let repo_paths = cfg.repo_paths.clone();
+            let repo_paths = cfg.project_paths.clone();
             drop(cfg);
 
             // Re-use the Tauri command via invoke on the app handle

@@ -67,7 +67,7 @@ impl MailboxPoller {
         let settings = app.state::<SettingsState>();
         let repo_paths = {
             let cfg = settings.read().await;
-            cfg.repo_paths.clone()
+            cfg.project_paths.clone()
         };
 
         // Also scan CWDs of active sessions for repos not in settings
@@ -1081,10 +1081,10 @@ impl MailboxPoller {
             }
         }
 
-        // Check settings repo_paths
+        // Check settings project_paths
         let settings = app.state::<SettingsState>();
         let cfg = settings.read().await;
-        for rp in &cfg.repo_paths {
+        for rp in &cfg.project_paths {
             let normalized = rp.replace('\\', "/");
             if self.agent_name_from_path(rp) == agent_name
                 || normalized.ends_with(agent_name)
@@ -1109,11 +1109,11 @@ impl MailboxPoller {
             }
         }
 
-        // Check WG replicas: "wg-name/agent" → scan repo_paths for .ac-new/wg-name/__agent_agent/
+        // Check WG replicas: "wg-name/agent" → scan project_paths for .ac-new/wg-name/__agent_agent/
         if agent_name.starts_with("wg-") {
             if let Some((wg_name, agent_short)) = agent_name.split_once('/') {
                 let replica_dir = format!("__agent_{}", agent_short);
-                for rp in &cfg.repo_paths {
+                for rp in &cfg.project_paths {
                     let base = std::path::Path::new(rp);
                     if !base.is_dir() {
                         continue;

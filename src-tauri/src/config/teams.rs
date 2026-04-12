@@ -235,12 +235,12 @@ pub fn can_communicate(from: &str, to: &str, teams: &[DiscoveredTeam]) -> bool {
 }
 
 /// Discover all teams from all known project paths.
-/// Scans settings.repo_paths (and immediate children) for `.ac-new/_team_*/config.json`.
+/// Scans settings.project_paths (and immediate children) for `.ac-new/_team_*/config.json`.
 pub fn discover_teams() -> Vec<DiscoveredTeam> {
     let settings = crate::config::settings::load_settings();
     let mut teams = Vec::new();
 
-    for repo_path in &settings.repo_paths {
+    for repo_path in &settings.project_paths {
         let base = Path::new(repo_path);
         if !base.is_dir() {
             continue;

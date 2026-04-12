@@ -494,9 +494,9 @@ pub fn execute(args: ListPeersArgs) -> i32 {
     }
 
     // ── WG replica discovery ──────────────────────────────────────────────
-    // Scan repo_paths for .ac-new/wg-*/__agent_* replicas
+    // Scan project_paths for .ac-new/wg-*/__agent_* replicas
     let settings = crate::config::settings::load_settings();
-    for base_path in &settings.repo_paths {
+    for base_path in &settings.project_paths {
         let base = Path::new(base_path);
         if !base.is_dir() {
             continue;
