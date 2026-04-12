@@ -528,6 +528,13 @@ pub fn run() {
                             false, // skip_continue
                         ).await {
                             Ok(info) => {
+                                // Restore config_dir from persisted state (not auto-detectable for custom binaries)
+                                if ps.config_dir.is_some() {
+                                    if let Ok(new_uuid) = uuid::Uuid::parse_str(&info.id) {
+                                        let mgr = session_mgr_clone.read().await;
+                                        mgr.set_config_dir(new_uuid, ps.config_dir.clone()).await;
+                                    }
+                                }
                                 if ps.was_active {
                                     active_id = Some(info.id);
                                 }

@@ -219,7 +219,7 @@ pub async fn snapshot_sessions(mgr: &SessionManager) -> Vec<PersistedSession> {
             was_active: active_id.as_deref() == Some(&s.id),
             git_branch_source: s.git_branch_source.clone(),
             git_branch_prefix: s.git_branch_prefix.clone(),
-            config_dir: None, // re-resolved on restore from shell command
+            config_dir: s.config_dir.clone(),
             // Runtime fields for CLI consumption
             id: Some(s.id.clone()),
             status: Some(s.status.clone()),

@@ -560,7 +560,7 @@ pub async fn restart_session(
     let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
 
     // 1. Read config from existing session BEFORE destroying it
-    let (shell, shell_args, cwd, name, git_branch_source, git_branch_prefix) = {
+    let (shell, shell_args, cwd, name, git_branch_source, git_branch_prefix, old_config_dir) = {
         let mgr = session_mgr.read().await;
         let session = mgr.get_session(uuid).await.ok_or("Session not found")?;
         (
@@ -570,6 +570,7 @@ pub async fn restart_session(
             session.name.clone(),
             session.git_branch_source.clone(),
             session.git_branch_prefix.clone(),
+            session.config_dir.clone(),
         )
     };
 
@@ -604,6 +605,12 @@ pub async fn restart_session(
     let new_uuid = Uuid::parse_str(&session_info.id).map_err(|e| e.to_string())?;
     {
         let mgr = session_mgr.read().await;
+        // Carry config_dir from the old session to the new one.
+        // For custom binaries (e.g. claude-phi), resolve_config_dir returns None
+        // so create_session_inner doesn't set it — we must carry it explicitly.
+        if let Some(ref dir) = old_config_dir {
+            mgr.set_config_dir(new_uuid, Some(dir.clone())).await;
+        }
         let _ = mgr.switch_session(new_uuid).await;
     }
     let _ = app.emit("session_switched", serde_json::json!({ "id": session_info.id }));
@@ -626,7 +633,7 @@ pub async fn restart_session(
                 if let Some(bot) = bot {
                     let pty_arc = pty_mgr.inner().clone();
                     let jsonl_cwd = if session_info.is_claude { Some(cwd.clone()) } else { None };
-                    let bridge_config_dir = session_info.config_dir.as_ref().map(std::path::PathBuf::from);
+                    let bridge_config_dir = old_config_dir.as_ref().map(std::path::PathBuf::from);
                     let mut tg = tg_mgr.lock().await;
                     if let Ok(bridge_info) = tg.attach(new_uuid, &bot, pty_arc, app.clone(), jsonl_cwd, bridge_config_dir) {
                         let _ = app.emit("telegram_bridge_attached", bridge_info);
