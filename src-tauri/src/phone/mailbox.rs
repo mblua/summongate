@@ -384,12 +384,16 @@ impl MailboxPoller {
                 if !matches!(s.status, SessionStatus::Exited(_)) {
                     return Err("Destination agent session is active but not idle (waiting for input)".to_string());
                 }
-                log::info!("[mailbox] wake: session {} is Exited, falling through to spawn", session_id);
-                // fall through to spawn path
+                log::info!("[mailbox] wake: session {} is Exited, destroying before respawn", session_id);
+                // Drop read lock before destroy call — release promptly (destroy acquires its own read lock)
+                drop(mgr);
+                if let Err(e) = crate::commands::session::destroy_session_inner(app, session_id).await {
+                    log::error!("[mailbox] wake: failed to destroy exited session {}: {}", session_id, e);
+                }
             } else {
                 log::warn!("[mailbox] wake: session {} not in list_sessions", session_id);
+                drop(mgr);
             }
-            drop(mgr);
         }
 
         // ── No active session (or only Exited) — spawn a persistent one ──
@@ -483,12 +487,25 @@ impl MailboxPoller {
                     // Existing session is interactive — no response markers
                     return self.inject_into_pty(app, session_id, msg, true).await;
                 }
+                if matches!(s.status, SessionStatus::Exited(_)) {
+                    log::info!("[mailbox] wake-and-sleep: session {} is Exited, destroying before respawn", session_id);
+                    // Drop read lock before destroy call — release promptly (destroy acquires its own read lock)
+                    drop(mgr);
+                    if let Err(e) = crate::commands::session::destroy_session_inner(app, session_id).await {
+                        log::error!("[mailbox] wake-and-sleep: failed to destroy exited session {}: {}", session_id, e);
+                    }
+                    // Fall through to spawn temporary session
+                    // (intentional: Exited persistent session is replaced by a temp session for this delivery)
+                } else {
+                    // Session exists and is truly busy (Running, not waiting for input)
+                    return Err("Destination agent session exists but is busy (not idle)".to_string());
+                }
+            } else {
+                drop(mgr);
             }
-            // Session exists but is busy — reject
-            return Err("Destination agent session exists but is busy (not idle)".to_string());
         }
 
-        // No active session — need to spawn a temporary one.
+        // No active session (or Exited session was destroyed) — spawn a temporary one.
         log::info!("[mailbox] wake-and-sleep: no active session for '{}', spawning temporary session", msg.to);
         // Determine which agent CLI to use.
         let agent_command = self.resolve_agent_command(app, msg).await;
