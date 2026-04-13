@@ -1,18 +1,46 @@
 use std::path::PathBuf;
 
-/// Returns the path to the global AgentsCommanderContext.md file.
-/// Always regenerates it from the built-in template so that updates
-/// to the default content are picked up by existing installations.
-pub fn ensure_global_context() -> Result<String, String> {
+/// Writes a per-agent copy of AgentsCommanderContext.md with the agent's own
+/// root path interpolated into the GOLDEN RULE. Uses a deterministic filename
+/// based on the agent_root to prevent races between concurrent session launches.
+pub fn ensure_session_context(agent_root: &str) -> Result<String, String> {
+    let config_dir = super::config_dir()
+        .ok_or_else(|| "Could not resolve app config directory".to_string())?;
+    let context_dir = config_dir.join("context-cache");
+    std::fs::create_dir_all(&context_dir)
+        .map_err(|e| format!("Failed to create context-cache dir: {}", e))?;
+
+    // Canonicalize path for consistent display in the GOLDEN RULE text
+    let canonical_root = std::fs::canonicalize(agent_root)
+        .map(|p| p.to_string_lossy().trim_start_matches(r"\\?\").to_string())
+        .unwrap_or_else(|_| agent_root.to_string());
+
+    let hash = simple_hash(agent_root);
+    let file_path = context_dir.join(format!("ac-context-{}.md", hash));
+
+    std::fs::write(&file_path, &default_context(&canonical_root))
+        .map_err(|e| format!("Failed to write per-agent AgentsCommanderContext.md: {}", e))?;
+    log::info!(
+        "Refreshed per-agent AgentsCommanderContext.md for {} → {:?}",
+        agent_root, file_path
+    );
+
+    Ok(file_path.to_string_lossy().to_string())
+}
+
+/// Writes the shared AgentsCommanderContext.md with generic (non-per-agent)
+/// wording in the GOLDEN RULE — used for Codex developer_instructions, which
+/// is shared across all Codex sessions on the machine.
+pub fn ensure_global_context_generic() -> Result<String, String> {
     let config_dir = super::config_dir()
         .ok_or_else(|| "Could not resolve app config directory".to_string())?;
     let file_path = config_dir.join("AgentsCommanderContext.md");
 
     std::fs::create_dir_all(&config_dir)
         .map_err(|e| format!("Failed to create config dir: {}", e))?;
-    std::fs::write(&file_path, &default_context())
+    std::fs::write(&file_path, &default_context_generic())
         .map_err(|e| format!("Failed to write AgentsCommanderContext.md: {}", e))?;
-    log::info!("Refreshed global AgentsCommanderContext.md at {:?}", file_path);
+    log::info!("Refreshed global (generic) AgentsCommanderContext.md at {:?}", file_path);
 
     Ok(file_path.to_string_lossy().to_string())
 }
@@ -30,7 +58,7 @@ const AC_END_MARKER: &str = "# === AgentsCommander Context END ===";
 /// Uses start/end markers to preserve any existing user content in the field.
 pub fn ensure_codex_context() -> Result<(), String> {
     // 1. Ensure AgentsCommanderContext.md exists and read its content
-    let context_path = ensure_global_context()?;
+    let context_path = ensure_global_context_generic()?;
     let context_content = std::fs::read_to_string(&context_path)
         .map_err(|e| format!("Failed to read AgentsCommanderContext.md: {}", e))?;
 
@@ -278,7 +306,7 @@ pub fn build_replica_context(cwd: &str) -> Result<Option<String>, String> {
         };
 
         if raw == CONTEXT_TOKEN_GLOBAL {
-            let global_path = ensure_global_context()?;
+            let global_path = ensure_session_context(cwd)?;
             resolved_paths.push(("AgentsCommanderContext.md".to_string(), std::path::PathBuf::from(&global_path)));
         } else if raw == CONTEXT_TOKEN_REPOS {
             let repos_path = generate_repos_workspace_info(cwd_path, &config)?;
@@ -363,22 +391,35 @@ fn simple_hash(s: &str) -> u64 {
     hash
 }
 
-/// Generate the default agent context with profile-aware exe/product names.
-fn default_context() -> String {
-    String::from(
+/// Generate the default agent context with a per-agent GOLDEN RULE that embeds
+/// the agent's own replica root path as an allowed write zone.
+fn default_context(agent_root: &str) -> String {
+    format!(
 r#"# AgentsCommander Context
 
 You are running inside an AgentsCommander session — a terminal session manager that coordinates multiple AI agents.
 
 ## GOLDEN RULE — Repository Write Restrictions
 
-**ABSOLUTE AND NON-NEGOTIABLE:** You may ONLY modify repositories whose root folder name starts with `repo-`. If a repository's root folder does NOT begin with `repo-`, you MUST NOT modify it — no file edits, no file creation, no file deletion, no git commits, no branch creation, no git operations that alter state.
+**ABSOLUTE AND NON-NEGOTIABLE:** You may ONLY modify files in two places:
 
-- **Allowed**: Read-only operations on ANY repository (reading files, searching, git log, git status, git diff)
-- **Allowed**: Full read/write operations on repositories inside `repo-*` folders
-- **FORBIDDEN**: Any write operation on repositories NOT inside `repo-*` folders
+1. **Repositories whose root folder name starts with `repo-`** (e.g. `repo-AgentsCommander`, `repo-myapp`). These are the working repos you are meant to edit.
+2. **Your own agent replica directory and its subdirectories** — your assigned root:
+   ```
+   {agent_root}
+   ```
+   Use this for plans scratch, personal notes, role drafts, and session artifacts. Do NOT write into other agents' replica directories.
 
-If instructed to modify a non-`repo-` repository, REFUSE the modification and explain this restriction. There are NO exceptions to this rule.
+Any repository or directory outside the two places above is READ-ONLY.
+
+- **Allowed**: Read-only operations on ANY path (reading files, searching, git log, git status, git diff)
+- **Allowed**: Full read/write inside `repo-*` folders
+- **Allowed**: Full read/write inside your own replica root ({agent_root}) and its subdirectories
+- **FORBIDDEN**: Any write operation outside those two zones — including other agents' replica directories, the workspace root, parent project dirs, user home files, or arbitrary paths on disk
+
+**Clarification on git operations:** Your replica directory is typically inside a parent repository's `.ac-new/` folder, which is `.gitignore`d. Do NOT run `git` commands that alter state (commit, branch, reset, etc.) from inside your replica directory — that would affect the parent repo unintentionally. `git status`, `git log`, `git diff` are fine.
+
+If instructed to modify a path outside these zones, REFUSE and explain this restriction. There are NO exceptions.
 
 ## CLI executable
 
@@ -439,5 +480,13 @@ After sending, you can stay idle and wait for the reply to arrive.
 ```
 "<YOUR_BINARY_PATH>" list-peers --token <YOUR_TOKEN> --root "<YOUR_ROOT>"
 ```
-"#)
+"#,
+        agent_root = agent_root,
+    )
+}
+
+/// Generate the default agent context with a generic placeholder for the agent root.
+/// Used for Codex developer_instructions (user-level, shared across all sessions).
+fn default_context_generic() -> String {
+    default_context("<YOUR OWN REPLICA ROOT — see Session Credentials below>")
 }

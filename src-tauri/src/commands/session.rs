@@ -114,8 +114,8 @@ pub async fn create_session_inner(
                 Some(combined_path)
             }
             Ok(None) => {
-                // No replica context[] — use global context only
-                match crate::config::session_context::ensure_global_context() {
+                // No replica context[] — use per-agent context only
+                match crate::config::session_context::ensure_session_context(&cwd) {
                     Ok(path) => Some(path),
                     Err(e) => {
                         log::warn!("Failed to ensure AgentsCommanderContext.md: {}", e);
