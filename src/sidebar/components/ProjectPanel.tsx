@@ -94,15 +94,13 @@ const ProjectPanel: Component = () => {
     if (existing) {
       if (!isSessionLive(existing)) {
         // Session exists but PTY has exited — restart it
-        const restarted = await SessionAPI.restart(existing.id);
-        await SessionAPI.switch(restarted.id);
-        if (isTauri) {
-          const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-          const detachedLabel = `terminal-${restarted.id.replace(/-/g, "")}`;
-          const detachedWin = await WebviewWindow.getByLabel(detachedLabel);
-          if (!detachedWin) {
+        try {
+          await SessionAPI.restart(existing.id);
+          if (isTauri) {
             await WindowAPI.ensureTerminal();
           }
+        } catch (e) {
+          console.error("Failed to restart session:", e);
         }
         return;
       }
