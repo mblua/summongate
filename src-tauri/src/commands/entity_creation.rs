@@ -1236,5 +1236,21 @@ async fn git_clone_async(url: &str, target: &Path) -> Result<(), String> {
         return Err(format!("git clone failed: {}", capped));
     }
 
+    if !target.join(".git").join("index").exists() {
+        log::warn!(
+            "[entity_creation] .git/index missing after clone for {}, running fallback git reset",
+            url
+        );
+        let mut reset_cmd = tokio::process::Command::new("git");
+        reset_cmd.args(["reset"]).current_dir(target);
+        #[cfg(windows)]
+        {
+            #[allow(unused_imports)]
+            use std::os::windows::process::CommandExt;
+            reset_cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let _ = reset_cmd.output().await;
+    }
+
     Ok(())
 }
