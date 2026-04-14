@@ -37,6 +37,7 @@ This runs the full pipeline:
 | Project root | `C:\Users\maria\0_repos\agentscommander` |
 | Build output | `C:\Users\maria\0_repos\agentscommander\src-tauri\target\release\agentscommander-new.exe` |
 | Deploy target | `C:\Users\maria\0_mmb\0_AC\agentscommander_standalone.exe` |
+| Deploy target (WG copy) | `C:\Users\maria\0_mmb\0_AC\agentscommander_standalone_<wg>.exe` (e.g. `_wg-2.exe`) |
 | Working binary (reference) | `C:\Users\maria\0_mmb\0_AC\agentscommander_mb.exe` |
 
 ---
@@ -87,9 +88,14 @@ powershell -NoProfile -Command "Stop-Process -Id <PID> -Force"
 
 ### 5. Deploy
 
+Copy the binary to **both** the standalone path and a workgroup-specific copy. The workgroup name is derived from the workgroup directory name (e.g. `wg-2-dev-team` → `wg-2`):
+
 ```bash
 cp "C:\Users\maria\0_repos\agentscommander\src-tauri\target\release\agentscommander-new.exe" "C:\Users\maria\0_mmb\0_AC\agentscommander_standalone.exe"
+cp "C:\Users\maria\0_repos\agentscommander\src-tauri\target\release\agentscommander-new.exe" "C:\Users\maria\0_mmb\0_AC\agentscommander_standalone_wg-2.exe"
 ```
+
+**Rule:** Always deploy both files. The workgroup copy allows running multiple workgroup instances simultaneously without file locking conflicts.
 
 ### 6. Post-deploy verification
 

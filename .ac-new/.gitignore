@@ -1,3 +1,6 @@
 # AgentsCommander: exclude workgroup cloned repos from parent git tracking.
 # Without this, parent repo operations (checkout, reset) corrupt child clones.
 wg-*/
+
+# AgentsCommander: exclude session context debug copies.
+last_ac_context.md

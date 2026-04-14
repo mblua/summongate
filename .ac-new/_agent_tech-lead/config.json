@@ -1,0 +1,17 @@
+{
+  "tooling": {
+    "codingAgents": {
+      "agent_1775433898536_1": {
+        "acSessionId": "9af7e45c-f885-40ab-9761-51e85594efc6",
+        "app": "Claude Code",
+        "lastUsed": "2026-04-11T23:37:04.994762400+00:00"
+      },
+      "agent_1775589794947_0": {
+        "acSessionId": "d499e8c3-f643-4a06-8c0a-a00f8c901a64",
+        "app": "Claude Code",
+        "lastUsed": "2026-04-09T05:57:31.447641400+00:00"
+      }
+    },
+    "lastCodingAgent": "agent_1775433898536_1"
+  }
+}

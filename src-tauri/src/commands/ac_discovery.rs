@@ -697,31 +697,44 @@ pub async fn check_project_path(path: String) -> Result<bool, String> {
     Ok(ac_new.is_dir())
 }
 
-/// Ensure .ac-new/.gitignore exists and contains the `wg-*/` exclusion pattern.
-/// This prevents parent repo operations (checkout, reset) from corrupting
-/// cloned repos inside workgroup directories.
+/// Ensure .ac-new/.gitignore exists and contains all required exclusion patterns.
+/// Called during project creation, workgroup creation, and opportunistically during discovery.
 pub(crate) fn ensure_ac_new_gitignore(ac_new_dir: &Path) -> Result<(), String> {
     let gitignore_path = ac_new_dir.join(".gitignore");
-    let required_pattern = "wg-*/";
+
+    // Each entry: (pattern, comment explaining why)
+    let required_entries: &[(&str, &str)] = &[
+        (
+            "wg-*/",
+            "# AgentsCommander: exclude workgroup cloned repos from parent git tracking.\n# Without this, parent repo operations (checkout, reset) corrupt child clones.",
+        ),
+        (
+            "last_ac_context.md",
+            "# AgentsCommander: exclude session context debug copies.",
+        ),
+    ];
 
     if gitignore_path.exists() {
         let content = std::fs::read_to_string(&gitignore_path)
             .map_err(|e| format!("Failed to read .ac-new/.gitignore: {}", e))?;
 
-        if !content.lines().any(|line| line.trim() == required_pattern) {
+        let mut additions = String::new();
+        for (pattern, comment) in required_entries {
+            if !content.lines().any(|line| line.trim() == *pattern) {
+                additions.push_str(&format!("\n{}\n{}\n", comment, pattern));
+            }
+        }
+
+        if !additions.is_empty() {
             let separator = if content.ends_with('\n') { "" } else { "\n" };
-            let addition = format!(
-                "{}# AgentsCommander: exclude workgroup cloned repos from parent git tracking.\n{}\n",
-                separator, required_pattern
-            );
-            std::fs::write(&gitignore_path, format!("{}{}", content, addition))
+            std::fs::write(&gitignore_path, format!("{}{}{}", content, separator, additions))
                 .map_err(|e| format!("Failed to update .ac-new/.gitignore: {}", e))?;
         }
     } else {
-        let content = format!(
-            "# AgentsCommander: exclude workgroup cloned repos from parent git tracking.\n# Without this, parent repo operations (checkout, reset) corrupt child clones.\n{}\n",
-            required_pattern
-        );
+        let mut content = String::new();
+        for (pattern, comment) in required_entries {
+            content.push_str(&format!("{}\n{}\n\n", comment, pattern));
+        }
         std::fs::write(&gitignore_path, content)
             .map_err(|e| format!("Failed to create .ac-new/.gitignore: {}", e))?;
     }

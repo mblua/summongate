@@ -29,7 +29,7 @@ Continue passing the plan between architect, dev, and grinch until all three agr
 Once there is consensus, send the plan to the appropriate dev to apply the solution.
 
 ### Step 6b — Dev runs feature-dev review (MANDATORY)
-After dev-rust completes the implementation, **ALWAYS** request that dev-rust runs `/feature-dev` on the completed changes before proceeding to grinch review. This is non-negotiable. The feature-dev review uses parallel code-reviewer agents to catch issues that a single reviewer might miss. If feature-dev flags HIGH severity issues, dev-rust must fix them before moving to Step 7.
+After dev-rust completes the implementation, **ALWAYS** request that dev-rust runs /feature-dev ONLY IF they are running Claude Code. The feature-dev review uses parallel code-reviewer agents to catch issues that a single reviewer might miss. If feature-dev flags HIGH severity issues, dev-rust must fix them before moving to Step 7.
 
 ### Step 7 — Grinch reviews the implementation
 Send the completed work to grinch to search for bugs. If bugs are found: send back to dev to fix, then back to grinch to re-review. Loop until grinch finds nothing.
