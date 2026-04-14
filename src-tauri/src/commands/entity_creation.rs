@@ -1213,7 +1213,7 @@ async fn git_clone_async(url: &str, target: &Path) -> Result<(), String> {
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let mut cmd = tokio::process::Command::new("git");
-    cmd.args(["clone", "--depth", "1", url])
+    cmd.args(["-c", "core.longpaths=true", "clone", "--depth", "1", url])
         .arg(target.as_os_str());
 
     #[cfg(windows)]
@@ -1234,6 +1234,22 @@ async fn git_clone_async(url: &str, target: &Path) -> Result<(), String> {
         // Cap error message length to avoid sending huge progress output to frontend
         let capped = if trimmed.len() > 512 { &trimmed[..512] } else { trimmed };
         return Err(format!("git clone failed: {}", capped));
+    }
+
+    if !target.join(".git").join("index").exists() {
+        log::warn!(
+            "[entity_creation] .git/index missing after clone for {}, running fallback git reset",
+            url
+        );
+        let mut reset_cmd = tokio::process::Command::new("git");
+        reset_cmd.args(["reset"]).current_dir(target);
+        #[cfg(windows)]
+        {
+            #[allow(unused_imports)]
+            use std::os::windows::process::CommandExt;
+            reset_cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let _ = reset_cmd.output().await;
     }
 
     Ok(())
