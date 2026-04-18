@@ -15,9 +15,11 @@ ROUTING: Before delivery, the CLI validates that the sender can reach the destin
 membership and coordinator rules (teams.json). If routing fails, the CLI exits immediately with code 1.\n\n\
 DISCOVERY: Use `list-peers` to get valid agent names for --to. The \"name\" field in the JSON output \
 is the value to use.\n\n\
-QUOTING: If your message contains quotes, special characters, or spans multiple lines, use --message-file \
-instead of --message. Write the message to a temporary file and pass its path. This avoids shell parsing \
-issues, especially in PowerShell.")]
+FILE-BASED MESSAGING: --send <filename> delivers the file at <workgroup-root>/messaging/<filename> \
+to the recipient. The PTY only carries a short notification pointing to the absolute path; the \
+recipient reads the file via filesystem, bypassing PTY truncation. Sender MUST write the file before \
+invoking this command. Filename must exist in the messaging directory and match the canonical shape: \
+YYYYMMDD-HHMMSS-<wgN>-<from>-to-<wgN>-<to>-<slug>[.N].md.")]
 pub struct SendArgs {
     /// Session token for authentication (from '# === Session Credentials ===' block)
     #[arg(long)]
@@ -27,14 +29,11 @@ pub struct SendArgs {
     #[arg(long)]
     pub to: String,
 
-    /// Message body. Required unless --command or --message-file is used
-    #[arg(long, default_value = "")]
-    pub message: String,
-
-    /// Path to a file containing the message body. Shell-safe alternative to --message:
-    /// avoids quoting issues in PowerShell and other shells. Takes priority over --message
+    /// Filename (not path) of a message file that already exists in
+    /// <workgroup-root>/messaging/. Sender writes the file BEFORE calling send.
+    /// Cannot be combined with --command.
     #[arg(long)]
-    pub message_file: Option<String>,
+    pub send: Option<String>,
 
     /// Delivery mode (see DELIVERY MODES below)
     #[arg(long, default_value = "wake")]
@@ -45,7 +44,7 @@ pub struct SendArgs {
     pub get_output: bool,
 
     /// Remote command to execute on the agent's PTY [possible values: clear, compact].
-    /// The agent must be idle. Cannot be combined with --message
+    /// The agent must be idle. Cannot be combined with --send
     #[arg(long)]
     pub command: Option<String>,
 
@@ -134,22 +133,81 @@ pub fn execute(args: SendArgs) -> i32 {
         }
     }
 
-    // Resolve message body: --message-file takes priority over --message
-    let message_body = if let Some(ref file_path) = args.message_file {
-        match std::fs::read_to_string(file_path) {
-            Ok(content) => content.trim_end().to_string(),
+    // --send + --command mutually exclusive (P0-3)
+    if args.send.is_some() && args.command.is_some() {
+        eprintln!("Error: --send and --command are mutually exclusive");
+        return 1;
+    }
+
+    // Resolve message body from --send (file-based messaging per plan §4.1 [r2])
+    let message_body = if let Some(ref filename) = args.send {
+        let agent_root_path = std::path::Path::new(&root);
+        let wg_root = match crate::phone::messaging::workgroup_root(agent_root_path) {
+            Ok(p) => p,
             Err(e) => {
-                eprintln!("Error: failed to read message file '{}': {}", file_path, e);
+                eprintln!(
+                    "Error: --send requires --root under a wg-<N>-* ancestor; {}",
+                    e
+                );
                 return 1;
             }
+        };
+        let msg_dir = match crate::phone::messaging::messaging_dir(&wg_root) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Error: failed to resolve messaging dir: {}", e);
+                return 1;
+            }
+        };
+        let abs = match crate::phone::messaging::resolve_existing_message(&msg_dir, filename) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                return 1;
+            }
+        };
+
+        // UNC-strip only at the single emission site (plan §13.4).
+        let abs_str = abs.to_string_lossy();
+        let abs_display = abs_str.trim_start_matches(r"\\?\");
+        let body = format!("Nuevo mensaje: {}. Lee este archivo.", abs_display);
+
+        // Pre-wrap long-body warn (plan §13.4 §7.9).
+        if body.len() > 200 {
+            log::warn!(
+                "[send] notification body length {} is unusually long",
+                body.len()
+            );
         }
+
+        // PTY_SAFE_MAX clamp with dynamic overhead (plan §13.2 P1-4; NIT-resolution: dynamic
+        // overhead using sender-side proxies for recipient-side template values).
+        let bin_path = crate::resolve_bin_label();
+        let wg_root_str = wg_root.to_string_lossy();
+        let overhead = crate::phone::messaging::estimate_wrap_overhead(
+            &sender,
+            &wg_root_str,
+            &bin_path,
+        );
+        if body.len() + overhead > crate::phone::messaging::PTY_SAFE_MAX {
+            eprintln!(
+                "Error: notification exceeds PTY-safe length (body {} + overhead {} > {}). \
+                 Shorten slug or move workgroup to a shallower path.",
+                body.len(),
+                overhead,
+                crate::phone::messaging::PTY_SAFE_MAX
+            );
+            return 1;
+        }
+
+        body
     } else {
-        args.message.clone()
+        String::new()
     };
 
-    // Require at least --message/--message-file or --command
+    // Require at least --send or --command
     if message_body.is_empty() && args.command.is_none() {
-        eprintln!("Error: --message, --message-file, or --command is required");
+        eprintln!("Error: --send or --command is required");
         return 1;
     }
 

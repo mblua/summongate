@@ -42,14 +42,22 @@ You always run inside an AgentsCommander PTY session, even if no init prompt is 
 
 **MANDATORY: Before sending any message, you MUST resolve the exact agent name.** Never guess or assume agent names. Run `list-peers` or read `~/.agentscommander/teams.json` (PROD) / `~/.agentscommander-dev/teams.json` (DEV) to get the correct `name` field. Agent names are path-based (e.g. `"Agents/Shipper"`, `"0_repos/agentscommander_3"`) — not display labels.
 
+Messaging is **file-based** to avoid PTY truncation. Two steps:
+
+1. Write your message to a new file in the workgroup messaging directory: `<workgroup-root>/messaging/YYYYMMDD-HHMMSS-<wgN>-<you>-to-<wgN>-<peer>-<slug>.md` (UTC timestamp, sanitized kebab-case slug ≤50 chars).
+2. Fire the send:
+
 ```bash
-agentscommander.exe send --token <TOKEN> --root "<CWD>" --to "<agent_name>" --message "..." --mode wake
+agentscommander.exe send --token <TOKEN> --root "<CWD>" --to "<agent_name>" --send <filename> --mode wake
 ```
 
 - `--token`: your session token (provided in the Session Init block injected into your console)
-- `--root`: your working directory
+- `--root`: your working directory (must be under a `wg-<N>-*` ancestor)
 - `--to`: target agent name — **must be verified first** via `list-peers` or `teams.json`
+- `--send`: filename (not path) of a file you already wrote under `<workgroup-root>/messaging/`
 - `--mode wake`: fire-and-forget, do NOT use `--get-output` (blocks interactive sessions)
+
+The recipient gets a short notification pointing at the file's absolute path and reads the content via filesystem.
 
 ### Listing available peers
 

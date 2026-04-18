@@ -1,0 +1,522 @@
+//! File-based inter-agent messaging primitives.
+//!
+//! PTY injection carries only a short notification pointing to a file in
+//! `<workgroup-root>/messaging/`. The recipient reads the file via filesystem,
+//! bypassing PTY truncation for arbitrarily-sized payloads.
+
+use chrono::{DateTime, Utc};
+use std::fs::{File, OpenOptions};
+use std::path::{Path, PathBuf};
+
+pub const MESSAGING_DIR_NAME: &str = "messaging";
+pub const PTY_SAFE_MAX: usize = 500;
+
+const MAX_SLUG_LEN: usize = 50;
+const MAX_COLLISION_SUFFIX: u32 = 99;
+const PTY_WRAP_FIXED: usize = 187;
+
+#[derive(Debug, thiserror::Error)]
+pub enum MessagingError {
+    #[error("no workgroup ancestor found for '{0}'")]
+    NoWorkgroup(String),
+    #[error("slug is empty after sanitization")]
+    EmptySlug,
+    #[error("filename '{0}' contains path separators or traversal")]
+    InvalidFilename(String),
+    #[error("filename '{0}' does not match the required shape")]
+    InvalidShape(String),
+    #[error("message file not found: {0}")]
+    FileNotFound(String),
+    #[error("target is not a regular file: {0}")]
+    NotAFile(String),
+    #[error("collision suffix exhausted (99 retries) for {0}")]
+    CollisionExhausted(String),
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// Resolve the workgroup root by walking up from `agent_root`.
+///
+/// Pure path operation — no filesystem touch, no canonicalization. Tests can
+/// use synthetic paths.
+pub fn workgroup_root(agent_root: &Path) -> Result<PathBuf, MessagingError> {
+    for ancestor in agent_root.ancestors() {
+        if let Some(name) = ancestor.file_name().and_then(|n| n.to_str()) {
+            if is_wg_dir(name) {
+                return Ok(ancestor.to_path_buf());
+            }
+        }
+    }
+    Err(MessagingError::NoWorkgroup(agent_root.display().to_string()))
+}
+
+/// Messaging directory for a workgroup root. Creates the directory if missing.
+pub fn messaging_dir(wg_root: &Path) -> Result<PathBuf, MessagingError> {
+    let dir = wg_root.join(MESSAGING_DIR_NAME);
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+/// Convert a full agent name (e.g. `"wg-7-dev-team/architect"`) to short form
+/// (e.g. `"wg7-architect"`). See plan §2 for the rule.
+pub fn agent_short_name(full_name: &str) -> String {
+    match full_name.split_once('/') {
+        Some((prefix, suffix)) => {
+            let short_prefix = parse_wg_prefix(prefix).unwrap_or_else(|| sanitize(prefix));
+            let short_suffix = sanitize(suffix);
+            format!("{}-{}", short_prefix, short_suffix)
+        }
+        None => sanitize(full_name),
+    }
+}
+
+/// Sanitize a slug: lowercase ASCII, kebab-case, ≤ `MAX_SLUG_LEN` chars.
+/// Returns `EmptySlug` if the result is empty.
+pub fn sanitize_slug(slug: &str) -> Result<String, MessagingError> {
+    let s = sanitize(slug);
+    let truncated: String = s.chars().take(MAX_SLUG_LEN).collect();
+    let trimmed = truncated.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        Err(MessagingError::EmptySlug)
+    } else {
+        Ok(trimmed)
+    }
+}
+
+/// Build the target filename (not a path). Caller supplies a sanitized slug.
+pub fn build_filename(ts: DateTime<Utc>, from_short: &str, to_short: &str, slug: &str) -> String {
+    format!(
+        "{}-{}-to-{}-{}.md",
+        ts.format("%Y%m%d-%H%M%S"),
+        from_short,
+        to_short,
+        slug
+    )
+}
+
+/// Validate the **shape** of a filename against the canonical pattern
+/// `YYYYMMDD-HHMMSS-{from_short}-to-{to_short}-{slug}[.N].md`.
+///
+/// Hard-enforced per plan §13.2 P0-1 to prevent senders from reusing generic
+/// names like `reply.md` and destroying the append-only audit convention.
+pub fn validate_filename_shape(name: &str) -> Result<(), MessagingError> {
+    let invalid = || MessagingError::InvalidShape(name.to_string());
+
+    let stem = name.strip_suffix(".md").ok_or_else(invalid)?;
+
+    // Strip optional ".N" collision suffix (1-2 digits, N >= 1).
+    let stem = match stem.rfind('.') {
+        Some(dot_pos) => {
+            let suffix = &stem[dot_pos + 1..];
+            let is_digit_suffix = !suffix.is_empty()
+                && suffix.len() <= 2
+                && suffix.chars().all(|c| c.is_ascii_digit());
+            if is_digit_suffix {
+                let n: u32 = suffix.parse().map_err(|_| invalid())?;
+                if n == 0 {
+                    return Err(invalid());
+                }
+                &stem[..dot_pos]
+            } else {
+                stem
+            }
+        }
+        None => stem,
+    };
+
+    let parts: Vec<&str> = stem.split('-').collect();
+    if parts.len() < 6 {
+        return Err(invalid());
+    }
+    if parts[0].len() != 8 || !parts[0].chars().all(|c| c.is_ascii_digit()) {
+        return Err(invalid());
+    }
+    if parts[1].len() != 6 || !parts[1].chars().all(|c| c.is_ascii_digit()) {
+        return Err(invalid());
+    }
+
+    // Remaining segments must be non-empty and `[a-z0-9]+`.
+    for p in &parts[2..] {
+        if p.is_empty() {
+            return Err(invalid());
+        }
+        if !p.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()) {
+            return Err(invalid());
+        }
+    }
+
+    // Locate the "to" literal. Must be at index >= 3 (from_short has >=1 part)
+    // and <= parts.len()-3 (to_short and slug each have >=1 part).
+    if parts.len() < 3 {
+        return Err(invalid());
+    }
+    let search_end = parts.len() - 2;
+    if 3 >= search_end {
+        return Err(invalid());
+    }
+    let to_idx = parts[3..search_end]
+        .iter()
+        .position(|&p| p == "to")
+        .map(|i| i + 3)
+        .ok_or_else(invalid)?;
+
+    if to_idx < 3 || parts.len() - to_idx - 1 < 2 {
+        return Err(invalid());
+    }
+
+    Ok(())
+}
+
+/// Atomically allocate a non-colliding path in `messaging_dir` starting from
+/// `base_filename`. Returns the absolute path and an open file handle
+/// (write-only, freshly created via `create_new`).
+///
+/// On collision, retries with `.1.md`, `.2.md`, … up to `MAX_COLLISION_SUFFIX`.
+pub fn create_message_file(
+    messaging_dir: &Path,
+    base_filename: &str,
+) -> Result<(PathBuf, File), MessagingError> {
+    validate_filename_shape(base_filename)?;
+
+    let stem = base_filename
+        .strip_suffix(".md")
+        .ok_or_else(|| MessagingError::InvalidFilename(base_filename.to_string()))?;
+
+    for n in 0..=MAX_COLLISION_SUFFIX {
+        let filename = if n == 0 {
+            base_filename.to_string()
+        } else {
+            format!("{}.{}.md", stem, n)
+        };
+        let path = messaging_dir.join(&filename);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => return Ok((path, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(MessagingError::Io(e)),
+        }
+    }
+    Err(MessagingError::CollisionExhausted(base_filename.to_string()))
+}
+
+/// Validate that `filename` exists inside `messaging_dir` and points to a
+/// regular file. Returns the canonicalized absolute path on success.
+///
+/// Rejects path separators, `..`, non-`.md`, off-tree symlinks, and
+/// directories. Shape is also hard-enforced.
+pub fn resolve_existing_message(
+    messaging_dir: &Path,
+    filename: &str,
+) -> Result<PathBuf, MessagingError> {
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err(MessagingError::InvalidFilename(filename.to_string()));
+    }
+    if !filename.ends_with(".md") {
+        return Err(MessagingError::InvalidFilename(filename.to_string()));
+    }
+    validate_filename_shape(filename)?;
+
+    let candidate = messaging_dir.join(filename);
+    if !candidate.exists() {
+        return Err(MessagingError::FileNotFound(filename.to_string()));
+    }
+
+    let abs = std::fs::canonicalize(&candidate)?;
+    let canon_dir = std::fs::canonicalize(messaging_dir)?;
+
+    let abs_parent = abs
+        .parent()
+        .ok_or_else(|| MessagingError::InvalidFilename(filename.to_string()))?;
+    if abs_parent != canon_dir {
+        return Err(MessagingError::InvalidFilename(filename.to_string()));
+    }
+
+    if !abs.metadata()?.is_file() {
+        return Err(MessagingError::NotAFile(abs.display().to_string()));
+    }
+
+    Ok(abs)
+}
+
+/// Estimated PTY wrap overhead for a file-based notification, computed at
+/// send-time using sender-known proxies for recipient-side template variables.
+///
+/// Used by the CLI clamp: `body.len() + estimate_wrap_overhead(...) > PTY_SAFE_MAX`
+/// fails the send. Dynamic (not a constant) so the effective budget scales
+/// with actual agent names, workgroup paths, and binary paths — preventing the
+/// clamp from under- or over-estimating in deployments with unusual dimensions.
+pub fn estimate_wrap_overhead(from: &str, wg_root: &str, bin_path: &str) -> usize {
+    PTY_WRAP_FIXED + 2 * from.len() + wg_root.len() + bin_path.len()
+}
+
+// ─── Internal helpers ────────────────────────────────────────────────────────
+
+fn is_wg_dir(name: &str) -> bool {
+    let rest = match name.strip_prefix("wg-") {
+        Some(r) => r,
+        None => return false,
+    };
+    let n_end = match rest.find('-') {
+        Some(i) => i,
+        None => return false,
+    };
+    let digits = &rest[..n_end];
+    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+}
+
+fn parse_wg_prefix(prefix: &str) -> Option<String> {
+    let rest = prefix.strip_prefix("wg-")?;
+    let n_end = rest.find('-')?;
+    let digits = &rest[..n_end];
+    if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("wg{}", digits))
+}
+
+fn sanitize(s: &str) -> String {
+    let lowered: String = s
+        .chars()
+        .map(|c| {
+            if c.is_ascii() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+
+    let mut out = String::with_capacity(lowered.len());
+    let mut last_dash = false;
+    for c in lowered.chars() {
+        if c == '-' {
+            if !last_dash {
+                out.push(c);
+            }
+            last_dash = true;
+        } else {
+            out.push(c);
+            last_dash = false;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn agent_short_name_wg() {
+        assert_eq!(agent_short_name("wg-7-dev-team/architect"), "wg7-architect");
+        assert_eq!(agent_short_name("wg-12-foo-bar/dev-rust"), "wg12-dev-rust");
+    }
+
+    #[test]
+    fn agent_short_name_non_wg() {
+        assert_eq!(agent_short_name("repos/my-project"), "repos-my-project");
+        assert_eq!(agent_short_name("Agents/Shipper"), "agents-shipper");
+    }
+
+    #[test]
+    fn agent_short_name_no_slash() {
+        assert_eq!(agent_short_name("solo-name"), "solo-name");
+    }
+
+    #[test]
+    fn sanitize_slug_typical() {
+        assert_eq!(
+            sanitize_slug("Messaging Redesign!").unwrap(),
+            "messaging-redesign"
+        );
+    }
+
+    #[test]
+    fn sanitize_slug_empty_after_normalize() {
+        assert!(matches!(
+            sanitize_slug("   ---  "),
+            Err(MessagingError::EmptySlug)
+        ));
+    }
+
+    #[test]
+    fn sanitize_slug_truncates_at_max() {
+        let input = "a".repeat(100);
+        assert_eq!(sanitize_slug(&input).unwrap(), "a".repeat(50));
+    }
+
+    #[test]
+    fn workgroup_root_ok() {
+        let p = Path::new("/tmp/wg-7-dev-team/__agent_architect");
+        assert_eq!(
+            workgroup_root(p).unwrap(),
+            PathBuf::from("/tmp/wg-7-dev-team")
+        );
+    }
+
+    #[test]
+    fn workgroup_root_ok_windows_style() {
+        let p = Path::new(r"C:\foo\wg-42-team-x\__agent_a");
+        let wg = workgroup_root(p).unwrap();
+        assert_eq!(
+            wg.file_name().and_then(|n| n.to_str()),
+            Some("wg-42-team-x")
+        );
+    }
+
+    #[test]
+    fn workgroup_root_missing() {
+        let p = Path::new("/tmp/plain/agent");
+        assert!(matches!(
+            workgroup_root(p),
+            Err(MessagingError::NoWorkgroup(_))
+        ));
+    }
+
+    #[test]
+    fn build_filename_canonical() {
+        let ts = Utc.with_ymd_and_hms(2026, 4, 18, 14, 30, 52).unwrap();
+        assert_eq!(
+            build_filename(ts, "wg7-lead", "wg7-arch", "redesign"),
+            "20260418-143052-wg7-lead-to-wg7-arch-redesign.md"
+        );
+    }
+
+    #[test]
+    fn validate_filename_shape_accepts_canonical() {
+        assert!(validate_filename_shape(
+            "20260418-143052-wg7-lead-to-wg7-arch-redesign.md"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn validate_filename_shape_accepts_collision_suffix() {
+        assert!(validate_filename_shape(
+            "20260418-143052-wg7-lead-to-wg7-arch-redesign.1.md"
+        )
+        .is_ok());
+        assert!(validate_filename_shape(
+            "20260418-143052-wg7-lead-to-wg7-arch-redesign.99.md"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn validate_filename_shape_rejects_variants() {
+        let cases = [
+            "reply.md",
+            "20260418-143052-noto.md",
+            "20260418-143052-from-to-to.md", // slug missing
+            "20260418-143052-from-to-to-slug.txt",
+            "20260418-143052-FROM-to-TO-slug.md", // uppercase
+            "20260418-143052-from-to-to-slug.100.md", // 3-digit suffix
+            "20260418-143052-from-to-to-slug.0.md", // zero suffix
+            "2026041-143052-from-to-to-slug.md", // date too short
+            "20260418-14305-from-to-to-slug.md", // time too short
+        ];
+        for c in cases {
+            assert!(
+                validate_filename_shape(c).is_err(),
+                "expected rejection for {:?}",
+                c
+            );
+        }
+    }
+
+    #[test]
+    fn create_and_resolve_round_trip() {
+        let tmp = std::env::temp_dir().join(format!(
+            "ac-msg-test-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let ts = Utc.with_ymd_and_hms(2026, 4, 18, 14, 30, 52).unwrap();
+        let base = build_filename(ts, "wg7-a", "wg7-b", "rt");
+
+        let (p1, f1) = create_message_file(&tmp, &base).unwrap();
+        drop(f1);
+        assert_eq!(p1.file_name().and_then(|n| n.to_str()).unwrap(), base);
+
+        let (p2, f2) = create_message_file(&tmp, &base).unwrap();
+        drop(f2);
+        assert_eq!(
+            p2.file_name().and_then(|n| n.to_str()).unwrap(),
+            "20260418-143052-wg7-a-to-wg7-b-rt.1.md"
+        );
+
+        let (p3, f3) = create_message_file(&tmp, &base).unwrap();
+        drop(f3);
+        assert_eq!(
+            p3.file_name().and_then(|n| n.to_str()).unwrap(),
+            "20260418-143052-wg7-a-to-wg7-b-rt.2.md"
+        );
+
+        let abs = resolve_existing_message(&tmp, &base).unwrap();
+        assert!(abs.is_absolute());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resolve_rejects_traversal() {
+        let tmp = std::env::temp_dir().join(format!(
+            "ac-msg-trav-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        for bad in [
+            "../etc/passwd",
+            "foo/bar.md",
+            r"foo\bar.md",
+            "foo.txt",
+            "bare.md",
+            "..",
+        ] {
+            assert!(
+                resolve_existing_message(&tmp, bad).is_err(),
+                "expected rejection for {:?}",
+                bad
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resolve_rejects_directory_with_md_suffix() {
+        let tmp = std::env::temp_dir().join(format!(
+            "ac-msg-dir-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let name = "20260418-143052-wg7-a-to-wg7-b-dir.md";
+        std::fs::create_dir_all(tmp.join(name)).unwrap();
+
+        assert!(matches!(
+            resolve_existing_message(&tmp, name),
+            Err(MessagingError::NotAFile(_))
+        ));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn estimate_wrap_overhead_monotonic() {
+        let a = estimate_wrap_overhead("from", "/wg/root", "/bin/path");
+        let b = estimate_wrap_overhead("from-longer", "/wg/root", "/bin/path");
+        assert!(b > a);
+        let c = estimate_wrap_overhead("from", "/wg/root/deeper", "/bin/path");
+        assert!(c > a);
+    }
+}

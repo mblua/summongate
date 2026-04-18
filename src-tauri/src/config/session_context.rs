@@ -415,15 +415,23 @@ Your agent root is your current working directory.
 
 **MANDATORY**: Before sending any message, resolve the exact agent name via `list-peers`. Never guess agent names — they follow the format `parent_folder/folder` based on where the agent is triggered.
 
-Fire-and-forget (do NOT use --get-output):
+Messaging is **file-based** to avoid PTY truncation. Two steps:
+
+1. Write your message to a new file in the workgroup messaging directory. The
+   directory lives at `<workgroup-root>/messaging/` (walk up from your root
+   until you find the parent `wg-<N>-*` folder). Filename must follow the
+   pattern `YYYYMMDD-HHMMSS-<wgN>-<you>-to-<wgN>-<peer>-<slug>.md` (UTC
+   timestamp, sanitized kebab-case slug ≤50 chars).
+2. Fire the send:
 
 ```
-"<YOUR_BINARY_PATH>" send --token <YOUR_TOKEN> --root "<YOUR_ROOT>" --to "<agent_name>" --message "..." --mode wake
+"<YOUR_BINARY_PATH>" send --token <YOUR_TOKEN> --root "<YOUR_ROOT>" --to "<agent_name>" --send <filename> --mode wake
 ```
 
-The other agent will reply back via your console as a new message.
-Do NOT use `--get-output` — it blocks and is only for non-interactive sessions.
-After sending, you can stay idle and wait for the reply to arrive.
+The recipient receives a short notification pointing to your file's absolute
+path and reads the content via filesystem. Do NOT use `--get-output` — it
+blocks and is only for non-interactive sessions. After sending, stay idle and
+wait for the reply.
 
 ### List available peers
 

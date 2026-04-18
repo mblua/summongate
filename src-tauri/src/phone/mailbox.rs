@@ -862,14 +862,20 @@ impl MailboxPoller {
                 format!("\n[Message from {}] {}\n\r", msg.from, msg.body)
             }
         } else {
+            let wg_root_display = Self::resolve_recipient_wg_root(app, session_id)
+                .await
+                .unwrap_or_else(|| "<wg-root>".to_string());
             format!(
                 concat!(
                     "\n[Message from {from}] {body}\n",
-                    "(To reply, run: \"{bin}\" send --token <your_token> --to \"{from}\" --message \"your reply\" --mode wake)\n\r",
+                    "(To reply, write your response to {wg_root}/messaging/<new-filename>.md, ",
+                    "then run: \"{bin}\" send --token <your_token> --root \"<your_root>\" ",
+                    "--to \"{from}\" --send <new-filename> --mode wake)\n\r",
                 ),
                 from = msg.from,
                 body = msg.body,
                 bin = bin_path,
+                wg_root = wg_root_display,
             )
         };
 
@@ -968,16 +974,43 @@ impl MailboxPoller {
         // Note: same TOCTOU race as the command path — agent could become busy
         // between the idle check above and this write. Acceptable for this use case.
         let bin_path = crate::resolve_bin_label();
+        let wg_root_display = Self::resolve_recipient_wg_root(app, session_id)
+            .await
+            .unwrap_or_else(|| "<wg-root>".to_string());
         let payload = format!(
             concat!(
                 "\n[Message from {from}] {body}\n",
-                "(To reply, run: \"{bin}\" send --token <your_token> --to \"{from}\" --message \"your reply\" --mode wake)\n\r",
+                "(To reply, write your response to {wg_root}/messaging/<new-filename>.md, ",
+                "then run: \"{bin}\" send --token <your_token> --root \"<your_root>\" ",
+                "--to \"{from}\" --send <new-filename> --mode wake)\n\r",
             ),
             from = msg.from,
             body = msg.body,
             bin = bin_path,
+            wg_root = wg_root_display,
         );
         crate::pty::inject::inject_text_into_session(app, session_id, &payload, true).await
+    }
+
+    /// Resolve the recipient's workgroup-root for reply-hint interpolation.
+    /// Returns the UNC-stripped display string on success; `None` if the session
+    /// cannot be found, its working dir is not under a `wg-<N>-*` ancestor, or
+    /// the state read-lock cannot be acquired (caller falls back to the literal
+    /// `<wg-root>` placeholder).
+    async fn resolve_recipient_wg_root(
+        app: &tauri::AppHandle,
+        session_id: Uuid,
+    ) -> Option<String> {
+        let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
+        let mgr = session_mgr.read().await;
+        let sessions = mgr.list_sessions().await;
+        let session = sessions.iter().find(|s| s.id == session_id.to_string())?;
+        let wg_root = crate::phone::messaging::workgroup_root(std::path::Path::new(
+            &session.working_directory,
+        ))
+        .ok()?;
+        let s = wg_root.to_string_lossy();
+        Some(s.trim_start_matches(r"\\?\").to_string())
     }
 
     /// Find the best session for a given agent name (matches by working directory).
@@ -1719,7 +1752,7 @@ impl MailboxPoller {
                     # New session token: {token}\n\
                     #\n\
                     # Updated send command:\n\
-                    #   \"{exe}\" send --token {token} --root \"{root}\" --to \"<agent_name>\" --message \"...\" --mode wake\n\
+                    #   \"{exe}\" send --token {token} --root \"{root}\" --to \"<agent_name>\" --send <filename> --mode wake\n\
                     # === End Token Refresh ===\n\
                     \r",
                     exe = crate::config::profile::exe_name(),

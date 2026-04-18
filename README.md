@@ -196,11 +196,10 @@ The `agentscommander` binary doubles as a CLI for agent-to-agent operations. Ava
 ### `send` — Send a message to another agent
 
 ```bash
-# Send a message
-agentscommander send --token <TOKEN> --root <CWD> --to <agent_name> --message "..." --mode wake
-
-# Send a message from file (avoids shell quoting issues — recommended for PowerShell)
-agentscommander send --token <TOKEN> --root <CWD> --to <agent_name> --message-file /path/to/msg.txt --mode wake
+# Send a file-based message (two steps: write the file, then send)
+#   1. Write the message content to <workgroup-root>/messaging/YYYYMMDD-HHMMSS-<wgN>-<from>-to-<wgN>-<to>-<slug>.md
+#   2. Fire the send:
+agentscommander send --token <TOKEN> --root <CWD> --to <agent_name> --send <filename> --mode wake
 
 # Send a remote command (clear or compact)
 agentscommander send --token <TOKEN> --root <CWD> --to <agent_name> --command clear --mode wake
@@ -211,18 +210,17 @@ All messages are delivered synchronously — the CLI validates routing, delivers
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--token` | No | Session token for authentication |
-| `--root` | Yes | Sender's root directory (used to derive agent name) |
+| `--root` | Yes | Sender's root directory (must be under a `wg-<N>-*` ancestor for `--send`) |
 | `--to` | Yes | Destination agent name (e.g., `"repos/my-project"`) |
-| `--message` | No* | Message body |
-| `--message-file` | No* | Path to a file containing the message body (avoids shell quoting issues) |
+| `--send` | No* | Filename (not path) of a message file already written in `<workgroup-root>/messaging/` |
 | `--command` | No* | Remote command to execute (whitelist: `clear`, `compact`) |
 | `--mode` | No | Delivery mode: `wake` (default), `active-only`, `wake-and-sleep` |
 | `--get-output` | No | Wait for and return the agent's response |
 | `--timeout` | No | Timeout in seconds for `--get-output` (default: 300) |
 
-*At least one of `--message`, `--message-file`, or `--command` is required.
+*Exactly one of `--send` or `--command` is required. They are mutually exclusive.
 
-**`--message-file`** is the recommended alternative to `--message` when the message body contains quotes, apostrophes, special characters, or spans multiple lines. It reads the message from a file, bypassing shell quoting entirely. This is especially useful for agents running under PowerShell (e.g., Codex CLI), where `--message` strings with quotes break argument parsing. If both `--message` and `--message-file` are provided, `--message-file` takes priority.
+**File-based messaging** is the only message-delivery mechanism. The CLI injects a short notification into the recipient's PTY pointing at the file's absolute path; the recipient reads the content via filesystem, bypassing any PTY truncation regardless of payload size. Senders write the file first (UTC-timestamped filename following the canonical shape `YYYYMMDD-HHMMSS-<wgN>-<from>-to-<wgN>-<to>-<slug>[.N].md`, sanitized kebab-case slug ≤50 chars), then invoke `--send <filename>`. The file persists in `<workgroup-root>/messaging/` — it is never auto-purged. Note: filenames use UTC, so the timestamp on a non-UTC host will differ from the local wall clock.
 
 **Remote commands** (`--command`) inject a slash command (e.g. `/clear`) directly into the agent's PTY. The destination agent must be idle (green circle in the sidebar) — the command is rejected otherwise.
 

@@ -412,8 +412,10 @@ Returns JSON array of team peers with name, status, role, teams, reachability.
 
 ### Send a message
 
+Messaging is file-based. Write your message to `<workgroup-root>/messaging/YYYYMMDD-HHMMSS-<wgN>-<from>-to-<wgN>-<to>-<slug>.md`, then:
+
 ```bash
-"<BINARY>" send --token <TOKEN> --root "<AGENT_ROOT>" --to "<peer_name>" --message "..." --mode wake
+"<BINARY>" send --token <TOKEN> --root "<AGENT_ROOT>" --to "<peer_name>" --send <filename> --mode wake
 ```
 
 The peer name comes from `list-peers` output. Use `--mode wake` for fire-and-forget.
