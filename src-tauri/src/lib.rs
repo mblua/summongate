@@ -27,13 +27,6 @@ use voice::tracker::{VoiceTracker, VoiceTrackingState};
 use web::auth::WebAccessToken;
 use web::broadcast::WsBroadcaster;
 
-/// Returns the full path to the current executable.
-pub fn resolve_bin_label() -> String {
-    std::env::current_exe()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| config::profile::exe_name().to_string())
-}
-
 /// Tracks which sessions are currently detached into their own windows.
 pub type DetachedSessionsState = Arc<Mutex<HashSet<uuid::Uuid>>>;
 
