@@ -32,7 +32,7 @@ pub struct SendArgs {
     /// Filename (not path) of a message file that already exists in
     /// <workgroup-root>/messaging/. Sender writes the file BEFORE calling send.
     /// Cannot be combined with --command.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "command")]
     pub send: Option<String>,
 
     /// Delivery mode (see DELIVERY MODES below)

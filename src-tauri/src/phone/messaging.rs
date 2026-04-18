@@ -7,6 +7,7 @@
 use chrono::{DateTime, Utc};
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 pub const MESSAGING_DIR_NAME: &str = "messaging";
 pub const PTY_SAFE_MAX: usize = 500;
@@ -14,19 +15,37 @@ pub const PTY_SAFE_MAX: usize = 500;
 const MAX_SLUG_LEN: usize = 50;
 const MAX_COLLISION_SUFFIX: u32 = 99;
 
-/// Reference render of the reply-hint template in `mailbox.rs` with all
-/// dynamic placeholders (`{from}` ×2, `{body}`, `{wg_root}`, `{bin}`) emptied
-/// out. Its length IS the fixed overhead. Keeping this string colocated with
-/// the constant — and the `reply_hint_template_len_matches_constant` test —
-/// means a future edit to the template in `mailbox.rs` that forgets to update
-/// this sample will fail the test suite before it can drift silently.
-const REPLY_HINT_FIXED_SAMPLE: &str = concat!(
-    "\n[Message from ] \n",
-    "(To reply, write your response to /messaging/<new-filename>.md, ",
-    "then run: \"\" send --token <your_token> --root \"<your_root>\" ",
-    "--to \"\" --send <new-filename> --mode wake)\n\r",
-);
-const PTY_WRAP_FIXED: usize = REPLY_HINT_FIXED_SAMPLE.len();
+/// Single source of truth for the interactive reply-hint template.
+///
+/// Both PTY injection sites in `phone::mailbox` (`inject_into_pty` interactive
+/// path and `inject_followup_after_idle_static`) invoke this macro, AND the
+/// `estimate_wrap_overhead` accounting reads its empty-placeholder expansion
+/// to compute `PTY_WRAP_FIXED`. Any edit to the template text is therefore
+/// reflected atomically in live payloads, in the overhead accounting used by
+/// the `PTY_SAFE_MAX` clamp, and in the contract test. No drift window.
+#[macro_export]
+macro_rules! reply_hint {
+    ($($arg:tt)*) => {
+        format!(
+            concat!(
+                "\n[Message from {from}] {body}\n",
+                "(To reply, write your response to {wg_root}/messaging/<new-filename>.md, ",
+                "then run: \"{bin}\" send --token <your_token> --root \"<your_root>\" ",
+                "--to \"{from}\" --send <new-filename> --mode wake)\n\r",
+            ),
+            $($arg)*
+        )
+    };
+}
+
+/// Fixed-chars portion of the reply-hint template — the length of the macro
+/// expansion with every placeholder emptied. Computed once at first call via
+/// OnceLock, so the value is always in sync with whatever `reply_hint!`
+/// actually emits (no hand-counted magic number, no duplicated sample const).
+fn pty_wrap_fixed() -> usize {
+    static CELL: OnceLock<usize> = OnceLock::new();
+    *CELL.get_or_init(|| crate::reply_hint!(from = "", body = "", bin = "", wg_root = "").len())
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum MessagingError {
@@ -268,7 +287,7 @@ pub fn resolve_existing_message(
 /// with actual agent names, workgroup paths, and binary paths — preventing the
 /// clamp from under- or over-estimating in deployments with unusual dimensions.
 pub fn estimate_wrap_overhead(from: &str, wg_root: &str, bin_path: &str) -> usize {
-    PTY_WRAP_FIXED + 2 * from.len() + wg_root.len() + bin_path.len()
+    pty_wrap_fixed() + 2 * from.len() + wg_root.len() + bin_path.len()
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
@@ -539,29 +558,33 @@ mod tests {
         assert!(c > a);
     }
 
-    /// Contract test: `PTY_WRAP_FIXED` must equal the length of the reply-hint
-    /// template in `mailbox.rs` with every placeholder emptied. If anyone edits
-    /// the template without updating `REPLY_HINT_FIXED_SAMPLE`, this test
-    /// fails BEFORE the drift reaches production.
+    /// Contract test: the `reply_hint!` macro is the single source of truth
+    /// for the interactive PTY reply-hint template. Both mailbox.rs injection
+    /// sites invoke it; `pty_wrap_fixed()` is seeded from its empty-placeholder
+    /// expansion. If anyone edits the macro body, all three sites move in
+    /// lockstep — drift is impossible by construction.
+    ///
+    /// This test verifies the wiring end-to-end: expand the macro with
+    /// non-empty placeholders, confirm the output actually includes them and
+    /// has non-trivial length. Any compile error in the macro or in the
+    /// placeholder set surfaces here before it can break mailbox.rs.
     #[test]
-    fn reply_hint_template_len_matches_constant() {
-        let actual = format!(
-            concat!(
-                "\n[Message from {from}] {body}\n",
-                "(To reply, write your response to {wg_root}/messaging/<new-filename>.md, ",
-                "then run: \"{bin}\" send --token <your_token> --root \"<your_root>\" ",
-                "--to \"{from}\" --send <new-filename> --mode wake)\n\r",
-            ),
-            from = "",
-            body = "",
-            wg_root = "",
-            bin = "",
+    fn reply_hint_macro_is_single_source_of_truth() {
+        let rendered = crate::reply_hint!(
+            from = "wg7-me",
+            body = "hello",
+            bin = "C:\\bin\\x.exe",
+            wg_root = "C:\\wg"
         );
-        assert_eq!(
-            actual.len(),
-            PTY_WRAP_FIXED,
-            "reply-hint template in mailbox.rs drifted from REPLY_HINT_FIXED_SAMPLE — update whichever is wrong"
-        );
+        assert!(rendered.contains("[Message from wg7-me] hello"));
+        assert!(rendered.contains("C:\\wg/messaging/<new-filename>.md"));
+        assert!(rendered.contains("\"C:\\bin\\x.exe\" send"));
+        assert!(rendered.contains("--to \"wg7-me\""));
+        assert!(rendered.contains("--send <new-filename> --mode wake"));
+        // pty_wrap_fixed() is seeded from the same macro with empty args,
+        // so the relationship is tautological but worth asserting.
+        let empty = crate::reply_hint!(from = "", body = "", bin = "", wg_root = "");
+        assert_eq!(pty_wrap_fixed(), empty.len());
     }
 
     /// PTY_SAFE_MAX clamp arithmetic — simulate a realistic long-path scenario
@@ -569,12 +592,13 @@ mod tests {
     /// inequality at send.rs:192 (`body.len() + overhead > PTY_SAFE_MAX`).
     #[test]
     fn pty_safe_max_clamp_rejects_long_path() {
-        let from = "wg12-dev-rust"; // 13 chars
+        let from = "wg12-dev-rust";
         // Pathological but plausible path: 180+ chars of nesting.
         let wg_root = "C:\\Users\\some-long-username\\projects\\deep\\deeper\\deepest\\wg-999-extremely-long-workgroup-name-with-too-many-segments";
         let bin = "C:\\Users\\some-long-username\\AppData\\Local\\Agents Commander\\agentscommander.exe";
-        // Notification body: 32 fixed chars + abs path (wg_root + "\messaging\" + 100-char filename ≈ 240 chars).
-        let body_len = 32 + wg_root.len() + "\\messaging\\".len() + 100;
+        // Notification body: 34 fixed chars ("Nuevo mensaje: " + ". Lee este archivo.")
+        // + abs path (wg_root + "\messaging\" + 100-char filename ≈ 240 chars).
+        let body_len = 34 + wg_root.len() + "\\messaging\\".len() + 100;
 
         let overhead = estimate_wrap_overhead(from, wg_root, bin);
         assert!(
@@ -592,7 +616,7 @@ mod tests {
         let from = "wg7-architect";
         let wg_root = "C:\\work\\wg-7-dev-team";
         let bin = "C:\\work\\bin\\agentscommander.exe";
-        let body_len = 32 + wg_root.len() + 80; // typical filename
+        let body_len = 34 + wg_root.len() + 80; // typical filename
 
         let overhead = estimate_wrap_overhead(from, wg_root, bin);
         assert!(

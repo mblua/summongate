@@ -865,13 +865,9 @@ impl MailboxPoller {
             let wg_root_display = Self::resolve_recipient_wg_root(app, session_id)
                 .await
                 .unwrap_or_else(|| "<wg-root>".to_string());
-            format!(
-                concat!(
-                    "\n[Message from {from}] {body}\n",
-                    "(To reply, write your response to {wg_root}/messaging/<new-filename>.md, ",
-                    "then run: \"{bin}\" send --token <your_token> --root \"<your_root>\" ",
-                    "--to \"{from}\" --send <new-filename> --mode wake)\n\r",
-                ),
+            // Template lives in `phone::messaging::reply_hint!` — single source
+            // of truth shared with the overhead accounting in `estimate_wrap_overhead`.
+            crate::reply_hint!(
                 from = msg.from,
                 body = msg.body,
                 bin = bin_path,
@@ -977,13 +973,9 @@ impl MailboxPoller {
         let wg_root_display = Self::resolve_recipient_wg_root(app, session_id)
             .await
             .unwrap_or_else(|| "<wg-root>".to_string());
-        let payload = format!(
-            concat!(
-                "\n[Message from {from}] {body}\n",
-                "(To reply, write your response to {wg_root}/messaging/<new-filename>.md, ",
-                "then run: \"{bin}\" send --token <your_token> --root \"<your_root>\" ",
-                "--to \"{from}\" --send <new-filename> --mode wake)\n\r",
-            ),
+        // Template lives in `phone::messaging::reply_hint!` — single source
+        // of truth shared with the interactive-path injection above.
+        let payload = crate::reply_hint!(
             from = msg.from,
             body = msg.body,
             bin = bin_path,
