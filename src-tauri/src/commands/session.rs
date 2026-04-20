@@ -129,6 +129,74 @@ fn codex_tokens_have_resume(tokens: &[&str], start: usize) -> bool {
     false
 }
 
+
+fn gemini_tokens_have_resume(tokens: &[&str], start: usize) -> bool {
+    let mut idx = start;
+    while idx < tokens.len() {
+        let token = tokens[idx];
+        if token.eq_ignore_ascii_case("-c") || token.eq_ignore_ascii_case("--config") {
+            idx = advance_past_config_value(tokens, idx + 1);
+            continue;
+        }
+        if token.eq_ignore_ascii_case("--resume") || token.to_lowercase().starts_with("--resume=") {
+            return true;
+        }
+        idx += 1;
+    }
+    false
+}
+
+fn inject_gemini_resume(shell: &str, shell_args: &mut Vec<String>) -> bool {
+    match executable_basename(shell).as_str() {
+        "gemini" => {
+            let tokens: Vec<&str> = shell_args.iter().map(|arg| arg.as_str()).collect();
+            if gemini_tokens_have_resume(&tokens, 0) {
+                return false;
+            }
+            shell_args.insert(0, "--resume".to_string());
+            shell_args.insert(1, "latest".to_string());
+            true
+        }
+        "cmd" => {
+            if let Some(idx) = shell_args
+                .iter()
+                .position(|arg| executable_basename(arg) == "gemini")
+            {
+                let tokens: Vec<&str> = shell_args.iter().map(|arg| arg.as_str()).collect();
+                if gemini_tokens_have_resume(&tokens, idx + 1) {
+                    return false;
+                }
+                shell_args.insert(idx + 1, "--resume".to_string());
+                shell_args.insert(idx + 2, "latest".to_string());
+                return true;
+            }
+
+            for arg in shell_args.iter_mut() {
+                let mut tokens: Vec<String> = arg
+                    .split_whitespace()
+                    .map(|token| token.to_string())
+                    .collect();
+                if let Some(idx) = tokens
+                    .iter()
+                    .position(|token| executable_basename(token) == "gemini")
+                {
+                    let token_refs: Vec<&str> = tokens.iter().map(|token| token.as_str()).collect();
+                    if gemini_tokens_have_resume(&token_refs, idx + 1) {
+                        return false;
+                    }
+                    tokens.insert(idx + 1, "--resume".to_string());
+                    tokens.insert(idx + 2, "latest".to_string());
+                    *arg = tokens.join(" ");
+                    return true;
+                }
+            }
+
+            false
+        }
+        _ => false,
+    }
+}
+
 fn inject_codex_resume(shell: &str, shell_args: &mut Vec<String>) -> bool {
     match executable_basename(shell).as_str() {
         "codex" => {
@@ -316,6 +384,15 @@ pub async fn create_session_inner(
             }
         }
     }
+
+    if is_gemini && !skip_auto_resume {
+        if let Some(ref aid) = agent_id {
+            if inject_gemini_resume(&shell, &mut shell_args) {
+                log::info!("Auto-injected `gemini --resume latest` for agent '{}'", aid);
+            }
+        }
+    }
+
 
     let materialized_context_path = if let Some(target) = context_target {
         match crate::config::session_context::materialize_agent_context_file(&cwd, target) {
@@ -1226,6 +1303,35 @@ mod tests {
         ];
         settings
     }
+
+    #[test]
+    fn inject_gemini_resume_prefixes_direct_gemini_args() {
+        let mut args = vec!["-m".to_string(), "gpt-5".to_string()];
+        assert!(super::inject_gemini_resume("gemini", &mut args));
+        assert_eq!(args, vec!["--resume".to_string(), "latest".to_string(), "-m".to_string(), "gpt-5".to_string()]);
+    }
+
+    #[test]
+    fn inject_gemini_resume_inserts_into_cmd_tokenized_wrapper() {
+        let mut args = vec!["/C".to_string(), "gemini".to_string(), "-m".to_string(), "gpt-5".to_string()];
+        assert!(super::inject_gemini_resume("cmd.exe", &mut args));
+        assert_eq!(args, vec!["/C".to_string(), "gemini".to_string(), "--resume".to_string(), "latest".to_string(), "-m".to_string(), "gpt-5".to_string()]);
+    }
+
+    #[test]
+    fn inject_gemini_resume_inserts_into_embedded_cmd_wrapper() {
+        let mut args = vec!["/K".to_string(), "git pull && gemini -m gpt-5".to_string()];
+        assert!(super::inject_gemini_resume("cmd.exe", &mut args));
+        assert_eq!(args, vec!["/K".to_string(), "git pull && gemini --resume latest -m gpt-5".to_string()]);
+    }
+
+    #[test]
+    fn inject_gemini_resume_skips_existing_resume_tokens() {
+        let mut args = vec!["--resume".to_string(), "latest".to_string(), "gpt-5".to_string()];
+        assert!(!super::inject_gemini_resume("gemini", &mut args));
+        assert_eq!(args, vec!["--resume".to_string(), "latest".to_string(), "gpt-5".to_string()]);
+    }
+
 
     #[test]
     fn inject_codex_resume_prefixes_direct_codex_args() {
