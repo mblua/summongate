@@ -68,7 +68,7 @@ function readCutoffSha() {
   catch { return null; }
   const first = content.split('\n', 1)[0].trim();
   if (!SHA_RE.test(first)) return null;
-  return first;
+  return first.toLowerCase();
 }
 
 function isGrandfathered(branch) {
@@ -101,7 +101,7 @@ async function verifyIssueOpen(issue) {
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   if (!token) die(`Missing GH_TOKEN / GITHUB_TOKEN in environment — cannot verify issue #${issue}.`);
   const url = `https://api.github.com/repos/${TARGET_REPO}/issues/${issue}`;
-  let res;
+  let res, data;
   try {
     res = await fetch(url, {
       signal: AbortSignal.timeout(API_TIMEOUT_MS),
@@ -112,15 +112,18 @@ async function verifyIssueOpen(issue) {
         'User-Agent': 'agentscommander-branch-validator',
       },
     });
+    if (res.status === 404) die(`Issue #${issue} not accessible in ${TARGET_REPO} (missing or auth-denied).`);
+    if (!res.ok) die(`GitHub API error (${res.status}) while fetching issue #${issue}.`);
+    data = await res.json();
   } catch (err) {
     if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
       die(`Timed out (${API_TIMEOUT_MS} ms) fetching issue #${issue} from GitHub API.`);
     }
+    if (err instanceof SyntaxError) {
+      die(`Invalid JSON response from GitHub API for issue #${issue}.`);
+    }
     die(`Network error fetching issue #${issue}: ${err?.message || err}`);
   }
-  if (res.status === 404) die(`Issue #${issue} not accessible in ${TARGET_REPO} (missing or auth-denied).`);
-  if (!res.ok) die(`GitHub API error (${res.status}) while fetching issue #${issue}.`);
-  const data = await res.json();
   if (data.pull_request) die(`#${issue} is a pull request, not an issue.`);
   if (data.state !== 'open') die(`Issue #${issue} is ${data.state}. Branch must reference an OPEN issue.`);
 }
