@@ -142,10 +142,15 @@ with:
 ```rust
     // Capture the effective arg vector BEFORE spawn so SessionInfo::from(&session)
     // (emitted at line ~439 as "session_created") carries the injected flags.
-    // The store write is for consumers that call mgr.get_session later; the
-    // local-clone write is for the imminent emit below.
-    mgr.set_effective_shell_args(id, shell_args.clone()).await;
-    session.effective_shell_args = Some(shell_args.clone());
+    // Bind once, broadcast to two consumers: the store write is for later
+    // `mgr.get_session` callers; the local-clone write is for the imminent emit.
+    //
+    // DO NOT REMOVE OR GATE THIS CAPTURE. Issue #65 regression guard — removing
+    // or wrapping in a condition reintroduces the exact bug this plan fixes.
+    // See §10 and §15 for rationale.
+    let effective = shell_args.clone();
+    mgr.set_effective_shell_args(id, effective.clone()).await;
+    session.effective_shell_args = Some(effective);
 
     pty_mgr
         .lock()
@@ -158,6 +163,7 @@ Rationale for placement:
 - AFTER all injections (lines 276-366) — so the captured vec is the effective one.
 - BEFORE `pty_mgr.spawn` — if spawn fails (line 372 returns `Err`), the session record still carries the args we *attempted* to spawn, which is the honest state to report. The session remains in the manager on spawn failure anyway (existing behavior, out of scope).
 - Uses the existing `mgr` guard (acquired at line 225 as a read-lock on the outer `RwLock<SessionManager>`). `set_effective_shell_args` only needs `&self`, and takes a write lock on the inner `sessions` map — no deadlock risk.
+- Single `let effective = shell_args.clone();` binding makes intent explicit: the captured vec flows to two consumers (store + local clone) without double-work ambiguity.
 
 **IMPORTANT — capture shape**: the captured vector is the **pre-wrapping** `shell_args`, i.e. the logical user-level args (e.g. `["--dangerously-skip-permissions", "--effort", "max", "--continue"]`). The `cmd.exe /C <cmd>` wrapping applied inside `PtyManager::spawn` (pty/manager.rs:173-187) for non-.exe Windows commands is a platform detail and MUST NOT be captured. The user wants to see `claude-mb --continue`, not `cmd.exe /C claude-mb --continue`.
 
@@ -265,10 +271,12 @@ const fullCommand = createMemo(() => {
 const fullCommand = createMemo(() => {
   const shell = terminalStore.activeShell;
   const args = terminalStore.activeShellArgs;
-  if (!shell || args === null) return "";
+  if (!shell || args === null || args === undefined) return "";
   return args.length > 0 ? `${shell} ${args.join(" ")}` : shell;
 });
 ```
+
+The `args === undefined` guard is defense-in-depth: within the same-branch ship, `activeShellArgs` is typed `string[] | null` and initialized to `null`, so `undefined` is unreachable at runtime today. But §11 item 4 covers a backward-compat scenario (older backend → newer frontend) where the JSON field could be missing, yielding `undefined` on the TS side. Without this guard, `args.length` throws. Keep the guard — it makes the memo internally consistent with §11's claim and future-proofs against an optional-field widening.
 
 Behavior table:
 
@@ -276,14 +284,27 @@ Behavior table:
 |---------|--------|-----------------|-----------|
 | `""` | any | `""` | No (hidden) |
 | `"bash"` | `null` | `""` | **No** (effective not registered) |
+| `"bash"` | `undefined` | `""` | **No** (backward-compat guard) |
 | `"bash"` | `[]` | `"bash"` | Yes (native shell, no args) |
 | `"claude-mb"` | `["--continue"]` | `"claude-mb --continue"` | Yes |
 
 No other StatusBar change.
 
-### 6.5 No sidebar changes
+### 6.5 Sidebar — single 1-line addition to `makeInactiveEntry`
 
-The sidebar never renders effective launch command and should continue to display `session.shellArgs` (configured) for its tooltips/shell-type badges. That's correct behavior — sidebar is a session-config view; StatusBar is a live-session view. Do NOT touch `src/sidebar/`.
+The sidebar does NOT render the effective launch command and is NOT part of the behavioral scope. However, after §6.1 adds the required `effectiveShellArgs: string[] | null` field to the `Session` TS interface, exactly one `Session` object literal in the sidebar — `makeInactiveEntry` at `src/sidebar/stores/sessions.ts:31-49` — will fail `tsc --noEmit` with:
+
+> Property 'effectiveShellArgs' is missing in type '{ id: string; name: string; … }' but required in type 'Session'.
+
+Fix: add one line to `makeInactiveEntry`. Insert immediately after `shellArgs: [],` (line 36):
+
+```ts
+    effectiveShellArgs: null,
+```
+
+Semantic fit: inactive entries are placeholders for repos that never had a session. They never reach a PTY spawn, so the Rust-side equivalent would be `effective_shell_args = None`. `null` on the TS side is exactly right.
+
+**That is the entire sidebar change.** No other sidebar files are touched. Sidebar rendering, filtering, grouping, context menus, etc. — all unchanged. The sidebar continues to display `session.shellArgs` (configured) for its shell-type badges and tooltips where applicable.
 
 ---
 
@@ -309,7 +330,7 @@ Dev should verify each of these before handoff:
 
 - [ ] **Claude with prior history**: Start a Claude session at a CWD where `~/.claude/projects/<mangled-cwd>/` exists. Verify StatusBar shows `<shell> ... --continue --append-system-prompt-file <path>` (the appended file path).
 - [ ] **Claude without prior history**: Delete `~/.claude/projects/<mangled-cwd>/`, create a fresh session. Verify StatusBar shows the shell+configured args, NO `--continue`.
-- [ ] **Restart a Claude session**: Click restart on an existing Claude session. Verify StatusBar shows the configured args **without** `--continue` (skip_auto_resume=true on restart).
+- [ ] **Restart a Claude session**: Click restart on an existing Claude session whose CWD has a `CLAUDE.md` file. Verify StatusBar shows configured args + `--append-system-prompt-file "<path>"` BUT NOT `--continue` (the `--append-system-prompt-file` injection at L349-366 is NOT gated by `skip_auto_resume`; only the resume-family injections at L289 / L316 are). For a Claude session whose CWD has NO `CLAUDE.md`, verify StatusBar shows the configured args with NEITHER `--continue` NOR `--append-system-prompt-file`.
 - [ ] **Codex fresh session**: Start `codex -m gpt-5`. Verify StatusBar shows `codex resume --last -m gpt-5`.
 - [ ] **Codex with explicit `resume`**: Start `codex resume`. Verify NO double-injection (StatusBar shows `codex resume`, not `codex resume resume --last`).
 - [ ] **Native shell (powershell.exe)**: Start a native shell session. Verify StatusBar shows just `powershell.exe` (or whatever binary), no injected flags.
@@ -328,9 +349,27 @@ Dev should verify each of these before handoff:
 
 2. **`SessionManager::set_effective_shell_args`** — add a test that verifies the field is set after calling the method, starting from `None`. Placement: new test alongside the existing `set_git_repos_if_gen_rejects_stale_gen` test in `pty/git_watcher.rs:201+` OR a new test module in `session/manager.rs` (preferred — cohesion).
 
-3. **`create_session_inner` injection visibility** — harder to integration-test because it requires Tauri State setup. The existing `inject_codex_resume_*` tests already cover the injection logic itself. The new capture point is a two-line addition whose correctness is trivial to inspect.
+3. **`create_session_inner` injection visibility** — harder to integration-test because it requires Tauri State setup. The existing `inject_codex_resume_*` tests already cover the injection logic itself. The new capture point is a small addition inside `create_session_inner`.
 
 **No new test framework or dependencies required.** All additions use the existing `#[tokio::test]` pattern visible in `pty/git_watcher.rs:202`.
+
+### 8.3 Acknowledged test-coverage weakness (§14.3)
+
+The unit tests in §8.2 verify **struct-field plumbing** (`SessionInfo::from` copies the field; `set_effective_shell_args` writes the field). They do **NOT** exercise the capture site itself inside `create_session_inner`. A future dev who removes or gates the `let effective = ...; mgr.set_effective_shell_args(...)` call (§5.3) could ship the exact issue #65 regression and every unit test would still pass.
+
+**Mitigation chosen** (pragmatic, minimal-blast-radius):
+1. The capture-site comment at §5.3 is an explicit regression-guard marker (`DO NOT REMOVE OR GATE THIS CAPTURE. Issue #65 regression guard`).
+2. §10 adds a rule: "do NOT remove or gate the `set_effective_shell_args` call at §5.3 without writing a replacement test that would fail if removed".
+3. The manual checklist in §8.1 covers every injection combination (Claude with/without prior history, Codex resume, restart w/ and w/o CLAUDE.md, native shell) — a checklist pass confirms the capture is reachable from every production code path.
+
+**Refactor rejected** (explicitly, with rationale): the grinch proposed extracting injection logic into a pure helper `compute_effective_shell_args(...)` to make the capture unit-testable. This would:
+- Require rewriting three heterogeneous injection styles (`shell_args.push(...)` at L306, `inject_codex_resume(&mut Vec<String>)` at L318 with `cmd.exe` wrapper token manipulation, and `*last = format!(...)` at L301/L355 on the last arg of the `cmd.exe` wrapper path).
+- Entangle with `materialize_agent_context_file` which can fail mid-function and triggers a user-facing dialog + `destroy_session` (L327-343) — this error-recovery interleaving makes extraction non-trivial.
+- Increase the diff by a significant multiplier (~150+ lines vs ~60 currently) and land its own review risk.
+
+The refactor is a reasonable improvement but belongs in a follow-up PR, not this bug fix. Tracked as tech debt; not blocking.
+
+**Reviewers of future `create_session_inner` changes**: if you touch any code path between line 276 (start of injections) and line 372 (spawn), re-verify by inspection that `let effective = shell_args.clone(); mgr.set_effective_shell_args(...); session.effective_shell_args = Some(effective);` is still present immediately before `pty_mgr.spawn`. The comment at the capture site is the regression guard of record.
 
 ---
 
@@ -355,7 +394,8 @@ The spec gave an escape hatch: "TODAS. excepto que me digas que hay que hacer un
 - Do NOT capture `effective_shell_args` AFTER the `cmd.exe /C` wrapping happens inside `PtyManager::spawn`. Capture BEFORE the `spawn` call, with the logical pre-wrapping vec. The wrapping is a platform quirk the user doesn't want to see.
 - Do NOT add a new Tauri event (e.g. `session_effective_args_changed`). The existing `session_created` emit already carries `SessionInfo` and covers every activation path (verified in §4).
 - Do NOT modify `strip_auto_injected_args` (config/sessions_persistence.rs:355). It operates on the persisted `shell_args` field (configured recipe), which is unchanged by this fix.
-- Do NOT modify the sidebar. StatusBar-only scope.
+- Do NOT modify the sidebar behaviorally. The ONLY permitted sidebar change is the 1-line addition to `makeInactiveEntry` at `src/sidebar/stores/sessions.ts:31-49` described in §6.5 (`effectiveShellArgs: null,`). That addition is required to keep the `Session` object literal exhaustive after §6.1 adds the field — without it, `tsc --noEmit` fails. No other sidebar file may be touched.
+- Do NOT remove or gate the `let effective = shell_args.clone(); mgr.set_effective_shell_args(id, effective.clone()).await; session.effective_shell_args = Some(effective);` block at §5.3 without writing a replacement test that would fail if the capture is absent. The capture is the issue #65 regression guard — the unit tests in §8.2 verify plumbing only, not the capture call itself (see §8.3). Removing it silently reintroduces the bug.
 - Do NOT bump the version. The feature plan (`feature-terminal-full-command.md`) already bumps `0.7.3 → 0.7.4` on this branch; this bug fix ships inside the same release. If `0.7.4` has already been cut to a build before this bug fix lands, bump to `0.7.5` (coordinate with tech-lead / Shipper).
 - Do NOT delete, rename, or rework `Session.shell_args`. It remains the persisted configured recipe; `effective_shell_args` is ADDITIVE.
 - Do NOT rename `activeShellArgs` → `activeEffectiveShellArgs` in the frontend store. Keep the short name already introduced by the feature plan; change only the type (`string[] | null`) and its data source (`effectiveShellArgs` instead of `shellArgs`). This minimizes diff across the stacked plans and the DELTA is easier to review.
@@ -386,6 +426,8 @@ The spec gave an escape hatch: "TODAS. excepto que me digas que hay que hacer un
 
 8. **Settings change mid-session**: user edits an agent's `command` in settings while a session is running. Current session's `effective_shell_args` was captured at the original spawn time — unchanged. A restart would re-capture from the new settings. This matches the mental model "effective args = what was passed to this PTY at its spawn" and is intentional.
 
+9. **Cold-start auto-activation of a dormant session (pre-existing, now more visible)**: under `start_only_coordinators = true`, dormant non-coordinator sessions emit `session_created` from `lib.rs:543` before any coordinator's `create_session_inner` completes. The Terminal window's `onSessionCreated` handler (App.tsx:92-103) auto-activates the first emitted session if none is active yet, which may be a dormant one. After activation: the terminal view renders for a session whose PTY was never spawned (empty xterm), AND the StatusBar command block is hidden (because `effectiveShellArgs === null`). User must manually switch to a live session to proceed. This is **pre-existing behavior for dormant sessions** and is NOT introduced by this plan — but the empty-StatusBar semantics mandated by §2 / spec §3 make the "ghost session" state more visible than in v0.7.3 (which showed the shell name as a breadcrumb). Spec-compliant per §2 ("empty — not the configured args, not a placeholder"). **Not fixed as part of this change** — a proper fix would reshape App.tsx's auto-activation heuristic to skip dormant sessions, which is out of scope.
+
 ---
 
 ## 12. Files touched (summary)
@@ -400,11 +442,12 @@ The spec gave an escape hatch: "TODAS. excepto que me digas que hay que hacer un
 - `src/shared/types.ts` — 1 line added to `Session` interface.
 - `src/terminal/stores/terminal.ts` — type widening (`string[] | null`), signal init null. ~3 lines changed from the feature-plan baseline.
 - `src/terminal/App.tsx` — swap 4 identifiers (`shellArgs` → `effectiveShellArgs`) + 3 literals (`[]` → `null`). ~7 lines changed from the feature-plan baseline.
-- `src/terminal/components/StatusBar.tsx` — 1 line changed in the `fullCommand` memo. ~1 line.
+- `src/terminal/components/StatusBar.tsx` — 1 line changed in the `fullCommand` memo (now guards `null` and `undefined`). ~1 line.
+- `src/sidebar/stores/sessions.ts` — **1-line addition inside `makeInactiveEntry`** (`effectiveShellArgs: null,` after `shellArgs: [],`). Required to satisfy `tsc --noEmit` after the required field lands in `Session`. No behavioral change. See §6.5 and §10.
 
-**Persistence / CSS / Sidebar / Titlebar**: untouched.
+**Persistence / CSS / Titlebar / rest of sidebar**: untouched.
 
-**Total estimated diff**: ~60 lines incl. tests. Very contained.
+**Total estimated diff**: ~61 lines incl. tests. Very contained.
 
 ---
 
@@ -763,3 +806,59 @@ If the session was destroyed between `mgr.create_session` (L226) and this call, 
 §14.5, §14.6 are stylistic / documentation touches — accept or ignore at architect/dev-rust discretion.
 
 No BLOCKER on the backend Rust design itself — §5 and §13 remain sound. The backend implementation can proceed to Step 6 once §14.1 is resolved.
+
+---
+
+## 15. Architect response to grinch (round 2, 2026-04-21)
+
+All 10 grinch findings addressed in-place (not appended as a separate spec). This section is a **pointer index** so reviewers can audit decisions without re-reading the entire plan.
+
+| # | Finding | Disposition | Landed in |
+|---|---------|-------------|-----------|
+| §14.1 | `makeInactiveEntry` TS compile blocker | **Accepted — Option A** (1-line edit to sessions.ts). Option B rejected (see reasoning below). | §6.5 (rewritten), §10 (sidebar rule updated), §12 (file added to list) |
+| §14.2 | `undefined` guard missing in memo | **Accepted** | §6.4 (memo + behavior table + explainer paragraph) |
+| §14.3 | Unit tests don't guard capture site | **Accepted as "document weakness"** — pure-helper refactor rejected with rationale | §8.3 (new subsection), §10 (new "do NOT remove capture" rule), §5.3 (inline regression-guard comment on the code snippet) |
+| §14.4 | Manual test #3 wording on restart + `--append-system-prompt-file` | **Accepted** — §13.4 text applied in-place | §8.1 item 3 |
+| §14.5 | Double `.clone()` in capture snippet | **Accepted** (cosmetic, adopted grinch's `let effective = ...` pattern) | §5.3 |
+| §14.6 | Dormant cold-start blank StatusBar (pre-existing, more visible now) | **Accepted** — documented as edge case | §11 item 9 |
+| §14.7 | `set_effective_shell_args` silent no-op in theoretical destroy race | No action (INFO — unreachable) | — |
+| §14.8 | `session_created` is sole IPC carrier | No action (INFO — confirms §5.4 + §13.6) | — |
+| §14.9 | `ApiSessionView` doesn't expose effective args | No action (INFO — correct by default, HTTP API scope discipline) | — |
+| §14.10 | CLI `list-sessions` reads persisted TOML | No action (INFO — correct by default, persistence scope discipline) | — |
+
+### Why Option A over Option B for §14.1
+
+The symmetry between `Session.effective_shell_args: Option<Vec<String>>` (Rust) and `effectiveShellArgs: string[] | null` (TS) is load-bearing for the wire contract in §7. Making the TS field optional (`?: string[] | null`) introduces a third state — `undefined` — that has no Rust counterpart and forces every reader to handle the three-way distinction (`null`, `undefined`, `string[]`). The 1-line edit to `makeInactiveEntry` is a trivial one-shot cost; the asymmetric TS type is a permanent tax. Option A wins on tradeoff.
+
+`makeInactiveEntry` is semantically a "never-spawned placeholder" — `null` is the correct value, not a hack. The sidebar behavior is unchanged: inactive entries still render the same way; the new field is just an honest declaration that this placeholder has no effective launch command.
+
+### Why refactor rejected for §14.3
+
+The grinch is right that the proposed unit tests are plumbing-only. But the proposed refactor (`compute_effective_shell_args` pure helper) would:
+
+- Unwind three heterogeneous injection styles (direct `push`, `inject_codex_resume(&mut Vec<String>)` with `cmd.exe` token manipulation, `*last = format!(...)` on the last wrapper arg).
+- Untangle mid-function error recovery (context file materialization can fail at L328-343 with a dialog + `destroy_session`, and the path-string it yields feeds the `--append-system-prompt-file` injection at L349-366).
+- Balloon the diff from ~60 to ~200 lines and bring its own review risk.
+
+This is a legitimate improvement but belongs in a separate refactor PR, not bundled with a bug fix. The mitigations added to this plan (§5.3 inline comment, §10 "do NOT remove" rule, §8.3 documented weakness, §8.1 manual checklist covering every injection combo) are proportionate to the risk. Tech-lead or dev-rust can open a follow-up tech-debt ticket for the refactor if desired.
+
+### Changes to the plan in this round
+
+Sections amended (in line-order):
+- §5.3 — capture snippet refactored to single `let effective = ...;` binding; inline regression-guard comment added; rationale bullet added.
+- §6.4 — memo now guards `null` AND `undefined`; behavior table gained an `undefined` row; explainer paragraph added.
+- §6.5 — rewritten from "no sidebar changes" to "one 1-line addition to `makeInactiveEntry`", with the exact diff.
+- §8.1 item 3 — restart test wording now covers `--append-system-prompt-file` behavior on restart.
+- §8.3 (new) — explicit documentation of the test-coverage weakness + mitigation choices + reviewer guidance.
+- §10 — sidebar rule refined to allow the 1-line `makeInactiveEntry` edit; new rule added to forbid removing/gating the capture call.
+- §11 — new edge case #9 for dormant cold-start blank StatusBar.
+- §12 — `src/sidebar/stores/sessions.ts` added to files-touched list.
+
+No sections rewritten wholesale. Dev can read linearly and follow the plan without cross-referencing §14 or §15.
+
+### Verdict
+
+**Ready for dev to implement.** No remaining HIGH. All MEDIUMs addressed (§14.1 accepted with Option A; §14.2 memo fixed; §14.3 mitigated via regression-guard comment + §10 rule + §8.3 doc). LOWs all applied in-place. INFOs acknowledged.
+
+If grinch disagrees with the Option A vs B choice or with rejecting the pure-helper refactor, those are the only two open items and are minority-rule adjudicable in round 3.
+
