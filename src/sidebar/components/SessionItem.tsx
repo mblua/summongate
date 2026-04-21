@@ -45,7 +45,7 @@ const SessionItem: Component<{
   const handleMicClick = (e: MouseEvent) => {
     e.stopPropagation();
     if (!settingsStore.voiceEnabled) {
-      emitOpenSettings().catch(console.error);
+      emitOpenSettings("integrations").catch(console.error);
       return;
     }
     voiceRecorder.toggle(props.session.id);

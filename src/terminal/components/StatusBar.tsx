@@ -23,7 +23,7 @@ const StatusBar: Component<{ detached?: boolean }> = (props) => {
   const handleMicDown = (e: MouseEvent) => {
     e.preventDefault();
     if (!settingsStore.voiceEnabled) {
-      emitOpenSettings().catch(console.error);
+      emitOpenSettings("integrations").catch(console.error);
       return;
     }
     const sessionId = terminalStore.activeSessionId;

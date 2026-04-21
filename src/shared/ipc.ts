@@ -381,14 +381,21 @@ export function onThemeChanged(
 
 // Open the Settings modal (handled by sidebar ActionBar). Emitted from any
 // window — e.g. a disabled mic button asking the user to configure voice.
-export function emitOpenSettings(): Promise<void> {
-  return transport.emit("open_settings", {});
+// `section` targets a specific tab in SettingsModal (e.g. "integrations").
+// Omit to open on the default tab.
+export function emitOpenSettings(section?: string): Promise<void> {
+  return transport.emit<{ section?: string }>(
+    "open_settings",
+    section ? { section } : {}
+  );
 }
 
 export function onOpenSettings(
-  callback: () => void
+  callback: (section?: string) => void
 ): Promise<UnlistenFn> {
-  return transport.listen<unknown>("open_settings", () => callback());
+  return transport.listen<{ section?: string }>("open_settings", (data) =>
+    callback(data?.section)
+  );
 }
 
 export function onLastPrompt(

@@ -416,7 +416,7 @@ const ProjectPanel: Component = () => {
           const handleMicClick = (e: MouseEvent) => {
             e.stopPropagation();
             if (!settingsStore.voiceEnabled) {
-              emitOpenSettings().catch(console.error);
+              emitOpenSettings("integrations").catch(console.error);
               return;
             }
             const s = session();
