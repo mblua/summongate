@@ -3,7 +3,7 @@ import { createSignal } from "solid-js";
 const [activeSessionId, setActiveSessionId] = createSignal<string | null>(null);
 const [activeSessionName, setActiveSessionName] = createSignal<string>("");
 const [activeShell, setActiveShell] = createSignal<string>("");
-const [activeShellArgs, setActiveShellArgs] = createSignal<string[]>([]);
+const [activeShellArgs, setActiveShellArgs] = createSignal<string[] | null>(null);
 const [activeWorkingDirectory, setActiveWorkingDirectory] = createSignal<string>('');
 
 export const terminalStore = {
@@ -34,7 +34,7 @@ export const terminalStore = {
     id: string | null,
     name?: string,
     shell?: string,
-    shellArgs?: string[],
+    shellArgs?: string[] | null,
     workingDirectory?: string
   ) {
     setActiveSessionId(id);

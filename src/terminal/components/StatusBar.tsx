@@ -13,7 +13,7 @@ const StatusBar: Component<{ detached?: boolean }> = (props) => {
   const fullCommand = createMemo(() => {
     const shell = terminalStore.activeShell;
     const args = terminalStore.activeShellArgs;
-    if (!shell) return "";
+    if (!shell || args === null || args === undefined) return "";
     return args.length > 0 ? `${shell} ${args.join(" ")}` : shell;
   });
 
