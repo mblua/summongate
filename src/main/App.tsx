@@ -67,6 +67,22 @@ const MainApp: Component = () => {
     divider.addEventListener("pointercancel", onUp);
   };
 
+  // Keyboard resize for a11y (plan §DW.10). ← / → adjust ±10px,
+  // Shift+← / Shift+→ ±40px, Home/End snap to clamp bounds.
+  const onDividerKeyDown = (e: KeyboardEvent) => {
+    const step = e.shiftKey ? 40 : 10;
+    let next: number | null = null;
+    if (e.key === "ArrowLeft") next = sidebarWidth() - step;
+    else if (e.key === "ArrowRight") next = sidebarWidth() + step;
+    else if (e.key === "Home") next = SIDEBAR_MIN_WIDTH;
+    else if (e.key === "End") next = Math.min(SIDEBAR_MAX_WIDTH, window.innerWidth - TERMINAL_MIN_WIDTH);
+    if (next === null) return;
+    e.preventDefault();
+    const clamped = clampSidebarWidth(next, window.innerWidth);
+    setSidebarWidth(clamped);
+    persistWidth(clamped);
+  };
+
   // Stateless detached-window count (plan §A3B.3 / G3-B1 — must NOT read
   // sessionsStore because the store is Phase-2 and not authoritative anyway).
   async function countDetachedWindows(): Promise<number> {
@@ -167,8 +183,14 @@ const MainApp: Component = () => {
           class="main-divider"
           classList={{ dragging: dragging() }}
           onPointerDown={onPointerDown}
+          onKeyDown={onDividerKeyDown}
           role="separator"
           aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          aria-valuenow={Math.round(sidebarWidth())}
+          aria-valuemin={SIDEBAR_MIN_WIDTH}
+          aria-valuemax={SIDEBAR_MAX_WIDTH}
+          tabindex="0"
         />
         <div class="main-terminal-pane">
           <TerminalApp embedded />
