@@ -12,7 +12,7 @@ import {
 } from "../shared/ipc";
 import { registerShortcuts, unregisterShortcuts } from "../shared/shortcuts";
 import { initZoom } from "../shared/zoom";
-import { initWindowGeometry } from "../shared/window-geometry";
+import { initWindowGeometry, initDetachedWindowGeometry } from "../shared/window-geometry";
 import { settingsStore } from "../shared/stores/settings";
 import { terminalStore } from "./stores/terminal";
 import Titlebar from "./components/Titlebar";
@@ -114,7 +114,12 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
     if (!props.embedded) {
       // Detached windows use "detached" (mapped to terminalZoom in zoomKeyMap).
       cleanupZoom = await initZoom(props.detached ? "detached" : "terminal");
-      cleanupGeometry = await initWindowGeometry("terminal");
+      if (props.detached && props.lockedSessionId) {
+        // Per-session geometry persistence (plan §A2.4.Arb1).
+        cleanupGeometry = await initDetachedWindowGeometry(props.lockedSessionId);
+      } else {
+        cleanupGeometry = await initWindowGeometry("terminal");
+      }
     }
     settingsStore.load();
     await loadActiveSession();
@@ -212,7 +217,7 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
           </div>
         }
       >
-        <TerminalView />
+        <TerminalView lockedSessionId={props.lockedSessionId} />
       </Show>
       <StatusBar detached={props.detached} />
     </div>
