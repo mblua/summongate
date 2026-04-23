@@ -172,6 +172,75 @@ pub async fn detach_terminal(
     .await
 }
 
+/// Re-attach a detached session to the main window. Closes the detached window (if any),
+/// clears `Session::was_detached` (Fix A — must happen BEFORE emitting events so any
+/// intervening snapshot sees the correct state, plan §A3.2.4 / NEW-2), switches the
+/// main-pane active session, and emits `terminal_attached` + `session_switched`.
+///
+/// Plan §A2.2.G5 contract: when the session is absent from `SessionManager`, return
+/// `Ok(())` silently without emitting events.
+#[tauri::command]
+pub async fn attach_terminal(
+    app: AppHandle,
+    session_mgr: State<'_, Arc<tokio::sync::RwLock<SessionManager>>>,
+    detached: State<'_, DetachedSessionsState>,
+    session_id: String,
+) -> Result<(), String> {
+    let uuid = Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
+
+    // Remove from DetachedSessionsState (idempotent).
+    {
+        let mut set = detached.lock().unwrap();
+        set.remove(&uuid);
+    }
+
+    // Close the detached window if present. Use destroy() per R.2 to bypass any
+    // onCloseRequested handler (avoids recursion if this runs inside the X-click
+    // intercept path on the detached window).
+    let label = format!("terminal-{}", session_id.replace('-', ""));
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.destroy();
+    }
+
+    // A2.2.G5 contract: silent no-op when the session is gone.
+    let mgr = session_mgr.read().await;
+    if mgr.get_session(uuid).await.is_none() {
+        log::info!(
+            "[attach] session {} already destroyed; silent no-op",
+            session_id
+        );
+        return Ok(());
+    }
+
+    // Fix A (§A3.2.4 / NEW-2): clear was_detached BEFORE switch + emit so any
+    // snapshot that runs between set_was_detached and emit captures the correct
+    // post-attach state.
+    mgr.set_was_detached(uuid, false).await;
+
+    // Session lives → promote to active in main.
+    mgr.switch_session(uuid).await.map_err(|e| e.to_string())?;
+    let _ = app.emit(
+        "terminal_attached",
+        serde_json::json!({ "sessionId": session_id }),
+    );
+    let _ = app.emit(
+        "session_switched",
+        serde_json::json!({ "id": session_id }),
+    );
+
+    Ok(())
+}
+
+/// Return the list of session IDs currently in `DetachedSessionsState`. Used by
+/// the sidebar frontend to hydrate its `detachedIds` store on mount (plan §A2.3.G8).
+#[tauri::command]
+pub fn list_detached_sessions(
+    detached: State<'_, DetachedSessionsState>,
+) -> Vec<String> {
+    let set = detached.lock().unwrap();
+    set.iter().map(|u| u.to_string()).collect()
+}
+
 /// Open a path in the system file explorer (Explorer, Finder, xdg-open).
 #[tauri::command]
 pub fn open_in_explorer(path: String) -> Result<(), String> {

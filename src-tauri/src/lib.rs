@@ -614,6 +614,8 @@ pub fn run() {
             commands::telegram::telegram_get_bridge,
             commands::telegram::telegram_send_test,
             commands::window::detach_terminal,
+            commands::window::attach_terminal,
+            commands::window::list_detached_sessions,
             commands::window::open_in_explorer,
             commands::window::open_guide_window,
             commands::window::focus_main_window,

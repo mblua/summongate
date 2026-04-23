@@ -759,10 +759,14 @@ pub async fn destroy_session_inner(app: &AppHandle, uuid: Uuid) -> Result<(), St
 
     let _ = app.emit("session_destroyed", serde_json::json!({ "id": id }));
 
-    // Close any detached terminal window for this session
+    // Close any detached terminal window for this session.
+    // R.2: `destroy()` — not `close()` — so the Phase 2 `onCloseRequested` handler
+    // on the detached window is bypassed. Triggering the handler here would call
+    // `attach_terminal` on a session that's been destroyed (benign no-op per
+    // A2.2.G5) but emits extra window-lifecycle noise for no gain.
     let detached_label = format!("terminal-{}", id.replace('-', ""));
     if let Some(detached_win) = app.get_webview_window(&detached_label) {
-        let _ = detached_win.close();
+        let _ = detached_win.destroy();
     }
 
     // If a new session was auto-activated, emit switch event.
