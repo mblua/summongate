@@ -1,10 +1,16 @@
-import { Component, Show, createSignal, onMount, onCleanup } from "solid-js";
+import { Component, Show, For, createSignal, onMount, onCleanup } from "solid-js";
 import iconUrl from "../../assets/icon-16.png";
-import { applyWindowLayout } from "../../shared/window-layout";
+import { SettingsAPI } from "../../shared/ipc";
 import { isTauri } from "../../shared/platform";
 
 declare const __APP_VERSION__: string;
 const APP_VERSION = __APP_VERSION__;
+
+const SIDEBAR_WIDTH_PRESETS: Array<{ label: string; width: number }> = [
+  { label: "Narrow", width: 200 },
+  { label: "Default", width: 280 },
+  { label: "Wide", width: 360 },
+];
 
 const Titlebar: Component = () => {
   const [layoutOpen, setLayoutOpen] = createSignal(false);
@@ -15,18 +21,29 @@ const Titlebar: Component = () => {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     getCurrentWindow().minimize();
   };
+  const handleMaximize = async () => {
+    if (!isTauri) return;
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    if (await win.isMaximized()) {
+      win.unmaximize();
+    } else {
+      win.maximize();
+    }
+  };
   const handleClose = async () => {
     if (!isTauri) return;
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     getCurrentWindow().close();
   };
 
-  const handleLayout = async (side: "left" | "right") => {
+  const applyWidthPreset = async (width: number) => {
     setLayoutOpen(false);
     try {
-      await applyWindowLayout(side);
+      const settings = await SettingsAPI.get();
+      await SettingsAPI.update({ ...settings, mainSidebarWidth: width });
     } catch (err) {
-      console.error("applyLayout failed:", err);
+      console.error("applyWidthPreset failed:", err);
     }
   };
 
@@ -70,26 +87,32 @@ const Titlebar: Component = () => {
           <button
             class={`titlebar-btn titlebar-btn-layout ${layoutOpen() ? "open" : ""}`}
             onClick={(e) => { e.stopPropagation(); setLayoutOpen(!layoutOpen()); }}
-            title="Layout"
+            title="Sidebar width"
           >
             &#x2637;
           </button>
           {layoutOpen() && (
             <div class="layout-dropdown">
-              <button class="layout-option" onClick={() => handleLayout("right")}>
-                <span class="layout-option-icon">&#x25E8;</span>
-                Sidebar Right
-              </button>
-              <button class="layout-option" onClick={() => handleLayout("left")}>
-                <span class="layout-option-icon">&#x25E7;</span>
-                Sidebar Left
-              </button>
+              <For each={SIDEBAR_WIDTH_PRESETS}>
+                {(preset) => (
+                  <button
+                    class="layout-option"
+                    onClick={() => applyWidthPreset(preset.width)}
+                  >
+                    <span class="layout-option-icon">&#x2630;</span>
+                    {preset.label} — {preset.width}px
+                  </button>
+                )}
+              </For>
             </div>
           )}
         </div>
         <Show when={isTauri}>
           <button class="titlebar-btn" onClick={handleMinimize} title="Minimize">
             &#x2014;
+          </button>
+          <button class="titlebar-btn" onClick={handleMaximize} title="Maximize">
+            &#x25A1;
           </button>
           <button
             class="titlebar-btn titlebar-btn-close"

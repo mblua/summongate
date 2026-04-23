@@ -176,13 +176,18 @@ export const WindowAPI = {
   detach: (sessionId: string) =>
     transport.invoke<string>("detach_terminal", { sessionId }),
 
-  closeDetached: (sessionId: string) =>
-    transport.invoke<void>("close_detached_terminal", { sessionId }),
-
   openInExplorer: (path: string) =>
     transport.invoke<void>("open_in_explorer", { path }),
 
-  ensureTerminal: () => transport.invoke<void>("ensure_terminal_window"),
+  /**
+   * Focus the main unified window (raising it, recreating if missing).
+   * Rust command renamed from `ensure_terminal_window` → `focus_main_window`
+   * in v0.8 (dev-rust owns that rename). Per plan §A2.4.Arb3 / R.4.
+   */
+  focusMain: () => transport.invoke<void>("focus_main_window"),
+
+  /** @deprecated use focusMain(); back-compat alias, drop at v0.9 */
+  ensureTerminal: () => transport.invoke<void>("focus_main_window"),
 };
 
 // Telegram Bridge API

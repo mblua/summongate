@@ -1,10 +1,11 @@
 import "./shared/console-capture";
 import { render } from "solid-js/web";
 import { isTauri } from "./shared/platform";
-import SidebarApp from "./sidebar/App";
 import TerminalApp from "./terminal/App";
 import GuideApp from "./guide/App";
 import BrowserApp from "./browser/App";
+import MainApp from "./main/App";
+
 const params = new URLSearchParams(window.location.search);
 const windowType = params.get("window");
 
@@ -17,23 +18,26 @@ if (remoteToken) {
 const root = document.getElementById("root");
 if (!root) throw new Error("Root element not found");
 
-if (windowType === "terminal") {
+// Browser mode (no Tauri): BrowserApp regardless of ?window param.
+// Remote web clients load ?window=main but still need the split-browser UX.
+const isLegacyDetached =
+  windowType === "terminal" && params.get("detached") === "true";
+
+if (!isTauri) {
+  render(() => <BrowserApp />, root);
+} else if (windowType === "detached" || isLegacyDetached) {
+  // New URL: ?window=detached&sessionId=<id>
+  // Legacy URL (pre-0.8 backend): ?window=terminal&sessionId=<id>&detached=true
+  // Kept for one version so an in-flight detach survives a mid-upgrade.
   const lockedSessionId = params.get("sessionId") || undefined;
-  const isDetached = params.get("detached") === "true";
   render(
-    () => (
-      <TerminalApp lockedSessionId={lockedSessionId} detached={isDetached} />
-    ),
+    () => <TerminalApp lockedSessionId={lockedSessionId} detached={true} />,
     root
   );
 } else if (windowType === "guide") {
   render(() => <GuideApp />, root);
-} else if (windowType === "sidebar") {
-  render(() => <SidebarApp />, root);
-} else if (!isTauri) {
-  // Browser without ?window param: show combined split layout
-  render(() => <BrowserApp />, root);
 } else {
-  // Tauri default: sidebar
-  render(() => <SidebarApp />, root);
+  // "main", legacy "sidebar", legacy non-detached "terminal", or no param →
+  // unified MainApp.
+  render(() => <MainApp />, root);
 }

@@ -136,8 +136,12 @@ export interface AppSettings {
   sidebarZoom: number;
   terminalZoom: number;
   guideZoom: number;
+  mainZoom: number;
   sidebarGeometry: WindowGeometry | null;
   terminalGeometry: WindowGeometry | null;
+  mainGeometry: WindowGeometry | null;
+  mainSidebarWidth: number;
+  mainAlwaysOnTop: boolean;
   webServerEnabled: boolean;
   webServerPort: number;
   webServerBind: string;
