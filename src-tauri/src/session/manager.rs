@@ -4,6 +4,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use super::session::{Session, SessionInfo, SessionRepo, SessionStatus};
+use crate::config::settings::WindowGeometry;
 use crate::errors::AppError;
 
 pub struct SessionManager {
@@ -67,6 +68,8 @@ impl SessionManager {
             git_repos_gen: 0,
             token: Uuid::new_v4(),
             is_claude: false,
+            was_detached: false,
+            detached_geometry: None,
         };
 
         self.sessions.write().await.insert(id, session.clone());
@@ -247,6 +250,27 @@ impl SessionManager {
         let mut sessions = self.sessions.write().await;
         if let Some(s) = sessions.get_mut(&id) {
             s.is_claude = val;
+        }
+    }
+
+    /// Set `was_detached` on the session. Authoritative store for persistence under
+    /// Fix A (plan §A3.2). Mutated ONLY by `detach_terminal_inner` (→true) and
+    /// `attach_terminal` (→false). See plan §10 rule — the `WindowEvent::Destroyed`
+    /// handler must NOT call this.
+    pub async fn set_was_detached(&self, id: Uuid, detached: bool) {
+        let mut sessions = self.sessions.write().await;
+        if let Some(s) = sessions.get_mut(&id) {
+            s.was_detached = detached;
+        }
+    }
+
+    /// Record the detached window's last-known geometry. Called by the frontend on
+    /// drag/resize via the `set_detached_geometry` Tauri command. Read at spawn
+    /// time by `detach_terminal_inner` (including the Phase 3 restore path).
+    pub async fn set_detached_geometry(&self, id: Uuid, geometry: WindowGeometry) {
+        let mut sessions = self.sessions.write().await;
+        if let Some(s) = sessions.get_mut(&id) {
+            s.detached_geometry = Some(geometry);
         }
     }
 
