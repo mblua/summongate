@@ -555,7 +555,52 @@ pub fn run() {
                         ).await {
                             Ok(info) => {
                                 if ps.was_active {
-                                    active_id = Some(info.id);
+                                    active_id = Some(info.id.clone());
+                                }
+
+                                // Phase 3 restore: reconstruct detach state for the live session.
+                                // Deferred sessions (handled above with a `continue`) never reach
+                                // this branch, so R.9's "skip detached-window spawn for deferred"
+                                // guard is enforced structurally by this code path.
+                                if ps.was_detached {
+                                    if let Ok(uuid) = uuid::Uuid::parse_str(&info.id) {
+                                        // Sync Session::was_detached BEFORE calling
+                                        // detach_terminal_inner. detach_terminal_inner also sets
+                                        // it true idempotently, but setting up-front guards the
+                                        // persistence-correctness invariant even if
+                                        // detach_terminal_inner fails (WebView2 init error, etc.):
+                                        // the session stays marked detached → next launch retries.
+                                        {
+                                            let mgr = session_mgr_clone.read().await;
+                                            mgr.set_was_detached(uuid, true).await;
+                                            if let Some(ref geo) = ps.detached_geometry {
+                                                mgr.set_detached_geometry(uuid, geo.clone()).await;
+                                            }
+                                        }
+
+                                        // PB-4: pass `&info.id` (the newly-live session's UUID),
+                                        // NOT `ps.id` (the stale prior-run UUID).
+                                        // skip_switch=true per R.10 / A3.3 so this per-session
+                                        // detach does not race the post-loop active_id switch.
+                                        let detached_state =
+                                            app_handle.state::<DetachedSessionsState>();
+                                        if let Err(e) = commands::window::detach_terminal_inner(
+                                            &app_handle,
+                                            &session_mgr_clone,
+                                            detached_state.inner(),
+                                            &info.id,
+                                            ps.detached_geometry.clone(),
+                                            true,
+                                        )
+                                        .await
+                                        {
+                                            log::warn!(
+                                                "[restore] detach_terminal_inner failed for '{}': {} — session stays live (attached)",
+                                                ps.name,
+                                                e
+                                            );
+                                        }
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -566,12 +611,53 @@ pub fn run() {
                         }
                     }
 
-                    // Switch to the session that was active when the app closed
+                    // Switch to the session that was active when the app closed. Plan §A2.2.G3
+                    // filter: if the persisted-active session is now detached (respawned with
+                    // `was_detached=true` above), do NOT switch main to it — main + detached
+                    // would both render the same session. Walk the list for the first non-
+                    // detached candidate; emit `session_switched` with null if none.
                     if let Some(id) = active_id {
                         if let Ok(uuid) = uuid::Uuid::parse_str(&id) {
-                            let mgr: tokio::sync::RwLockReadGuard<'_, SessionManager> = session_mgr_clone.read().await;
-                            let _ = mgr.switch_session(uuid).await;
-                            let _ = tauri::Emitter::emit(&app_handle, "session_switched", serde_json::json!({ "id": id }));
+                            let is_detached = {
+                                let detached = app_handle.state::<DetachedSessionsState>();
+                                let set = detached.lock().unwrap();
+                                set.contains(&uuid)
+                            };
+                            let mgr: tokio::sync::RwLockReadGuard<'_, SessionManager> =
+                                session_mgr_clone.read().await;
+                            if is_detached {
+                                let sessions = mgr.list_sessions().await;
+                                let fallback = {
+                                    let detached = app_handle.state::<DetachedSessionsState>();
+                                    let set = detached.lock().unwrap();
+                                    sessions.iter().find_map(|s| {
+                                        uuid::Uuid::parse_str(&s.id)
+                                            .ok()
+                                            .filter(|u| !set.contains(u))
+                                    })
+                                };
+                                if let Some(fb) = fallback {
+                                    let _ = mgr.switch_session(fb).await;
+                                    let _ = tauri::Emitter::emit(
+                                        &app_handle,
+                                        "session_switched",
+                                        serde_json::json!({ "id": fb.to_string() }),
+                                    );
+                                } else {
+                                    let _ = tauri::Emitter::emit(
+                                        &app_handle,
+                                        "session_switched",
+                                        serde_json::json!({ "id": serde_json::Value::Null }),
+                                    );
+                                }
+                            } else {
+                                let _ = mgr.switch_session(uuid).await;
+                                let _ = tauri::Emitter::emit(
+                                    &app_handle,
+                                    "session_switched",
+                                    serde_json::json!({ "id": id }),
+                                );
+                            }
                             drop(mgr);
                         }
                     }
@@ -616,6 +702,7 @@ pub fn run() {
             commands::window::detach_terminal,
             commands::window::attach_terminal,
             commands::window::list_detached_sessions,
+            commands::window::set_detached_geometry,
             commands::window::open_in_explorer,
             commands::window::open_guide_window,
             commands::window::focus_main_window,

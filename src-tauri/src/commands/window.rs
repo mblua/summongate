@@ -241,6 +241,22 @@ pub fn list_detached_sessions(
     set.iter().map(|u| u.to_string()).collect()
 }
 
+/// Record the geometry of a detached window. Called by the frontend on drag/resize
+/// (debounced). Persisted via the normal session-snapshot pipeline — the value
+/// lives on `Session::detached_geometry` and travels into `PersistedSession` on
+/// the next snapshot (plan §Arb-1 / §A2.4.Arb1 / §6.2).
+#[tauri::command]
+pub async fn set_detached_geometry(
+    session_mgr: State<'_, Arc<tokio::sync::RwLock<SessionManager>>>,
+    session_id: String,
+    geometry: WindowGeometry,
+) -> Result<(), String> {
+    let uuid = Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
+    let mgr = session_mgr.read().await;
+    mgr.set_detached_geometry(uuid, geometry).await;
+    Ok(())
+}
+
 /// Open a path in the system file explorer (Explorer, Finder, xdg-open).
 #[tauri::command]
 pub fn open_in_explorer(path: String) -> Result<(), String> {

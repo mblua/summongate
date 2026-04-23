@@ -274,12 +274,13 @@ async fn dispatch_inner(state: &WsState, cmd: &str, args: &Value) -> Result<Valu
 
         // --- Window commands (no-ops for web clients) ---
         // Browser-remote clients don't have Tauri windows; these all return null.
-        // 0.8.0 Phase 1-2: `close_detached_terminal` removed; `ensure_terminal_window`
-        // renamed to `focus_main_window`; `attach_terminal` + `list_detached_sessions` added.
-        // Phase 3 will add `set_detached_geometry`.
+        // 0.8.0: `close_detached_terminal` removed; `ensure_terminal_window`
+        // renamed to `focus_main_window`; `attach_terminal`, `list_detached_sessions`,
+        // `set_detached_geometry` added (plan §R.5 / §A2.10).
         "detach_terminal"
         | "attach_terminal"
         | "list_detached_sessions"
+        | "set_detached_geometry"
         | "open_in_explorer"
         | "focus_main_window"
         | "open_guide_window" => Ok(json!(null)),
