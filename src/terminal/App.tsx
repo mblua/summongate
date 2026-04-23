@@ -3,6 +3,7 @@ import type { UnlistenFn } from "../shared/transport";
 import { isTauri } from "../shared/platform";
 import {
   SessionAPI,
+  WindowAPI,
   onSessionSwitched,
   onSessionCreated,
   onSessionDestroyed,
@@ -88,6 +89,27 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       })
     );
 
+    // Detached-window X → re-attach to main, not destroy (plan §A2.2.G4 / G.13).
+    // Register as early as possible in onMount so the race window from first
+    // paint to handler-registered is minimized. If attach fails (session
+    // destroyed mid-flight, backend command error, etc.), fall back to
+    // destroying the window so the user isn't stuck.
+    if (isTauri && props.detached && props.lockedSessionId) {
+      const sessionId = props.lockedSessionId;
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const win = getCurrentWindow();
+      const unlistenCloseRequested = await win.onCloseRequested(async (e) => {
+        e.preventDefault();
+        try {
+          await WindowAPI.attach(sessionId);
+        } catch (err) {
+          console.error("[detached] attach failed during close; destroying window:", err);
+          try { await win.destroy(); } catch { /* best-effort */ }
+        }
+      });
+      unlisteners.push(unlistenCloseRequested);
+    }
+
     // Window-level initializers — skipped when embedded (main owns these).
     if (!props.embedded) {
       // Detached windows use "detached" (mapped to terminalZoom in zoomKeyMap).
@@ -167,7 +189,7 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
   return (
     <div class="terminal-layout">
       <Show when={!props.embedded}>
-        <Titlebar detached={props.detached} />
+        <Titlebar detached={props.detached} lockedSessionId={props.lockedSessionId} />
       </Show>
       <LastPrompt sessionId={props.lockedSessionId} />
       <Show

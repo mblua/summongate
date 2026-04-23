@@ -117,9 +117,33 @@ const SessionItem: Component<{
     }
   };
 
-  const handleDetach = (e: MouseEvent) => {
+  const isDetached = () => sessionsStore.isDetached(props.session.id);
+
+  const handleDetachToggle = async (e: MouseEvent) => {
     e.stopPropagation();
-    WindowAPI.detach(props.session.id);
+    try {
+      if (isDetached()) {
+        await WindowAPI.attach(props.session.id);
+      } else {
+        await WindowAPI.detach(props.session.id);
+      }
+    } catch (err) {
+      console.error("detach/attach toggle failed:", err);
+    }
+  };
+
+  const handleContextDetachToggle = async () => {
+    setShowContextMenu(false);
+    cleanupContextMenu();
+    try {
+      if (isDetached()) {
+        await WindowAPI.attach(props.session.id);
+      } else {
+        await WindowAPI.detach(props.session.id);
+      }
+    } catch (err) {
+      console.error("context detach/attach toggle failed:", err);
+    }
   };
 
   const handleClose = (e: MouseEvent) => {
@@ -368,11 +392,12 @@ const SessionItem: Component<{
         </button>
         <button
           class="session-item-detach"
-          onClick={handleDetach}
-          title="Detach to own window"
-        >
-          &#x29C9;
-        </button>
+          classList={{ attached: isDetached() }}
+          onClick={handleDetachToggle}
+          title={isDetached() ? "Re-attach to main window" : "Open in new window"}
+          innerHTML={isDetached() ? "&#x2934;" : "&#x29C9;"}
+        />
+
         <Show when={bridge()}>
           <div
             class="session-item-bridge-dot"
@@ -446,6 +471,13 @@ const SessionItem: Component<{
               onClick={handleCodingAgentRestart}
             >
               Coding Agent
+            </button>
+            <div class="context-separator" />
+            <button
+              class="session-context-option"
+              onClick={handleContextDetachToggle}
+            >
+              {isDetached() ? "Re-attach to main" : "Open in new window"}
             </button>
             <Show when={hasClaude()}>
               <div class="context-separator" />

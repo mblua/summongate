@@ -2,6 +2,7 @@ import { Component, Show, createSignal, createMemo, onMount } from "solid-js";
 import { terminalStore } from "../stores/terminal";
 import iconUrl from "../../assets/icon-16.png";
 import { isTauri } from "../../shared/platform";
+import { WindowAPI } from "../../shared/ipc";
 declare const __APP_VERSION__: string;
 const APP_VERSION = __APP_VERSION__;
 
@@ -11,7 +12,13 @@ function extractProjectName(workDir: string): string | null {
   return idx > 0 ? parts[idx - 1] : null;
 }
 
-const Titlebar: Component<{ detached?: boolean }> = (props) => {
+interface TitlebarProps {
+  detached?: boolean;
+  /** Session id this detached window is locked to. Required for Re-attach button. */
+  lockedSessionId?: string;
+}
+
+const Titlebar: Component<TitlebarProps> = (props) => {
   const [instanceLabel, setInstanceLabel] = createSignal("");
   const projectName = createMemo(() => extractProjectName(terminalStore.activeWorkingDirectory));
 
@@ -25,19 +32,12 @@ const Titlebar: Component<{ detached?: boolean }> = (props) => {
     }
   });
 
-  const handleShowSidebar = async () => {
-    if (!isTauri) return;
+  const handleReattach = async () => {
+    if (!props.lockedSessionId) return;
     try {
-      const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-      const sidebar = await WebviewWindow.getByLabel("sidebar");
-      if (sidebar) {
-        // unminimize is best-effort — setFocus must always run
-        await sidebar.unminimize().catch(() => {});
-        await sidebar.show().catch(() => {});
-        await sidebar.setFocus();
-      }
+      await WindowAPI.attach(props.lockedSessionId);
     } catch (err) {
-      console.error("handleShowSidebar failed:", err);
+      console.error("Re-attach failed:", err);
     }
   };
 
@@ -95,9 +95,13 @@ const Titlebar: Component<{ detached?: boolean }> = (props) => {
       </div>
       <Show when={isTauri}>
         <div class="titlebar-controls">
-          <Show when={!props.detached}>
-            <button class="titlebar-btn" onClick={handleShowSidebar} title="Show Sidebar">
-              &#x2630;
+          <Show when={props.detached && props.lockedSessionId}>
+            <button
+              class="titlebar-btn titlebar-btn-attach"
+              onClick={handleReattach}
+              title="Re-attach to main window"
+            >
+              &#x2934;
             </button>
           </Show>
           <button class="titlebar-btn" onClick={handleMinimize} title="Minimize">

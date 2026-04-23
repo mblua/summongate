@@ -18,6 +18,8 @@ import {
   onTelegramBridgeAttached,
   onTelegramBridgeDetached,
   onTelegramBridgeError,
+  onTerminalDetached,
+  onTerminalAttached,
 } from "../shared/ipc";
 import { registerShortcuts, unregisterShortcuts } from "../shared/shortcuts";
 import { initZoom } from "../shared/zoom";
@@ -144,8 +146,35 @@ const SidebarApp: Component<SidebarAppProps> = (props) => {
     unlisteners.push(
       await onSessionDestroyed(({ id }) => {
         sessionsStore.removeSession(id);
+        // Detached-window cleanup: if the session had a detached window,
+        // its destroy also closes that window. Clear the store flag so
+        // UI (icons, menu items) doesn't linger in detached state.
+        sessionsStore.setDetached(id, false);
       })
     );
+
+    unlisteners.push(
+      await onTerminalDetached(({ sessionId }) =>
+        sessionsStore.setDetached(sessionId, true)
+      )
+    );
+
+    unlisteners.push(
+      await onTerminalAttached(({ sessionId }) =>
+        sessionsStore.setDetached(sessionId, false)
+      )
+    );
+
+    // Hydrate detachedIds from backend (G.8 race safety — covers detach
+    // events that fired before this component mounted, e.g. from the
+    // Phase-3 restore path or from a prior detach survived across a
+    // SidebarApp re-mount in the unified window).
+    try {
+      const ids = await WindowAPI.listDetached();
+      ids.forEach((id) => sessionsStore.setDetached(id, true));
+    } catch (e) {
+      console.warn("[sidebar] listDetached hydration failed:", e);
+    }
 
     unlisteners.push(
       await onSessionSwitched(({ id }) => {
