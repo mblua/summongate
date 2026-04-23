@@ -13,6 +13,7 @@ import type {
   AgentInfo,
   AcDiscoveryResult,
   TeamConfigResult,
+  WindowGeometry,
 } from "./types";
 
 export interface SessionRepoInput {
@@ -192,6 +193,16 @@ export const WindowAPI = {
    */
   listDetached: () =>
     transport.invoke<string[]>("list_detached_sessions"),
+
+  /**
+   * Persist a detached window's geometry to its PersistedSession so it
+   * re-spawns at the same position+size after an app restart. Per plan
+   * §A2.4.Arb1 (R.6 option a) — backend stores the value on
+   * PersistedSession.detached_geometry and auto-GCs when the session is
+   * destroyed.
+   */
+  setDetachedGeometry: (sessionId: string, geometry: WindowGeometry) =>
+    transport.invoke<void>("set_detached_geometry", { sessionId, geometry }),
 
   openInExplorer: (path: string) =>
     transport.invoke<void>("open_in_explorer", { path }),

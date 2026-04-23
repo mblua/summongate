@@ -7,6 +7,7 @@ import {
   SessionAPI,
   onPtyOutput,
   onSessionDestroyed,
+  onTerminalDetached,
 } from "../../shared/ipc";
 import { isBrowser } from "../../shared/platform";
 import { terminalStore } from "../stores/terminal";
@@ -20,12 +21,24 @@ interface SessionTerminal {
   inputBuffer: string;
 }
 
-const TerminalView: Component = () => {
+interface TerminalViewProps {
+  /**
+   * If set, this TerminalView is inside a detached window locked to one
+   * session. Disables the main-window pre-warm listener (plan §A2.3.G6).
+   */
+  lockedSessionId?: string;
+}
+
+// WebGL context budget: ~16 per document. Canvas fallback activates silently
+// when the budget is exhausted (e.g. after ~16 concurrent sessions in main).
+// See plan §DW.9.
+const TerminalView: Component<TerminalViewProps> = (props) => {
   let hostRef!: HTMLDivElement;
   let activeSessionId: string | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let unlistenPtyOutput: UnlistenFn | null = null;
   let unlistenSessionDestroyed: UnlistenFn | null = null;
+  let unlistenTerminalDetached: UnlistenFn | null = null;
 
   const terminals = new Map<string, SessionTerminal>();
 
@@ -237,6 +250,20 @@ const TerminalView: Component = () => {
     unlistenSessionDestroyed = await onSessionDestroyed(({ id }) => {
       disposeSessionTerminal(id);
     });
+
+    // Plan §A2.3.G6 pre-warm: in main-window mode, subscribe to
+    // terminal_detached events and pre-create hidden xterm entries so
+    // pty_output for detached sessions accumulates in main's cache. On
+    // re-attach, showSessionTerminal promotes the pre-warmed entry to
+    // visible with full scrollback intact. Skip in detached windows.
+    if (!props.lockedSessionId) {
+      unlistenTerminalDetached = await onTerminalDetached(({ sessionId }) => {
+        if (!terminals.has(sessionId)) {
+          const entry = createSessionTerminal(sessionId);
+          entry.container.hidden = true;
+        }
+      });
+    }
   });
 
   createEffect(() => {
@@ -258,6 +285,7 @@ const TerminalView: Component = () => {
   onCleanup(() => {
     unlistenPtyOutput?.();
     unlistenSessionDestroyed?.();
+    unlistenTerminalDetached?.();
     resizeObserver?.disconnect();
 
     for (const sessionId of Array.from(terminals.keys())) {
