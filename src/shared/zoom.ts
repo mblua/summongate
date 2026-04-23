@@ -2,15 +2,23 @@ import { SettingsAPI } from "./ipc";
 import type { AppSettings } from "./types";
 import { isTauri } from "./platform";
 
+// NOTE: main window is the only zoom initializer for the unified app. Embedded
+// Sidebar + Terminal MUST skip initZoom() — otherwise Ctrl+= registers two
+// wheel/keydown handlers with independent currentZoom closures and the values
+// race. Detached windows use "detached" (mapped to terminalZoom). See plan
+// §A2.11.N1 and DW.2 embedded-mode contract.
+
 const ZOOM_STEP = 0.1;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 3.0;
 
-type WindowType = "sidebar" | "terminal" | "guide";
+type WindowType = "sidebar" | "terminal" | "main" | "detached" | "guide";
 
 const zoomKeyMap: Record<WindowType, keyof AppSettings> = {
   sidebar: "sidebarZoom",
   terminal: "terminalZoom",
+  main: "mainZoom",
+  detached: "terminalZoom",
   guide: "guideZoom",
 };
 

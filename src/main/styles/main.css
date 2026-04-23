@@ -1,0 +1,172 @@
+/* Unified main-window layout.
+ * Foundational flex skeleton per plan DW.3:
+ *   - titlebar sits OUTSIDE the flex row so it spans full window width
+ *     (data-tauri-drag-region on the sidebar Titlebar's root handles dragging)
+ *   - .main-body uses `min-height: 0` to stop xterm canvas from overflowing
+ *     vertically on first paint (classic flex-item min-height:auto trap).
+ */
+
+.main-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+/* Sidebar pane preserves the legacy "no accidental text-select" UX that
+ * sidebar.css used to set via `html, body, #root { user-select: none }`.
+ * In unified mode terminal.css's html/body/#root rule wins the cascade
+ * (later import), so we re-apply user-select scoped to the sidebar pane.
+ * The terminal pane explicitly allows selection (xterm relies on it). */
+.main-sidebar-pane { user-select: none; }
+.main-terminal-pane { user-select: text; }
+
+.main-body {
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 auto;
+  min-height: 0; /* CRITICAL — without this xterm overflows on first render */
+  min-width: 0;
+}
+
+.main-sidebar-pane {
+  flex: 0 0 auto; /* width driven inline via sidebarWidth() signal */
+  overflow: hidden;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Embedded SidebarApp needs its root flex box to fill the pane vertically. */
+.main-sidebar-pane > .sidebar-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.main-divider {
+  flex: 0 0 4px;
+  cursor: col-resize;
+  background: rgba(255, 255, 255, 0.06);
+  transition: background 150ms ease-out;
+  touch-action: none; /* opt out of browser scroll/zoom gestures during drag */
+  user-select: none;
+}
+.main-divider:hover,
+.main-divider.dragging {
+  background: rgba(0, 212, 255, 0.35);
+}
+
+.main-terminal-pane {
+  flex: 1 1 0;
+  min-width: 300px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Embedded TerminalApp root must also stretch. */
+.main-terminal-pane > .terminal-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Splitter drag hardening (plan A2.3.G9 + DW.4).
+ * Prevents xterm from starting a text-selection mid-drag, and stops the OS
+ * cursor from flickering off col-resize when it leaves the 4px divider.
+ */
+.main-root.main-dragging {
+  user-select: none;
+  cursor: col-resize;
+}
+.main-root.main-dragging .terminal-host,
+.main-root.main-dragging .main-terminal-pane {
+  pointer-events: none;
+}
+
+/* --- Quit-confirm modal (plan §A3B.2.5 / G3-M1) --------------------------
+ * Overlays the main window when the user attempts to close with ≥1 detached
+ * windows open. Enter AND ESC both route to Cancel (the safe button) per the
+ * custom-modal contract. CSS variables use fallbacks so the modal renders
+ * correctly even before theme CSS has hydrated.
+ */
+.quit-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+.quit-confirm-modal {
+  background: var(--bg-modal, #14141a);
+  color: var(--fg-primary, #e8e8e8);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
+  border-radius: 6px;
+  min-width: 360px;
+  max-width: 480px;
+  padding: 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  font-family: "Geist", "Outfit", "General Sans", sans-serif;
+}
+.quit-confirm-title {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 500;
+}
+.quit-confirm-body {
+  margin: 0 0 20px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-secondary, rgba(255, 255, 255, 0.75));
+}
+.quit-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.quit-confirm-btn {
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out;
+}
+.quit-confirm-btn-cancel {
+  background: var(--btn-primary-bg, rgba(0, 212, 255, 0.2));
+  color: var(--btn-primary-fg, #00d4ff);
+  border-color: var(--btn-primary-border, rgba(0, 212, 255, 0.4));
+}
+.quit-confirm-btn-cancel:hover {
+  background: rgba(0, 212, 255, 0.3);
+}
+.quit-confirm-btn-cancel:focus-visible {
+  outline: 2px solid var(--focus-ring, #00d4ff);
+  outline-offset: 2px;
+}
+.quit-confirm-btn-quit {
+  background: transparent;
+  color: var(--fg-secondary, rgba(255, 255, 255, 0.7));
+  border-color: var(--border-subtle, rgba(255, 255, 255, 0.15));
+}
+.quit-confirm-btn-quit:hover {
+  background: rgba(255, 59, 92, 0.15);
+  color: #ff6b80;
+  border-color: rgba(255, 59, 92, 0.4);
+}
+.quit-confirm-btn-quit:focus-visible {
+  outline: 2px solid #ff6b80;
+  outline-offset: 2px;
+}
+
+html.light-theme .quit-confirm-modal {
+  background: #f7f7f9;
+  color: #1a1a1e;
+  border-color: rgba(0, 0, 0, 0.1);
+}
+html.light-theme .quit-confirm-body {
+  color: rgba(0, 0, 0, 0.7);
+}
