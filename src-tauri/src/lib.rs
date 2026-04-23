@@ -296,7 +296,7 @@ pub fn run() {
                 if web_settings.web_server_enabled {
                     let bind = web_settings.web_server_bind.clone();
                     let port = web_settings.web_server_port;
-                    println!("[web-token] Remote URL: http://{}:{}/?window=sidebar&remoteToken={}", bind, port, web_access_token.value());
+                    println!("[web-token] Remote URL: http://{}:{}/?window=main&remoteToken={}", bind, port, web_access_token.value());
 
                     let join_handle = web::start_server(
                         bind,
@@ -387,9 +387,9 @@ pub fn run() {
                 }
             }
 
-            // Determine primary monitor size for fallback "SideBar Right" layout
+            // Determine primary monitor size for the default "centered main" layout.
             // Convert to logical pixels (physical / scale) since WebviewWindowBuilder
-            // ::inner_size() and ::position() expect logical coordinates
+            // ::inner_size() and ::position() expect logical coordinates.
             let primary = app.primary_monitor().ok().flatten();
             let primary_scale = primary.as_ref().map(|m| m.scale_factor()).unwrap_or(1.0);
             let (screen_w, screen_h) = primary
@@ -408,27 +408,25 @@ pub fn run() {
                 .map(|m| m.position().y as f64 / primary_scale)
                 .unwrap_or(0.0);
 
-            // "SideBar Right" defaults: sidebar on right edge, terminal fills the rest
-            let sidebar_w = (screen_w * 0.4).round();
-            let default_sidebar = config::settings::WindowGeometry {
-                x: primary_x + screen_w - sidebar_w,
-                y: primary_y,
-                width: sidebar_w,
-                height: screen_h,
-            };
-            let default_terminal = config::settings::WindowGeometry {
-                x: primary_x,
-                y: primary_y,
-                width: screen_w - sidebar_w,
-                height: screen_h,
+            // Default main window: centered at 1400×900, or the primary monitor size
+            // minus a small margin if the screen is narrower than 1400.
+            let default_w = screen_w.min(1400.0);
+            let default_h = screen_h.min(900.0);
+            let default_main = config::settings::WindowGeometry {
+                x: primary_x + (screen_w - default_w) / 2.0,
+                y: primary_y + (screen_h - default_h) / 2.0,
+                width: default_w,
+                height: default_h,
             };
 
-            // Resolve sidebar geometry: saved (physical) → validate → convert to logical → fallback
-            let sidebar_geo = match &saved_settings.sidebar_geometry {
+            // Resolve main geometry: saved (physical) → validate → convert to logical → fallback.
+            // First-boot-after-upgrade users will have `main_geometry` seeded from legacy
+            // `terminal_geometry` via the migration in `config::settings::load_settings`.
+            let main_geo = match &saved_settings.main_geometry {
                 Some(geo) if is_visible_on_monitors(geo, &monitors) => {
                     let logical = physical_to_logical(geo, &monitors);
                     log::info!(
-                        "[window-setup] sidebar: saved physical ({}, {}) {}x{} → logical ({}, {}) {}x{}",
+                        "[window-setup] main: saved physical ({}, {}) {}x{} → logical ({}, {}) {}x{}",
                         geo.x, geo.y, geo.width, geo.height,
                         logical.x, logical.y, logical.width, logical.height
                     );
@@ -436,77 +434,39 @@ pub fn run() {
                 }
                 Some(geo) => {
                     log::warn!(
-                        "[window-setup] sidebar: saved geometry ({}, {}) {}x{} is OFF-SCREEN, falling back to SideBar Right",
+                        "[window-setup] main: saved geometry ({}, {}) {}x{} is OFF-SCREEN, falling back to centered default",
                         geo.x, geo.y, geo.width, geo.height
                     );
-                    default_sidebar.clone()
+                    default_main.clone()
                 }
                 None => {
-                    log::info!("[window-setup] sidebar: no saved geometry, using SideBar Right default");
-                    default_sidebar.clone()
+                    log::info!("[window-setup] main: no saved geometry, using centered default");
+                    default_main.clone()
                 }
             };
 
-            // Resolve terminal geometry: saved (physical) → validate → convert to logical → fallback
-            let terminal_geo = match &saved_settings.terminal_geometry {
-                Some(geo) if is_visible_on_monitors(geo, &monitors) => {
-                    let logical = physical_to_logical(geo, &monitors);
-                    log::info!(
-                        "[window-setup] terminal: saved physical ({}, {}) {}x{} → logical ({}, {}) {}x{}",
-                        geo.x, geo.y, geo.width, geo.height,
-                        logical.x, logical.y, logical.width, logical.height
-                    );
-                    logical
-                }
-                Some(geo) => {
-                    log::warn!(
-                        "[window-setup] terminal: saved geometry ({}, {}) {}x{} is OFF-SCREEN, falling back to SideBar Right",
-                        geo.x, geo.y, geo.width, geo.height
-                    );
-                    default_terminal.clone()
-                }
-                None => {
-                    log::info!("[window-setup] terminal: no saved geometry, using SideBar Right default");
-                    default_terminal.clone()
-                }
-            };
-
-            // Create Sidebar window
-            let sidebar = WebviewWindowBuilder::new(
+            // Create the unified Main window (replaces sidebar + terminal windows).
+            let main_win = WebviewWindowBuilder::new(
                 app,
-                "sidebar",
-                WebviewUrl::App("index.html?window=sidebar".into()),
+                "main",
+                WebviewUrl::App("index.html?window=main".into()),
             )
             .title(config::profile::app_title())
-            .icon(icon.clone())
-            .expect("Failed to set sidebar icon")
-            .min_inner_size(200.0, 400.0)
-            .decorations(false)
-            .zoom_hotkeys_enabled(true)
-            .inner_size(sidebar_geo.width, sidebar_geo.height)
-            .position(sidebar_geo.x, sidebar_geo.y)
-            .build()?;
-
-            // Create Terminal window (hidden until a session is active)
-            let terminal = WebviewWindowBuilder::new(
-                app,
-                "terminal",
-                WebviewUrl::App("index.html?window=terminal".into()),
-            )
-            .title("Terminal")
             .icon(icon)
-            .expect("Failed to set terminal icon")
-            .min_inner_size(400.0, 300.0)
+            .expect("Failed to set main window icon")
+            .min_inner_size(800.0, 500.0)
             .decorations(false)
-            .visible(false)
             .zoom_hotkeys_enabled(true)
-            .inner_size(terminal_geo.width, terminal_geo.height)
-            .position(terminal_geo.x, terminal_geo.y)
+            .inner_size(main_geo.width, main_geo.height)
+            .position(main_geo.x, main_geo.y)
             .build()?;
 
-            // Suppress unused variable warnings
-            let _ = &sidebar;
-            let _ = &terminal;
+            if saved_settings.main_always_on_top {
+                let _ = main_win.set_always_on_top(true);
+            }
+
+            // Suppress unused variable warning
+            let _ = &main_win;
 
             // Restore sessions from last run
             let persisted = sessions_persistence::load_sessions();
@@ -651,10 +611,9 @@ pub fn run() {
             commands::telegram::telegram_get_bridge,
             commands::telegram::telegram_send_test,
             commands::window::detach_terminal,
-            commands::window::close_detached_terminal,
             commands::window::open_in_explorer,
             commands::window::open_guide_window,
-            commands::window::ensure_terminal_window,
+            commands::window::focus_main_window,
             commands::phone::phone_send_message,
             commands::phone::phone_get_inbox,
             commands::phone::phone_list_agents,
@@ -692,13 +651,28 @@ pub fn run() {
         .expect("error while building application")
         .run({
             let detached_set = detached_sessions.clone();
-            move |_app_handle, event| match event {
+            move |app_handle, event| match event {
                 tauri::RunEvent::WindowEvent {
                     label,
                     event: tauri::WindowEvent::Destroyed,
                     ..
                 } => {
-                    // Cleanup detached terminal tracking
+                    // Detached-window destroyed (by any mechanism — X, Alt+F4, programmatic).
+                    // Two jobs:
+                    //   1) Clear from `DetachedSessionsState` — switch_session needs an
+                    //      accurate view of which sessions have live windows.
+                    //   2) Emit `terminal_attached` — frontend stores subscribed to this event
+                    //      clear the id from `sessionsStore.detachedIds` (Phase 2+ only;
+                    //      Phase 1 has no subscriber — the event is harmlessly dropped).
+                    //
+                    // DELIBERATELY ABSENT: we do NOT call `SessionManager::set_was_detached`
+                    // here. That mutation is reserved for `detach_terminal_inner` (→true)
+                    // and `attach_terminal` (→false) under Fix A (plan §A3.2 / NEW-3).
+                    // Mirroring the clear here would reintroduce NEW-1: A3.7 quit path
+                    // destroys every detached window → Destroyed fires N times → all
+                    // `Session::was_detached` flipped to false → `persist_current_state`
+                    // on `RunEvent::Exit` writes was_detached=false for every session →
+                    // restart restores nothing detached. See plan §10 rule.
                     if let Some(id_no_dashes) = label.strip_prefix("terminal-") {
                         if id_no_dashes.len() == 32 {
                             let formatted = format!(
@@ -710,8 +684,15 @@ pub fn run() {
                                 &id_no_dashes[20..32],
                             );
                             if let Ok(uuid) = uuid::Uuid::parse_str(&formatted) {
-                                let mut set = detached_set.lock().unwrap();
-                                set.remove(&uuid);
+                                {
+                                    let mut set = detached_set.lock().unwrap();
+                                    set.remove(&uuid);
+                                }
+                                let _ = tauri::Emitter::emit(
+                                    app_handle,
+                                    "terminal_attached",
+                                    serde_json::json!({ "sessionId": formatted }),
+                                );
                             }
                         }
                     }

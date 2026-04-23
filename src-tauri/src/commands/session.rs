@@ -527,12 +527,9 @@ pub async fn create_session_inner(
     let info = SessionInfo::from(&session);
     let _ = app.emit("session_created", info.clone());
 
-    // Show the terminal window when a session is created
-    if let Some(win) = app.get_webview_window("terminal") {
-        if let Err(e) = win.show() {
-            log::warn!("[session] Failed to show terminal window: {}", e);
-        }
-    }
+    // 0.8.0: removed the "Show the terminal window when a session is created" branch.
+    // Under the unified-window model the main window is created up-front and stays
+    // visible; session creation has no window-show responsibility.
 
     // Save lastCodingAgent + codingAgents (skip for temp sessions)
     if !skip_tooling_save {
@@ -725,22 +722,51 @@ pub async fn destroy_session_inner(app: &AppHandle, uuid: Uuid) -> Result<(), St
         let _ = detached_win.close();
     }
 
-    // If a new session was auto-activated, emit switch event
+    // If a new session was auto-activated, emit switch event.
+    // Plan §A2.2.G2: the manager's `order.first()` choice is unaware of
+    // `DetachedSessionsState`; if the next-active is a detached session, emitting
+    // its id to main would cause main + the detached window to both own an xterm
+    // for the same session (duplicate display + keystroke routing ambiguity). Filter
+    // here — if detached, walk the list for the first non-detached session instead.
     if let Some(new_id) = new_active {
-        let _ = app.emit(
-            "session_switched",
-            serde_json::json!({ "id": new_id.to_string() }),
-        );
-    }
-
-    // Hide the terminal window when no sessions remain
-    if mgr.list_sessions().await.is_empty() {
-        if let Some(win) = app.get_webview_window("terminal") {
-            if let Err(e) = win.hide() {
-                log::warn!("[session] Failed to hide terminal window: {}", e);
+        let is_detached = {
+            let detached = app.state::<DetachedSessionsState>();
+            let set = detached.lock().unwrap();
+            set.contains(&new_id)
+        };
+        if is_detached {
+            let sessions = mgr.list_sessions().await;
+            let fallback = {
+                let detached = app.state::<DetachedSessionsState>();
+                let set = detached.lock().unwrap();
+                sessions
+                    .iter()
+                    .find_map(|s| Uuid::parse_str(&s.id).ok().filter(|u| !set.contains(u)))
+            };
+            if let Some(fb) = fallback {
+                let _ = mgr.switch_session(fb).await;
+                let _ = app.emit(
+                    "session_switched",
+                    serde_json::json!({ "id": fb.to_string() }),
+                );
+            } else {
+                let _ = app.emit(
+                    "session_switched",
+                    serde_json::json!({ "id": serde_json::Value::Null }),
+                );
             }
+        } else {
+            let _ = app.emit(
+                "session_switched",
+                serde_json::json!({ "id": new_id.to_string() }),
+            );
         }
     }
+
+    // 0.8.0: removed the "Hide the terminal window when no sessions remain" branch.
+    // Under the unified-window model the main window stays visible (sidebar remains
+    // usable for creating/opening sessions); the embedded terminal pane shows an
+    // empty-state placeholder when no active session exists.
 
     Ok(())
 }

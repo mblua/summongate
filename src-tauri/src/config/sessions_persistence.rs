@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::config::settings::WindowGeometry;
 use crate::session::manager::SessionManager;
 use crate::session::session::{SessionStatus, TEMP_SESSION_PREFIX};
 
@@ -31,6 +32,19 @@ pub struct PersistedSession {
     pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_label: Option<String>,
+
+    /// True if the session was detached into its own window at snapshot time.
+    /// Phase 3 restore re-spawns a detached window for every persisted row with
+    /// `was_detached=true` (except deferred sessions — see plan §R.9). Sourced
+    /// from `Session::was_detached` under Fix A — NOT from `DetachedSessionsState`.
+    #[serde(default)]
+    pub was_detached: bool,
+
+    /// Last-known geometry of this session's detached window. `None` for sessions
+    /// that were never detached, or detached without any drag/resize yet. Auto-GC'd
+    /// when the session is destroyed (field travels with the PersistedSession row).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detached_geometry: Option<WindowGeometry>,
 
     // ── Legacy fields — read-only, consumed by the upgrade pass in load_sessions. ──
     // `skip_serializing_if = "Option::is_none"` means snapshot_sessions never writes them
@@ -328,6 +342,11 @@ pub async fn snapshot_sessions(mgr: &SessionManager) -> Vec<PersistedSession> {
             is_coordinator: s.is_coordinator,
             agent_id: s.agent_id.clone(),
             agent_label: s.agent_label.clone(),
+            // Fix A: read detach state directly from the Session (via SessionInfo). The
+            // `DetachedSessionsState` set is NOT consulted at persist time — the Destroyed
+            // handler clears the set before `RunEvent::Exit` runs the final persist.
+            was_detached: s.was_detached,
+            detached_geometry: s.detached_geometry.clone(),
             // Legacy fields are always None on new saves; skip_serializing_if elides them.
             git_branch_source: None,
             git_branch_prefix: None,
@@ -785,6 +804,8 @@ mod tests {
             is_coordinator: false,
             agent_id: None,
             agent_label: None,
+            was_detached: false,
+            detached_geometry: None,
             git_branch_source: Some("C:/repos/agentscommander".into()),
             git_branch_prefix: Some("agentscommander".into()),
             id: None,
@@ -828,6 +849,8 @@ mod tests {
             is_coordinator: false,
             agent_id: None,
             agent_label: None,
+            was_detached: false,
+            detached_geometry: None,
             git_branch_source: None,
             git_branch_prefix: Some("multi-repo".into()),
             id: None,

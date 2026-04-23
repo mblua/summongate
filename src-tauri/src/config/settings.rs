@@ -64,24 +64,40 @@ pub struct AppSettings {
     /// Delay in seconds before auto-executing after transcription
     #[serde(default = "default_voice_delay")]
     pub voice_auto_execute_delay: u32,
-    /// Zoom level for the sidebar window (1.0 = 100%)
+    /// Zoom level for the sidebar window (1.0 = 100%). DEPRECATED in 0.8.0 — see `main_zoom`.
+    /// Retained for one version for downgrade safety; seeded into `main_zoom` on first load.
     #[serde(default = "default_zoom")]
     pub sidebar_zoom: f64,
-    /// Zoom level for the terminal window (1.0 = 100%)
+    /// Zoom level for the terminal window (1.0 = 100%). Still used by detached windows in 0.8.0.
     #[serde(default = "default_zoom")]
     pub terminal_zoom: f64,
+    /// Zoom level for the unified main window (1.0 = 100%). Introduced in 0.8.0.
+    #[serde(default = "default_zoom")]
+    pub main_zoom: f64,
     /// Zoom level for the guide window (1.0 = 100%)
     #[serde(default = "default_zoom")]
     pub guide_zoom: f64,
     /// Legacy: zoom level for the removed dark factory window. Kept for backwards-compat reads.
     #[serde(default = "default_zoom")]
     pub darkfactory_zoom: f64,
-    /// Saved geometry for the sidebar window
-    #[serde(default)]
+    /// DEPRECATED in 0.8.0 — previously held the sidebar window geometry under the
+    /// two-window model. `skip_serializing_if` drops it on next save. See `main_geometry`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidebar_geometry: Option<WindowGeometry>,
-    /// Saved geometry for the terminal window
-    #[serde(default)]
+    /// DEPRECATED in 0.8.0 — previously held the terminal window geometry. Seeded into
+    /// `main_geometry` by the first-boot migration. `skip_serializing_if` drops it on next save.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_geometry: Option<WindowGeometry>,
+    /// Saved geometry for the unified main window. Introduced in 0.8.0.
+    #[serde(default)]
+    pub main_geometry: Option<WindowGeometry>,
+    /// Width of the sidebar pane inside the main window, in logical pixels.
+    /// Clamped to [200, 600] at drag time and on load.
+    #[serde(default = "default_main_sidebar_width")]
+    pub main_sidebar_width: f64,
+    /// Keep the unified main window always on top.
+    #[serde(default)]
+    pub main_always_on_top: bool,
     /// Enable the embedded web server for remote browser access
     #[serde(default)]
     pub web_server_enabled: bool,
@@ -136,6 +152,10 @@ fn default_sidebar_style() -> String {
     "noir-minimal".to_string()
 }
 
+fn default_main_sidebar_width() -> f64 {
+    240.0
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         let (default_shell, default_shell_args) = if cfg!(target_os = "windows") {
@@ -159,10 +179,14 @@ impl Default for AppSettings {
             voice_auto_execute_delay: default_voice_delay(),
             sidebar_zoom: default_zoom(),
             terminal_zoom: default_zoom(),
+            main_zoom: default_zoom(),
             guide_zoom: default_zoom(),
             darkfactory_zoom: default_zoom(),
             sidebar_geometry: None,
             terminal_geometry: None,
+            main_geometry: None,
+            main_sidebar_width: default_main_sidebar_width(),
+            main_always_on_top: false,
             web_server_enabled: false,
             web_server_port: default_web_port(),
             web_server_bind: default_web_bind(),
@@ -327,6 +351,33 @@ pub fn load_settings() -> AppSettings {
         }
     };
 
+    // 0.8.0 unified-window migration — seed main_* from legacy fields on first load
+    // after upgrade. Runs BEFORE root_token auto-gen so the migrated values persist
+    // via the same save. The deprecated `sidebar_geometry`/`terminal_geometry` fields
+    // are automatically dropped from disk by `skip_serializing_if` on the next save.
+    if settings.main_geometry.is_none() {
+        if let Some(ref g) = settings.terminal_geometry {
+            settings.main_geometry = Some(g.clone());
+            log::info!("[settings-migration] seeded main_geometry from legacy terminal_geometry");
+        }
+    }
+    // Seed main_zoom from sidebar_zoom on first boot. EPSILON guard: avoid clobbering
+    // a user-set main_zoom=1.0 (which would equal default_zoom) with an effectively-unity
+    // sidebar_zoom. See A3.10 / Arb-2.
+    if (settings.main_zoom - default_zoom()).abs() < f64::EPSILON
+        && (settings.sidebar_zoom - default_zoom()).abs() > f64::EPSILON
+    {
+        settings.main_zoom = settings.sidebar_zoom;
+        log::info!("[settings-migration] seeded main_zoom from legacy sidebar_zoom");
+    }
+    // Seed main_always_on_top from legacy sidebar_always_on_top.
+    if !settings.main_always_on_top && settings.sidebar_always_on_top {
+        settings.main_always_on_top = true;
+        log::info!(
+            "[settings-migration] seeded main_always_on_top from legacy sidebar_always_on_top"
+        );
+    }
+
     // Auto-generate root token if missing
     if settings.root_token.is_none() {
         settings.root_token = Some(uuid::Uuid::new_v4().to_string());
@@ -339,7 +390,10 @@ pub fn load_settings() -> AppSettings {
     settings
 }
 
-/// Save settings to the app config directory (see config_dir())
+/// Save settings to the app config directory (see config_dir()).
+/// Atomic write (tmp + rename) per G.14 — mirrors `sessions_persistence::save_sessions`.
+/// Splitter-drag debouncing raises save frequency in 0.8.0; atomic writes ensure a crash
+/// mid-write cannot corrupt the existing settings.json.
 pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
     let dir = super::config_dir().ok_or("Could not determine home directory")?;
     let path = dir.join("settings.json");
@@ -351,7 +405,11 @@ pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
     let json = serde_json::to_string_pretty(settings)
         .map_err(|e| format!("Failed to serialize settings: {}", e))?;
 
-    std::fs::write(&path, json).map_err(|e| format!("Failed to write settings file: {}", e))?;
+    let tmp_path = dir.join("settings.json.tmp");
+    std::fs::write(&tmp_path, &json)
+        .map_err(|e| format!("Failed to write temp settings file: {}", e))?;
+    std::fs::rename(&tmp_path, &path)
+        .map_err(|e| format!("Failed to rename settings file: {}", e))?;
 
     log::info!("Saved settings to {:?}", path);
     Ok(())
