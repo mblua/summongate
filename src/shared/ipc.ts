@@ -176,6 +176,23 @@ export const WindowAPI = {
   detach: (sessionId: string) =>
     transport.invoke<string>("detach_terminal", { sessionId }),
 
+  /**
+   * Re-attach a detached session to the main window. Closes the detached
+   * window, removes the session from DetachedSessionsState, switches main
+   * to that session. Rust contract (plan §A2.2.G5): silent no-op if the
+   * session was already destroyed.
+   */
+  attach: (sessionId: string) =>
+    transport.invoke<void>("attach_terminal", { sessionId }),
+
+  /**
+   * Stateless authoritative list of detached session UUIDs. Used for
+   * hydrating sessionsStore.detachedIds on SidebarApp mount (G.8 race
+   * safety).
+   */
+  listDetached: () =>
+    transport.invoke<string[]>("list_detached_sessions"),
+
   openInExplorer: (path: string) =>
     transport.invoke<void>("open_in_explorer", { path }),
 
@@ -214,6 +231,21 @@ export function onPtyResized(
     "pty_resized",
     callback
   );
+}
+
+export function onTerminalDetached(
+  callback: (data: { sessionId: string; windowLabel: string }) => void
+): Promise<UnlistenFn> {
+  return transport.listen<{ sessionId: string; windowLabel: string }>(
+    "terminal_detached",
+    callback
+  );
+}
+
+export function onTerminalAttached(
+  callback: (data: { sessionId: string }) => void
+): Promise<UnlistenFn> {
+  return transport.listen<{ sessionId: string }>("terminal_attached", callback);
 }
 
 export function onSessionGitRepos(
