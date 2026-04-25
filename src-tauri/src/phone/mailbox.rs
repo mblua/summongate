@@ -81,6 +81,16 @@ pub(crate) fn wake_action_for(status: &SessionStatus) -> WakeAction {
     }
 }
 
+/// `skip_auto_resume` value used by `deliver_wake`'s spawn-fallback. Inverts
+/// the positive-form `spawn_with_resume` flag so call sites read naturally.
+///
+/// Pinned via this helper to fence against a future refactor that "simplifies"
+/// `!spawn_with_resume` to `spawn_with_resume` and silently regresses #82.
+/// See plan §8.2 / round-2 R2.7 / round-3 R3.2.
+pub(crate) fn wake_spawn_skip_auto_resume(spawn_with_resume: bool) -> bool {
+    !spawn_with_resume
+}
+
 /// The MailboxPoller runs as a background tokio task. It polls outbox directories
 /// for all known agent repos, validates messages, and delivers them according to mode.
 pub struct MailboxPoller {
@@ -532,6 +542,19 @@ impl MailboxPoller {
         app: &tauri::AppHandle,
         msg: &OutboxMessage,
     ) -> Result<(), String> {
+        // Whether the spawn-fallback should allow provider auto-resume.
+        // Default false: cold wake — either no SessionManager record at this
+        // CWD, or the matched record vanished from list_sessions before we
+        // could read it (concurrent destroy). Promoted to true only inside
+        // the RespawnExited match arm below.
+        //
+        // MUST NOT be re-derived after `destroy_session_inner` runs: post-
+        // destroy, `find_active_session` returns None and the value would
+        // silently flip, regressing the deferred-non-coord wake by losing
+        // `--continue`. Set the flag inside the pre-destroy match arm only.
+        // See plan §4.5.a / round-1 G7 / round-3 R3.2.
+        let mut spawn_with_resume = false;
+
         if let Some(session_id) = self.find_active_session(app, &msg.to).await {
             let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
             let mgr = session_mgr.read().await;
@@ -553,9 +576,21 @@ impl MailboxPoller {
                         return self.inject_into_pty(app, session_id, msg, true).await;
                     }
                     WakeAction::RespawnExited => {
+                        // Today the only writer of `Exited(_)` is `mark_exited`,
+                        // and its sole caller (`lib.rs:561`, deferred-non-coord at
+                        // startup) passes literal `0`. Any RespawnExited match is
+                        // therefore a known-state prior session worth resuming.
+                        //
+                        // If a future PR adds PTY exit-code surfacing
+                        // (`portable_pty::Child::wait()` + `mark_exited(id, real_code)`),
+                        // this is the seam to revisit — non-zero exits should likely
+                        // become cold (cwd-vanished from in-place teardown, agent
+                        // crash, OOM). See plan round-3 R3.1.
+                        spawn_with_resume = true;
                         log::info!(
-                            "[mailbox] wake: session {} is Exited, destroying before respawn",
-                            session_id
+                            "[mailbox] wake: session {} is Exited (status={:?}), destroying before respawn",
+                            session_id,
+                            s.status
                         );
                         // Drop read lock before destroy call — release promptly
                         // (destroy acquires its own read lock).
@@ -573,6 +608,10 @@ impl MailboxPoller {
                     }
                 }
             } else {
+                // session_id was returned by find_active_session but vanished
+                // from list_sessions before we read it — only possible if a
+                // concurrent destroy ran between the two awaits. Bias: treat
+                // as cold (spawn_with_resume stays false). See plan #82 G2.6.
                 log::warn!(
                     "[mailbox] wake: session {} not in list_sessions",
                     session_id
@@ -635,7 +674,7 @@ impl MailboxPoller {
             agent_label,        // human-readable label
             false,              // skip_tooling_save = false → persist lastCodingAgent
             Vec::new(),         // git_repos
-            false,              // skip_auto_resume = false → allow provider auto-resume
+            wake_spawn_skip_auto_resume(spawn_with_resume), // see deliver_wake top
         )
         .await
         .map_err(|e| format!("Failed to spawn session for '{}': {}", msg.to, e))?;
@@ -1798,7 +1837,7 @@ impl MailboxPoller {
                 None,  // No agent label — auto-detected from shell
                 false, // Persist tooling
                 Vec::new(), // git_repos
-                false, // skip_auto_resume
+                true, // skip_auto_resume = true → CLI session-request is a fresh create
             )
             .await
             {
@@ -1874,6 +1913,21 @@ mod tests {
     #[test]
     fn wake_action_running_injects() {
         assert_eq!(wake_action_for(&SessionStatus::Running), WakeAction::Inject);
+    }
+
+    // ── wake_spawn_skip_auto_resume tests (issue #82, plan §8.2) ──
+
+    #[test]
+    fn wake_spawn_skip_auto_resume_skips_when_cold() {
+        // Cold wake (no prior session, or race fallthrough) — suppress resume.
+        assert!(wake_spawn_skip_auto_resume(false));
+    }
+
+    #[test]
+    fn wake_spawn_skip_auto_resume_allows_when_known_state() {
+        // Known-state wake (RespawnExited match) — allow `--continue` /
+        // codex `resume --last` / gemini `--resume latest`.
+        assert!(!wake_spawn_skip_auto_resume(true));
     }
 
     #[test]

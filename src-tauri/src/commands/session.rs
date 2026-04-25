@@ -252,13 +252,56 @@ fn inject_codex_resume(shell: &str, shell_args: &mut Vec<String>) -> bool {
     }
 }
 
+/// Decide whether to auto-inject `--continue` for a Claude session.
+/// Pure function: no filesystem access. Caller is responsible for resolving
+/// `claude_project_exists` (typically `~/.claude/projects/<mangled-cwd>/.is_dir()`).
+///
+/// Returns `true` only when ALL of:
+///   - the session is a Claude variant
+///   - the caller has not requested skip
+///   - the projects dir exists on disk
+///   - the configured argv does not already contain `--continue`,
+///     `--continue=<value>`, or `-c`
+///
+/// Note: `-c` is also Codex's short form for `--config` (e.g.,
+/// `codex -c key=value`). In compound commands that mix `codex` and `claude`
+/// (e.g., `cmd /K codex -c k=v && claude`), the `-c` from codex's tokens will
+/// suppress Claude's `--continue` injection. Pre-existing behavior; documented
+/// here so refactors do not silently lose it.
+fn should_inject_continue(
+    is_claude: bool,
+    skip_auto_resume: bool,
+    claude_project_exists: bool,
+    full_cmd: &str,
+) -> bool {
+    if !is_claude || skip_auto_resume || !claude_project_exists {
+        return false;
+    }
+    let already_has_continue = full_cmd.split_whitespace().any(|t| {
+        let lower = t.to_lowercase();
+        lower == "--continue" || lower.starts_with("--continue=") || lower == "-c"
+    });
+    !already_has_continue
+}
+
 /// Core session creation logic shared by the Tauri command and the restore path.
 /// Creates a session record, spawns a PTY, and emits the session_created event.
 /// Auto-detects agent from shell command if not provided, and auto-injects provider-specific
-/// resume flags (`claude --continue`, `codex resume --last`) when appropriate.
+/// resume flags (`claude --continue`, `codex resume --last`, `gemini --resume latest`)
+/// when appropriate.
 /// If `skip_tooling_save` is true, skips writing to the repo's config.json (for temp sessions).
-/// If `skip_auto_resume` is true, suppresses provider-specific auto-resume injection (used by
-/// restart_session to ensure a fresh conversation even when prior history exists).
+///
+/// `skip_auto_resume` controls provider auto-resume injection:
+/// - `true` — suppress all provider auto-resume. Use this for any "fresh
+///   create" call site (UI/CLI/root-agent create, mailbox wake-from-cold
+///   meaning no SessionManager record at this CWD, `restart_session` with
+///   default semantics from `effective_restart_skip_auto_resume`).
+/// - `false` — allow provider auto-resume. Use this only for paths restoring
+///   a session AC already knows about (the startup-restore loop in `lib.rs`,
+///   the wake-from-known-state branch in `mailbox::deliver_wake` — any
+///   `RespawnExited` match, today driven exclusively by deferred-non-coord
+///   `Exited(0)` records — and `restart_session` when its caller passes
+///   `Some(false)`).
 pub async fn create_session_inner(
     app: &AppHandle,
     session_mgr: &Arc<tokio::sync::RwLock<SessionManager>>,
@@ -341,8 +384,9 @@ pub async fn create_session_inner(
         session.is_claude = true;
     }
 
-    // Auto-inject --continue for Claude agents when a prior conversation exists
-    // Only if ~/.claude/projects/{mangled-cwd}/ exists (prior conversation exists)
+    // Auto-inject --continue for Claude agents when AC has reason to believe a prior
+    // conversation exists for this session (issue #82: `is_dir()` alone is unsound;
+    // call sites pass `skip_auto_resume = true` for fresh creates).
     let claude_project_exists = {
         if let Some(home) = dirs::home_dir() {
             let mangled = crate::session::session::mangle_cwd_for_claude(&cwd);
@@ -354,29 +398,23 @@ pub async fn create_session_inner(
             false
         }
     };
-    if is_claude && claude_project_exists && !skip_auto_resume {
+    if should_inject_continue(is_claude, skip_auto_resume, claude_project_exists, &full_cmd) {
         if let Some(ref aid) = agent_id {
-            let already_has_continue = full_cmd.split_whitespace().any(|t| {
-                let lower = t.to_lowercase();
-                lower == "--continue" || lower == "-c"
-            });
-            if !already_has_continue {
-                if executable_basename(&shell) == "cmd" {
-                    if let Some(last) = shell_args.last_mut() {
-                        if executable_basename(last) == "claude"
-                            || last.to_lowercase().contains("claude")
-                        {
-                            *last = format!("{} --continue", last);
-                            log::info!("Auto-injected --continue for agent '{}' (prior conversation exists, cmd path)", aid);
-                        }
+            if executable_basename(&shell) == "cmd" {
+                if let Some(last) = shell_args.last_mut() {
+                    if executable_basename(last) == "claude"
+                        || last.to_lowercase().contains("claude")
+                    {
+                        *last = format!("{} --continue", last);
+                        log::info!("Auto-injected --continue for agent '{}' (prior conversation exists, cmd path)", aid);
                     }
-                } else {
-                    shell_args.push("--continue".to_string());
-                    log::info!(
-                        "Auto-injected --continue for agent '{}' (prior conversation exists)",
-                        aid
-                    );
                 }
+            } else {
+                shell_args.push("--continue".to_string());
+                log::info!(
+                    "Auto-injected --continue for agent '{}' (prior conversation exists)",
+                    aid
+                );
             }
         }
     }
@@ -630,7 +668,7 @@ pub async fn create_session(
         agent_label,
         false, // persist tooling
         git_repos.unwrap_or_default(),
-        false, // skip_auto_resume
+        true, // skip_auto_resume = true → fresh create, no `--continue` injection
     )
     .await?;
 
@@ -1213,7 +1251,7 @@ pub async fn create_root_agent_session(
         agent_label,
         false,
         Vec::new(),
-        false, // skip_auto_resume
+        true, // skip_auto_resume = true → fresh create, no `--continue` injection
     )
     .await?;
 
@@ -1261,7 +1299,7 @@ pub async fn create_root_agent_session(
 
 #[cfg(test)]
 mod tests {
-    use super::{inject_codex_resume, resolve_actual_agent};
+    use super::{inject_codex_resume, resolve_actual_agent, should_inject_continue};
     use crate::config::settings::{AgentConfig, AppSettings};
 
     fn test_settings() -> AppSettings {
@@ -1547,5 +1585,76 @@ mod tests {
         // Explicit true still works (future-proof against a caller that
         // wants to be explicit rather than rely on the default).
         assert!(super::effective_restart_skip_auto_resume(Some(true)));
+    }
+
+    // ── should_inject_continue tests (issue #82, plan §8.1) ──
+
+    #[test]
+    fn should_inject_continue_returns_false_when_not_claude() {
+        assert!(!should_inject_continue(false, false, true, "codex"));
+    }
+
+    #[test]
+    fn should_inject_continue_returns_false_when_skip_overrides_existing_dir() {
+        // G4 strengthening: lock the predicate against future refactors that
+        // re-order early-return clauses. Explicit fixture, not "all permissive".
+        assert!(!should_inject_continue(true, true, true, "claude"));
+    }
+
+    #[test]
+    fn should_inject_continue_returns_false_when_dir_missing() {
+        assert!(!should_inject_continue(true, false, false, "claude"));
+    }
+
+    #[test]
+    fn should_inject_continue_returns_false_when_continue_already_present() {
+        assert!(!should_inject_continue(
+            true, false, true, "claude --continue"
+        ));
+    }
+
+    #[test]
+    fn should_inject_continue_returns_true_for_canonical_resume_case() {
+        assert!(should_inject_continue(true, false, true, "claude"));
+    }
+
+    #[test]
+    fn should_inject_continue_returns_false_when_continue_with_value_present() {
+        // R2.4 / G2: the GNU long-option-with-value form must also suppress
+        // re-injection.
+        assert!(!should_inject_continue(
+            true, false, true, "claude --continue=somevalue"
+        ));
+    }
+
+    #[test]
+    fn should_inject_continue_returns_false_when_uppercase_continue_present() {
+        // D4 #6: case-insensitivity regression fence.
+        assert!(!should_inject_continue(
+            true, false, true, "claude --CONTINUE"
+        ));
+    }
+
+    #[test]
+    fn should_inject_continue_returns_false_when_short_form_present() {
+        // D4 #7: -c short-form regression fence.
+        assert!(!should_inject_continue(true, false, true, "claude -c"));
+    }
+
+    #[test]
+    fn should_inject_continue_returns_false_when_continue_in_cmd_wrapper() {
+        // D4 #8: token-level scan, not arg-index scan.
+        assert!(!should_inject_continue(
+            true, false, true, "cmd /C claude --continue"
+        ));
+    }
+
+    #[test]
+    fn should_inject_continue_returns_true_when_unrelated_continue_substring() {
+        // D4 #9: token-equality fence — `--continued-mode` is NOT `--continue`.
+        // Guards against a future regression to substring matching.
+        assert!(should_inject_continue(
+            true, false, true, "claude --continued-mode something"
+        ));
     }
 }

@@ -591,7 +591,7 @@ pub fn run() {
                             ps.agent_label.clone(),
                             false, // Persist tooling on restore
                             ps.git_repos.clone(),
-                            false, // skip_auto_resume
+                            false, // skip_auto_resume = false → restore path; allow `--continue`
                         ).await {
                             Ok(info) => {
                                 if ps.was_active {
