@@ -261,7 +261,8 @@ fn inject_codex_resume(shell: &str, shell_args: &mut Vec<String>) -> bool {
 ///   - the caller has not requested skip
 ///   - the projects dir exists on disk
 ///   - the configured argv does not already contain `--continue`,
-///     `--continue=<value>`, or `-c`
+///     `--continue=<value>`, or `-c` (case-insensitive token match against
+///     each whitespace-split token of `full_cmd`)
 ///
 /// Note: `-c` is also Codex's short form for `--config` (e.g.,
 /// `codex -c key=value`). In compound commands that mix `codex` and `claude`
