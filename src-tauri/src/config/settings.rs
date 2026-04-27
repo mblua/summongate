@@ -106,6 +106,11 @@ pub struct AppSettings {
     /// Whether the user has dismissed the first-run onboarding wizard
     #[serde(default)]
     pub onboarding_dismissed: bool,
+    /// When true, sort the Coordinator Quick-Access list by most-recent-activity descending.
+    /// Activity = busy→idle transition (IdleDetector emits session_idle).
+    /// Per-session timestamps live in the frontend store and are NOT persisted.
+    #[serde(default)]
+    pub coord_sort_by_activity: bool,
 }
 
 fn default_true() -> bool {
@@ -171,6 +176,7 @@ impl Default for AppSettings {
             sidebar_style: default_sidebar_style(),
             root_token: None,
             onboarding_dismissed: false,
+            coord_sort_by_activity: false,
         }
     }
 }
@@ -444,5 +450,50 @@ mod tests {
         let settings =
             settings_with_agents(&[("Codex", "codex -c instruction=\"resume later\" --search")]);
         assert!(validate_agent_commands(&settings).is_ok());
+    }
+
+    #[test]
+    fn coord_sort_by_activity_round_trips_through_serde() {
+        let mut s = AppSettings::default();
+        assert!(!s.coord_sort_by_activity);
+        s.coord_sort_by_activity = true;
+        let json = serde_json::to_string(&s).expect("serialize");
+        assert!(json.contains("\"coordSortByActivity\":true"));
+        let back: AppSettings = serde_json::from_str(&json).expect("deserialize");
+        assert!(back.coord_sort_by_activity);
+    }
+
+    #[test]
+    fn coord_sort_by_activity_defaults_when_missing_from_json() {
+        // Old settings.json without the new field must deserialize to false.
+        let json = r#"{
+            "defaultShell": "bash",
+            "defaultShellArgs": [],
+            "agents": [],
+            "telegramBots": [],
+            "startOnlyCoordinators": true,
+            "sidebarAlwaysOnTop": false,
+            "raiseTerminalOnClick": true,
+            "voiceToTextEnabled": false,
+            "geminiApiKey": "",
+            "geminiModel": "gemini-2.5-flash",
+            "voiceAutoExecute": true,
+            "voiceAutoExecuteDelay": 15,
+            "sidebarZoom": 1.0,
+            "terminalZoom": 1.0,
+            "guideZoom": 1.0,
+            "darkfactoryZoom": 1.0,
+            "sidebarGeometry": null,
+            "terminalGeometry": null,
+            "webServerEnabled": false,
+            "webServerPort": 7777,
+            "webServerBind": "127.0.0.1",
+            "projectPath": null,
+            "projectPaths": [],
+            "sidebarStyle": "noir-minimal",
+            "onboardingDismissed": false
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("deserialize old json");
+        assert!(!s.coord_sort_by_activity);
     }
 }
