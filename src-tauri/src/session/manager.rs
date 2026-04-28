@@ -13,6 +13,12 @@ pub struct SessionManager {
     next_number: Arc<RwLock<u32>>,
 }
 
+impl Default for SessionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SessionManager {
     pub fn new() -> Self {
         Self {
@@ -23,6 +29,9 @@ impl SessionManager {
         }
     }
 
+    // Session record is created with the full set of fields up front; splitting
+    // into a builder would just defer the same parameter list.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_session(
         &self,
         shell: String,

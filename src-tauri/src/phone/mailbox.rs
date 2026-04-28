@@ -98,6 +98,12 @@ pub struct MailboxPoller {
     retry_tracker: HashMap<PathBuf, RetryState>,
 }
 
+impl Default for MailboxPoller {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MailboxPoller {
     pub fn new() -> Self {
         Self {
@@ -1396,7 +1402,7 @@ impl MailboxPoller {
         let full_cmd = format!("{} {}", shell, shell_args.join(" "));
         let basenames: Vec<String> = full_cmd
             .split_whitespace()
-            .map(|t| crate::commands::session::executable_basename(t))
+            .map(crate::commands::session::executable_basename)
             .collect();
 
         if basenames.iter().any(|b| b == "claude" || b == "aider") {

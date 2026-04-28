@@ -384,20 +384,21 @@ mod tests {
     use super::{validate_agent_commands, AgentConfig, AppSettings};
 
     fn settings_with_agents(commands: &[(&str, &str)]) -> AppSettings {
-        let mut settings = AppSettings::default();
-        settings.agents = commands
-            .iter()
-            .enumerate()
-            .map(|(idx, (label, command))| AgentConfig {
-                id: format!("agent-{idx}"),
-                label: (*label).to_string(),
-                command: (*command).to_string(),
-                color: "#000000".to_string(),
-                git_pull_before: false,
-                exclude_global_claude_md: false,
-            })
-            .collect();
-        settings
+        AppSettings {
+            agents: commands
+                .iter()
+                .enumerate()
+                .map(|(idx, (label, command))| AgentConfig {
+                    id: format!("agent-{idx}"),
+                    label: (*label).to_string(),
+                    command: (*command).to_string(),
+                    color: "#000000".to_string(),
+                    git_pull_before: false,
+                    exclude_global_claude_md: false,
+                })
+                .collect(),
+            ..AppSettings::default()
+        }
     }
 
     #[test]

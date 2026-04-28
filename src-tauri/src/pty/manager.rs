@@ -274,6 +274,9 @@ impl PtyManager {
         }
     }
 
+    // PTY spawn requires the full set of session knobs at once; splitting into a
+    // builder would just add ceremony for no reuse.
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &self,
         id: Uuid,

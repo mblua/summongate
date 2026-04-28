@@ -580,9 +580,9 @@ pub async fn create_workgroup(
         let assigned_repos: Vec<String> = team_repos
             .iter()
             .filter(|r| r.agents.iter().any(|a| agent_matches(a, agent_name)))
-            .filter_map(|r| {
+            .map(|r| {
                 let dir_name = format!("repo-{}", repo_dir_name_from_url(&r.url));
-                Some(format!("../{}", dir_name))
+                format!("../{}", dir_name)
             })
             .collect();
 
@@ -741,7 +741,7 @@ pub async fn delete_workgroup(
 
     // Safety check: detect dirty repos before deleting (skip if force)
     if !force.unwrap_or(false) {
-        let dirty_repos = check_workgroup_repos_dirty(&[wg_dir.clone()]);
+        let dirty_repos = check_workgroup_repos_dirty(std::slice::from_ref(&wg_dir));
         if !dirty_repos.is_empty() {
             let list = dirty_repos
                 .iter()
@@ -768,6 +768,8 @@ pub async fn delete_workgroup(
 }
 
 /// Update an existing team's config.json in {project_path}/.ac-new/_team_{name}/
+// Tauri command: State<> injections push us over clippy's 7-arg threshold.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn update_team(
     app: AppHandle,

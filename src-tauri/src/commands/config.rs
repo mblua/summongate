@@ -68,6 +68,8 @@ pub async fn open_web_remote() -> Result<(), String> {
     Ok(())
 }
 
+// Tauri command: State<> injections push us over clippy's 7-arg threshold.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn start_web_server(
     app_handle: tauri::AppHandle,
