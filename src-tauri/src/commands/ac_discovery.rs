@@ -759,7 +759,7 @@ pub async fn discover_ac_agents(
                                     &teams_snapshot,
                                 );
 
-                                log::info!(
+                                log::debug!(
                                     "[ac-discovery] call={} replica — project='{}' wg='{}' replica='{}' fqn='{}:{}/{}' is_coordinator={}",
                                     call_id,
                                     project_folder,
@@ -913,7 +913,7 @@ pub async fn discover_ac_agents(
         .flat_map(|wg| wg.agents.iter())
         .filter(|a| a.is_coordinator)
         .count();
-    log::info!(
+    log::debug!(
         "[ac-discovery] call={} discover_ac_agents: summary — workgroups={} teams={} replicas={} coordinator={}",
         call_id,
         workgroups.len(),
@@ -1177,7 +1177,7 @@ pub async fn discover_project(
                             &teams_snapshot,
                         );
 
-                        log::info!(
+                        log::debug!(
                             "[ac-discovery] call={} replica — project='{}' wg='{}' replica='{}' fqn='{}:{}/{}' is_coordinator={}",
                             call_id,
                             project_folder,
@@ -1318,7 +1318,7 @@ pub async fn discover_project(
         .flat_map(|wg| wg.agents.iter())
         .filter(|a| a.is_coordinator)
         .count();
-    log::info!(
+    log::debug!(
         "[ac-discovery] call={} discover_project: summary — path='{}' workgroups={} teams={} replicas={} coordinator={}",
         call_id,
         path,

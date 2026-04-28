@@ -381,7 +381,7 @@ let call_id = DISCOVERY_CALL_ID.fetch_add(1, Ordering::Relaxed);
 **Code (insert verbatim after line 756):**
 
 ```rust
-log::info!(
+log::debug!(
     "[ac-discovery] call={} replica — project='{}' wg='{}' replica='{}' fqn='{}:{}/{}' is_coordinator={}",
     call_id,
     project_folder,
@@ -392,7 +392,7 @@ log::info!(
 );
 ```
 
-**Level:** `info!` — fires once per replica enumerated. mb's `phi_fluid-mblua` has 105 replicas, so this single discovery call emits 105 `[ac-discovery] call=N replica` lines. That is well within the spec ("≤O(replicas) per discovery call").
+**Level:** `debug!` — fires once per replica enumerated. mb's `phi_fluid-mblua` has 105 replicas, so this single discovery call emits 105 `[ac-discovery] call=N replica` lines. That is well within the spec ("≤O(replicas) per discovery call"). Silent by default; surfaces only when `RUST_LOG=...,agentscommander_lib::commands::ac_discovery=debug` per §5.
 
 **Why this discriminates C vs D directly:**
 - For each `tech-lead` replica, the log shows `is_coordinator=true` or `false`. The user then visually inspects the UI:
@@ -414,7 +414,7 @@ log::info!(
 **Code (insert verbatim after line 1147):**
 
 ```rust
-log::info!(
+log::debug!(
     "[ac-discovery] call={} replica — project='{}' wg='{}' replica='{}' fqn='{}:{}/{}' is_coordinator={}",
     call_id,
     project_folder,
@@ -427,7 +427,7 @@ log::info!(
 
 **Note:** Identical line to Surface A1 (different `call_id` value at runtime — distinct calls). Both code paths are user-reachable (full-discovery vs per-project-discovery), and the issue's reproduction path through opening a project triggers one or the other depending on UI state. Duplicating the log line — rather than extracting a helper — keeps the change "logging only" and respects the no-refactor constraint. Identical format strings make `grep` deterministic across both call paths.
 
-**Level:** `info!`.
+**Level:** `debug!`. Silent by default; requires `RUST_LOG=...,agentscommander_lib::commands::ac_discovery=debug` per §5.
 
 **Gating:** unconditional.
 
@@ -449,7 +449,7 @@ let total_coordinator: usize = workgroups
     .flat_map(|wg| wg.agents.iter())
     .filter(|a| a.is_coordinator)
     .count();
-log::info!(
+log::debug!(
     "[ac-discovery] call={} discover_ac_agents: summary — workgroups={} teams={} replicas={} coordinator={}",
     call_id,
     workgroups.len(),
@@ -459,7 +459,7 @@ log::info!(
 );
 ```
 
-**Level:** `info!` — fires once per discovery call.
+**Level:** `debug!` — fires once per discovery call. Silent by default; surfaces only when `RUST_LOG=...,agentscommander_lib::commands::ac_discovery=debug` per §5.
 
 **Why useful:** A single grep on `[ac-discovery] call=42 discover_ac_agents: summary` (or `grep '[ac-discovery] call=42'` for the full tape) yields a chronological per-call audit: did the count of coordinator replicas drop after some user action? Did `teams` count drop? With Surface A0's per-call ID, even concurrent invocations are unambiguously partitioned.
 
@@ -483,7 +483,7 @@ let total_coordinator: usize = workgroups
     .flat_map(|wg| wg.agents.iter())
     .filter(|a| a.is_coordinator)
     .count();
-log::info!(
+log::debug!(
     "[ac-discovery] call={} discover_project: summary — path='{}' workgroups={} teams={} replicas={} coordinator={}",
     call_id,
     path,
@@ -496,7 +496,7 @@ log::info!(
 
 **Note:** Includes the `path` field that A3 does not (since `discover_project` is single-project scoped). Different phrase (`discover_project: summary` vs `discover_ac_agents: summary`) keeps the two surfaces grep-distinguishable. Both share the `[ac-discovery] call=N` prefix from Surface A0.
 
-**Level:** `info!`.
+**Level:** `debug!`. Silent by default; requires `RUST_LOG=...,agentscommander_lib::commands::ac_discovery=debug` per §5.
 
 **Gating:** unconditional.
 
@@ -622,10 +622,10 @@ The plan stays backend-only because the per-replica A1/A2 line directly emits th
 | T4.suffix-mismatch | `teams.rs` | `is_coordinator` | `debug!` | proj-match × suffix-diff | **C3** (G1: new in round 2) |
 | T4.both-mismatch | `teams.rs` | `is_coordinator` | `debug!` | proj-diff × suffix-diff | C2+C3 compound (H4: new in round 3) |
 | A0 | `ac_discovery.rs` | module-level static | n/a | infrastructure | per-call partitioning (G5: new in round 2; H1 placement fix in round 3) |
-| A1 | `ac_discovery.rs` | `discover_ac_agents` | `info!` | replica | C vs D |
-| A2 | `ac_discovery.rs` | `discover_project` | `info!` | replica | C vs D |
-| A3 | `ac_discovery.rs` | `discover_ac_agents` | `info!` | discovery call | sanity |
-| A4 | `ac_discovery.rs` | `discover_project` | `info!` | discovery call | sanity |
+| A1 | `ac_discovery.rs` | `discover_ac_agents` | `debug!` | replica | C vs D (post-#83 tweak: was `info!`) |
+| A2 | `ac_discovery.rs` | `discover_project` | `debug!` | replica | C vs D (post-#83 tweak: was `info!`) |
+| A3 | `ac_discovery.rs` | `discover_ac_agents` | `debug!` | discovery call | sanity (post-#83 tweak: was `info!`) |
+| A4 | `ac_discovery.rs` | `discover_project` | `debug!` | discovery call | sanity (post-#83 tweak: was `info!`) |
 
 Total: 17 log emission sites + 1 infrastructure static across 9 logical surfaces (T1, T2, T3, T4, A0, A1, A2, A3, A4). T4 alone now emits on 6 distinct decision-tree leaves (`direct-match`, `wg-aware-match`, `reject-unqualified`, `reject-project-mismatch`, `reject-suffix-mismatch`, `reject-both-mismatch`), forming a complete positive-evidence audit of every reachable path through `is_coordinator` when both `extract_wg_team` and `team.coordinator_name` are `Some(_)`.
 
