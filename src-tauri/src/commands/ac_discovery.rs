@@ -850,7 +850,7 @@ pub async fn discover_ac_agents(
                 wg.agents.iter().any(|agent| {
                     t.agents.iter().any(|team_ref| {
                         team_ref.rsplit('/').next()
-                            .map_or(false, |s| s == agent.name)
+                            .is_some_and(|s| s == agent.name)
                     })
                 })
             });
@@ -1236,7 +1236,7 @@ pub async fn discover_project(
                 wg.agents.iter().any(|agent| {
                     t.agents.iter().any(|team_ref| {
                         team_ref.rsplit('/').next()
-                            .map_or(false, |s| s == agent.name)
+                            .is_some_and(|s| s == agent.name)
                     })
                 })
             });

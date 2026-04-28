@@ -139,7 +139,7 @@ pub fn execute(args: CreateAgentArgs) -> i32 {
                     }
                 }
 
-                let parts: Vec<&str> = agent.command.trim().split_whitespace().collect();
+                let parts: Vec<&str> = agent.command.split_whitespace().collect();
                 let (shell, shell_args) = if agent.git_pull_before {
                     (
                         "cmd.exe".to_string(),

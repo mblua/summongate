@@ -560,14 +560,13 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
                 skip_next = false;
                 continue;
             }
-            if is_codex && idx == 0 && a.eq_ignore_ascii_case("resume") {
-                if args
+            if is_codex && idx == 0 && a.eq_ignore_ascii_case("resume")
+                && args
                     .get(1)
                     .is_some_and(|next| next.eq_ignore_ascii_case("--last"))
                 {
                     continue;
                 }
-            }
             if is_codex
                 && idx == 1
                 && args

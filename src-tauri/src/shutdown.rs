@@ -14,11 +14,18 @@ use tokio_util::sync::CancellationToken;
 /// - Wake-and-sleep cleanup loops (phone/mailbox.rs) — async, up to 600s timeout
 /// - Follow-up injection loops (phone/mailbox.rs) — async, up to 30s timeout
 /// - Credential injection (commands/session.rs) — one-shot async, 2s sleep
+///
 /// These run on Tauri's tokio runtime and are force-cancelled on runtime drop.
 #[derive(Clone)]
 pub struct ShutdownSignal {
     token: CancellationToken,
     flag: Arc<AtomicBool>,
+}
+
+impl Default for ShutdownSignal {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ShutdownSignal {

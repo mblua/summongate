@@ -497,6 +497,133 @@ pub fn can_communicate(from: &str, to: &str, teams: &[DiscoveredTeam]) -> bool {
     false
 }
 
+/// Discover all teams from all known project paths.
+/// Scans settings.project_paths (and immediate children) for `.ac-new/_team_*/config.json`.
+pub fn discover_teams() -> Vec<DiscoveredTeam> {
+    let settings = crate::config::settings::load_settings();
+    let mut teams = Vec::new();
+
+    for repo_path in &settings.project_paths {
+        let base = Path::new(repo_path);
+        if !base.is_dir() {
+            continue;
+        }
+
+        // Check base and immediate children (same pattern as ac_discovery)
+        let mut dirs_to_check = vec![base.to_path_buf()];
+        if let Ok(entries) = std::fs::read_dir(base) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if !name.starts_with('.') {
+                        dirs_to_check.push(p);
+                    }
+                }
+            }
+        }
+
+        for project_dir in dirs_to_check {
+            discover_teams_in_project(&project_dir, &mut teams);
+        }
+    }
+
+    log::info!(
+        "[teams] discovered {} team(s) across {} project path(s)",
+        teams.len(),
+        settings.project_paths.len()
+    );
+    teams
+}
+
+/// Discover teams in a single project directory.
+fn discover_teams_in_project(project_dir: &Path, teams: &mut Vec<DiscoveredTeam>) {
+    let ac_new = project_dir.join(".ac-new");
+    if !ac_new.is_dir() {
+        return;
+    }
+
+    let project_folder = project_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let entries = match std::fs::read_dir(&ac_new) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let team_dir = entry.path();
+        if !team_dir.is_dir() {
+            continue;
+        }
+
+        let dir_name = match team_dir.file_name().and_then(|n| n.to_str()) {
+            Some(n) if n.starts_with("_team_") => n,
+            _ => continue,
+        };
+
+        let team_name = dir_name
+            .strip_prefix("_team_")
+            .unwrap_or(dir_name)
+            .to_string();
+
+        let config_path = team_dir.join("config.json");
+        let parsed: serde_json::Value = match std::fs::read_to_string(&config_path)
+            .ok()
+            .and_then(|c| serde_json::from_str(&c).ok())
+        {
+            Some(v) => v,
+            None => continue,
+        };
+
+        // Resolve agents — build names and paths in a single pass to keep indices aligned
+        let agent_refs: Vec<String> = parsed
+            .get("agents")
+            .and_then(|a| a.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let (agent_names, agent_paths): (Vec<String>, Vec<Option<PathBuf>>) = agent_refs
+            .iter()
+            .map(|r| {
+                let name = resolve_agent_ref(&project_folder, r);
+                let path = resolve_agent_path(&ac_new, r);
+                (name, path)
+            })
+            .unzip();
+
+        // Resolve coordinator
+        let coordinator_ref = parsed
+            .get("coordinator")
+            .and_then(|c| c.as_str())
+            .map(String::from);
+
+        let coordinator_name = coordinator_ref
+            .as_ref()
+            .map(|r| resolve_agent_ref(&project_folder, r));
+
+        let coordinator_path = coordinator_ref
+            .as_ref()
+            .and_then(|r| resolve_agent_path(&ac_new, r));
+
+        teams.push(DiscoveredTeam {
+            name: team_name,
+            project: project_folder.clone(),
+            agent_names,
+            agent_paths,
+            coordinator_name,
+            coordinator_path,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -599,6 +726,9 @@ mod tests {
 
     /// Build a fake project layout on disk so `resolve_agent_target` can scan it.
     /// `projects` is a slice of `(project_name, &[(wg_name, &[agent_short])])`.
+    // The nested-slice shape is the most direct way to express the fixture; a
+    // type alias would obscure the structure at the only call sites.
+    #[allow(clippy::type_complexity)]
     fn make_project_fixture(
         projects: &[(&str, &[(&str, &[&str])])],
     ) -> (FixtureRoot, Vec<String>) {
@@ -849,138 +979,11 @@ mod tests {
     /// authority even if the local part matches. Locks in the §DR8/§G13 call.
     #[test]
     fn is_coordinator_rejects_legacy_unqualified_from() {
-        let teams = vec![dev_team("proj-a")];
+        let teams = [dev_team("proj-a")];
         // Legacy-unqualified name — local part matches the team coordinator, but
         // with no project prefix the strict rule rejects.
         assert!(!is_coordinator("wg-1-dev-team/tech-lead", &teams[0]));
         // For completeness, the fully-qualified form DOES grant authority.
         assert!(is_coordinator("proj-a:wg-1-dev-team/tech-lead", &teams[0]));
-    }
-}
-
-/// Discover all teams from all known project paths.
-/// Scans settings.project_paths (and immediate children) for `.ac-new/_team_*/config.json`.
-pub fn discover_teams() -> Vec<DiscoveredTeam> {
-    let settings = crate::config::settings::load_settings();
-    let mut teams = Vec::new();
-
-    for repo_path in &settings.project_paths {
-        let base = Path::new(repo_path);
-        if !base.is_dir() {
-            continue;
-        }
-
-        // Check base and immediate children (same pattern as ac_discovery)
-        let mut dirs_to_check = vec![base.to_path_buf()];
-        if let Ok(entries) = std::fs::read_dir(base) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_dir() {
-                    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if !name.starts_with('.') {
-                        dirs_to_check.push(p);
-                    }
-                }
-            }
-        }
-
-        for project_dir in dirs_to_check {
-            discover_teams_in_project(&project_dir, &mut teams);
-        }
-    }
-
-    log::info!(
-        "[teams] discovered {} team(s) across {} project path(s)",
-        teams.len(),
-        settings.project_paths.len()
-    );
-    teams
-}
-
-/// Discover teams in a single project directory.
-fn discover_teams_in_project(project_dir: &Path, teams: &mut Vec<DiscoveredTeam>) {
-    let ac_new = project_dir.join(".ac-new");
-    if !ac_new.is_dir() {
-        return;
-    }
-
-    let project_folder = project_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string();
-
-    let entries = match std::fs::read_dir(&ac_new) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let team_dir = entry.path();
-        if !team_dir.is_dir() {
-            continue;
-        }
-
-        let dir_name = match team_dir.file_name().and_then(|n| n.to_str()) {
-            Some(n) if n.starts_with("_team_") => n,
-            _ => continue,
-        };
-
-        let team_name = dir_name
-            .strip_prefix("_team_")
-            .unwrap_or(dir_name)
-            .to_string();
-
-        let config_path = team_dir.join("config.json");
-        let parsed: serde_json::Value = match std::fs::read_to_string(&config_path)
-            .ok()
-            .and_then(|c| serde_json::from_str(&c).ok())
-        {
-            Some(v) => v,
-            None => continue,
-        };
-
-        // Resolve agents — build names and paths in a single pass to keep indices aligned
-        let agent_refs: Vec<String> = parsed
-            .get("agents")
-            .and_then(|a| a.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let (agent_names, agent_paths): (Vec<String>, Vec<Option<PathBuf>>) = agent_refs
-            .iter()
-            .map(|r| {
-                let name = resolve_agent_ref(&project_folder, r);
-                let path = resolve_agent_path(&ac_new, r);
-                (name, path)
-            })
-            .unzip();
-
-        // Resolve coordinator
-        let coordinator_ref = parsed
-            .get("coordinator")
-            .and_then(|c| c.as_str())
-            .map(String::from);
-
-        let coordinator_name = coordinator_ref
-            .as_ref()
-            .map(|r| resolve_agent_ref(&project_folder, r));
-
-        let coordinator_path = coordinator_ref
-            .as_ref()
-            .and_then(|r| resolve_agent_path(&ac_new, r));
-
-        teams.push(DiscoveredTeam {
-            name: team_name,
-            project: project_folder.clone(),
-            agent_names,
-            agent_paths,
-            coordinator_name,
-            coordinator_path,
-        });
     }
 }

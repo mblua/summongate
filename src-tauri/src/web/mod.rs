@@ -32,6 +32,9 @@ struct AppState {
 
 /// Start the embedded HTTP/WebSocket server.
 /// Called from Tauri's setup() — runs on the same tokio runtime.
+// Wired by a single setup() call with all shared state already in scope; an
+// args struct would just rename the same fields.
+#[allow(clippy::too_many_arguments)]
 pub fn start_server(
     bind: String,
     port: u16,

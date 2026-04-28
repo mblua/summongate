@@ -592,6 +592,9 @@ async fn output_task(
 
 // ── Flush to Telegram ────────────────────────────────────────
 
+// Threads through the full bridge state on each flush; collapsing into a
+// struct would only move the fields, not reduce them.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn flush_buffer(
     buffer: &mut String,
     client: &reqwest::Client,

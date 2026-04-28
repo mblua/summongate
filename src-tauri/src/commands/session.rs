@@ -303,6 +303,8 @@ fn should_inject_continue(
 ///   `RespawnExited` match, today driven exclusively by deferred-non-coord
 ///   `Exited(0)` records — and `restart_session` when its caller passes
 ///   `Some(false)`).
+// Shared by Tauri command + restore path; collapsing args would force a context struct.
+#[allow(clippy::too_many_arguments)]
 pub async fn create_session_inner(
     app: &AppHandle,
     session_mgr: &Arc<tokio::sync::RwLock<SessionManager>>,
@@ -362,7 +364,7 @@ pub async fn create_session_inner(
     let full_cmd = format!("{} {}", shell, shell_args.join(" "));
     let cmd_basenames: Vec<String> = full_cmd
         .split_whitespace()
-        .map(|t| executable_basename(t))
+        .map(executable_basename)
         .collect();
     let is_claude = cmd_basenames.iter().any(|b| b.starts_with("claude"));
     let is_codex = cmd_basenames.iter().any(|b| b.starts_with("codex"));
@@ -505,7 +507,7 @@ pub async fn create_session_inner(
     if agent_id.is_some() {
         let app_clone = app.clone();
         let session_id = id;
-        let token = session.token.clone();
+        let token = session.token;
         let cwd_clone = cwd.clone();
         tokio::spawn(async move {
             let max_wait = std::time::Duration::from_secs(30);
@@ -610,6 +612,8 @@ pub async fn create_session_inner(
 
 /// Create a new session. Optionally override shell/args/cwd/name (for action buttons).
 /// Falls back to settings defaults when not provided.
+// Tauri command: State<> injections push us over clippy's 7-arg threshold.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn create_session(
     app: AppHandle,
@@ -814,6 +818,8 @@ fn effective_restart_skip_auto_resume(requested: Option<bool>) -> bool {
 /// `codex resume --last`, or `gemini --resume latest` injection.
 /// The restarted session is automatically activated, Telegram bridges are
 /// re-attached, and state is persisted.
+// Tauri command: State<> injections push us over clippy's 7-arg threshold.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn restart_session(
     app: AppHandle,
@@ -1128,13 +1134,13 @@ fn resolve_agent_from_shell(
     let full_cmd = format!("{} {}", shell, shell_args.join(" "));
     let cmd_basenames: Vec<String> = full_cmd
         .split_whitespace()
-        .map(|t| executable_basename(t))
+        .map(executable_basename)
         .collect();
 
     for agent in &settings.agents {
         let agent_exec = agent.command.split_whitespace().next().unwrap_or("");
         let agent_basename = executable_basename(agent_exec);
-        if !agent_basename.is_empty() && cmd_basenames.iter().any(|b| *b == agent_basename) {
+        if !agent_basename.is_empty() && cmd_basenames.contains(&agent_basename) {
             log::info!(
                 "Auto-detected agent '{}' ({}) from shell command",
                 agent.id,
@@ -1304,26 +1310,27 @@ mod tests {
     use crate::config::settings::{AgentConfig, AppSettings};
 
     fn test_settings() -> AppSettings {
-        let mut settings = AppSettings::default();
-        settings.agents = vec![
-            AgentConfig {
-                id: "claude".to_string(),
-                label: "Claude Code".to_string(),
-                command: "claude".to_string(),
-                color: "#d97706".to_string(),
-                git_pull_before: false,
-                exclude_global_claude_md: false,
-            },
-            AgentConfig {
-                id: "codex".to_string(),
-                label: "Codex".to_string(),
-                command: "codex".to_string(),
-                color: "#10b981".to_string(),
-                git_pull_before: false,
-                exclude_global_claude_md: false,
-            },
-        ];
-        settings
+        AppSettings {
+            agents: vec![
+                AgentConfig {
+                    id: "claude".to_string(),
+                    label: "Claude Code".to_string(),
+                    command: "claude".to_string(),
+                    color: "#d97706".to_string(),
+                    git_pull_before: false,
+                    exclude_global_claude_md: false,
+                },
+                AgentConfig {
+                    id: "codex".to_string(),
+                    label: "Codex".to_string(),
+                    command: "codex".to_string(),
+                    color: "#10b981".to_string(),
+                    git_pull_before: false,
+                    exclude_global_claude_md: false,
+                },
+            ],
+            ..AppSettings::default()
+        }
     }
 
     #[test]

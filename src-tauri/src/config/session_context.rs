@@ -19,7 +19,7 @@ pub fn ensure_session_context(agent_root: &str) -> Result<String, String> {
     let hash = simple_hash(agent_root);
     let file_path = context_dir.join(format!("ac-context-{}.md", hash));
 
-    std::fs::write(&file_path, &default_context(&canonical_root, matrix_root.as_deref()))
+    std::fs::write(&file_path, default_context(&canonical_root, matrix_root.as_deref()))
         .map_err(|e| format!("Failed to write per-agent AgentsCommanderContext.md: {}", e))?;
     log::info!(
         "Refreshed per-agent AgentsCommanderContext.md for {} → {:?}",
@@ -265,9 +265,11 @@ fn detect_git_branch(dir: &str) -> Option<String> {
 /// - `$AGENTSCOMMANDER_CONTEXT` → resolves to the global AgentsCommanderContext.md
 /// - `$REPOS_WORKSPACE_INFO` → generates workspace repo info from the "repos" field
 /// - Any other string → resolved as a path relative to `cwd`
+///
 /// After resolving context[], if `identity` is set in config.json and `<identity>/Role.md`
 /// exists on disk, it is auto-appended (unless already resolved from context[]).
 /// The global context is NOT auto-prepended — it is only included if the token is in the array.
+///
 /// Returns Ok(Some(path)) with the combined temp file, Ok(None) if no context[] field,
 /// or Err with details about missing files.
 pub fn build_replica_context(cwd: &str) -> Result<Option<String>, String> {

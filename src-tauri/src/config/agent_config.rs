@@ -114,6 +114,7 @@ pub struct AgentLocalConfig {
 /// Writes to BOTH:
 ///  - `<repo_path>/config.json` (root, shared across all instances — read by discovery)
 ///  - `<repo_path>/<agent_local_dir>/config.json` (per-instance)
+///
 /// Reads existing config, upserts the coding agent entry, writes back.
 pub fn set_last_coding_agent(
     repo_path: &str,

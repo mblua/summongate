@@ -40,7 +40,7 @@ pub async fn detach_terminal(
         .expect("Failed to load app icon");
 
     WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
-        .title(format!("Terminal [detached]"))
+        .title("Terminal [detached]".to_string())
         .icon(icon)
         .map_err(|e| e.to_string())?
         .inner_size(900.0, 600.0)
@@ -66,7 +66,7 @@ pub async fn detach_terminal(
             .iter()
             .find(|s| {
                 let sid = Uuid::parse_str(&s.id).ok();
-                sid.map_or(false, |u| !detached_set.contains(&u))
+                sid.is_some_and(|u| !detached_set.contains(&u))
             })
             .map(|s| s.id.clone())
     }; // MutexGuard dropped here
