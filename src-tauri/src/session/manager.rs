@@ -218,8 +218,21 @@ impl SessionManager {
     /// Used during restore to prevent deferred (Exited) sessions from
     /// blocking auto-activation of subsequent sessions.
     pub async fn clear_active_if(&self, id: Uuid) {
-        if self.get_active().await == Some(id) {
-            self.clear_active().await;
+        let cleared_id = {
+            let mut active = self.active_session.write().await;
+            if *active == Some(id) {
+                active.take()
+            } else {
+                None
+            }
+        };
+        if let Some(old_id) = cleared_id {
+            let mut sessions = self.sessions.write().await;
+            if let Some(old) = sessions.get_mut(&old_id) {
+                if old.status == SessionStatus::Active {
+                    old.status = SessionStatus::Running;
+                }
+            }
         }
     }
 
@@ -527,5 +540,45 @@ mod tests {
         assert_eq!(mgr.get_active().await, None);
         let stored = mgr.get_session(session.id).await.unwrap();
         assert_eq!(stored.status, SessionStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn clear_active_if_preserves_non_matching_active_session() {
+        let mgr = SessionManager::new();
+        let first = mgr
+            .create_session(
+                "powershell.exe".to_string(),
+                Vec::new(),
+                "C:\\tmp\\one".to_string(),
+                None,
+                None,
+                Vec::new(),
+                false,
+            )
+            .await
+            .expect("create first session");
+        let second = mgr
+            .create_session(
+                "powershell.exe".to_string(),
+                Vec::new(),
+                "C:\\tmp\\two".to_string(),
+                None,
+                None,
+                Vec::new(),
+                false,
+            )
+            .await
+            .expect("create second session");
+
+        mgr.switch_session(second.id)
+            .await
+            .expect("switch to second session");
+        mgr.clear_active_if(first.id).await;
+
+        assert_eq!(mgr.get_active().await, Some(second.id));
+        let first_stored = mgr.get_session(first.id).await.unwrap();
+        let second_stored = mgr.get_session(second.id).await.unwrap();
+        assert_eq!(first_stored.status, SessionStatus::Running);
+        assert_eq!(second_stored.status, SessionStatus::Active);
     }
 }
