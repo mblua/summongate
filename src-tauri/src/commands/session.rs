@@ -129,7 +129,6 @@ fn codex_tokens_have_resume(tokens: &[&str], start: usize) -> bool {
     false
 }
 
-
 fn gemini_tokens_have_resume(tokens: &[&str], start: usize) -> bool {
     let mut idx = start;
     while idx < tokens.len() {
@@ -401,7 +400,12 @@ pub async fn create_session_inner(
             false
         }
     };
-    if should_inject_continue(is_claude, skip_auto_resume, claude_project_exists, &full_cmd) {
+    if should_inject_continue(
+        is_claude,
+        skip_auto_resume,
+        claude_project_exists,
+        &full_cmd,
+    ) {
         if let Some(ref aid) = agent_id {
             if executable_basename(&shell) == "cmd" {
                 if let Some(last) = shell_args.last_mut() {
@@ -437,7 +441,6 @@ pub async fn create_session_inner(
             }
         }
     }
-
 
     let materialized_context_path = if let Some(target) = context_target {
         match crate::config::session_context::materialize_agent_context_file(&cwd, target) {
@@ -537,8 +540,7 @@ pub async fn create_session_inner(
                 }
             }
 
-            let cred_block =
-                crate::pty::credentials::build_credentials_block(&token, &cwd_clone);
+            let cred_block = crate::pty::credentials::build_credentials_block(&token, &cwd_clone);
 
             match crate::pty::inject::inject_text_into_session(
                 &app_clone,
@@ -864,15 +866,7 @@ pub async fn restart_session(
     let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
 
     // 1. Read config from existing session BEFORE destroying it
-    let (
-        shell,
-        shell_args,
-        cwd,
-        name,
-        stored_agent_id,
-        stored_agent_label,
-        git_repos,
-    ) = {
+    let (shell, shell_args, cwd, name, stored_agent_id, stored_agent_label, git_repos) = {
         let mgr = session_mgr.read().await;
         let session = mgr.get_session(uuid).await.ok_or("Session not found")?;
         (
@@ -1367,30 +1361,69 @@ mod tests {
     fn inject_gemini_resume_prefixes_direct_gemini_args() {
         let mut args = vec!["-m".to_string(), "gpt-5".to_string()];
         assert!(super::inject_gemini_resume("gemini", &mut args));
-        assert_eq!(args, vec!["--resume".to_string(), "latest".to_string(), "-m".to_string(), "gpt-5".to_string()]);
+        assert_eq!(
+            args,
+            vec![
+                "--resume".to_string(),
+                "latest".to_string(),
+                "-m".to_string(),
+                "gpt-5".to_string()
+            ]
+        );
     }
 
     #[test]
     fn inject_gemini_resume_inserts_into_cmd_tokenized_wrapper() {
-        let mut args = vec!["/C".to_string(), "gemini".to_string(), "-m".to_string(), "gpt-5".to_string()];
+        let mut args = vec![
+            "/C".to_string(),
+            "gemini".to_string(),
+            "-m".to_string(),
+            "gpt-5".to_string(),
+        ];
         assert!(super::inject_gemini_resume("cmd.exe", &mut args));
-        assert_eq!(args, vec!["/C".to_string(), "gemini".to_string(), "--resume".to_string(), "latest".to_string(), "-m".to_string(), "gpt-5".to_string()]);
+        assert_eq!(
+            args,
+            vec![
+                "/C".to_string(),
+                "gemini".to_string(),
+                "--resume".to_string(),
+                "latest".to_string(),
+                "-m".to_string(),
+                "gpt-5".to_string()
+            ]
+        );
     }
 
     #[test]
     fn inject_gemini_resume_inserts_into_embedded_cmd_wrapper() {
         let mut args = vec!["/K".to_string(), "git pull && gemini -m gpt-5".to_string()];
         assert!(super::inject_gemini_resume("cmd.exe", &mut args));
-        assert_eq!(args, vec!["/K".to_string(), "git pull && gemini --resume latest -m gpt-5".to_string()]);
+        assert_eq!(
+            args,
+            vec![
+                "/K".to_string(),
+                "git pull && gemini --resume latest -m gpt-5".to_string()
+            ]
+        );
     }
 
     #[test]
     fn inject_gemini_resume_skips_existing_resume_tokens() {
-        let mut args = vec!["--resume".to_string(), "latest".to_string(), "gpt-5".to_string()];
+        let mut args = vec![
+            "--resume".to_string(),
+            "latest".to_string(),
+            "gpt-5".to_string(),
+        ];
         assert!(!super::inject_gemini_resume("gemini", &mut args));
-        assert_eq!(args, vec!["--resume".to_string(), "latest".to_string(), "gpt-5".to_string()]);
+        assert_eq!(
+            args,
+            vec![
+                "--resume".to_string(),
+                "latest".to_string(),
+                "gpt-5".to_string()
+            ]
+        );
     }
-
 
     #[test]
     fn inject_codex_resume_prefixes_direct_codex_args() {
@@ -1553,7 +1586,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_actual_agent_falls_back_to_detected_label_when_validated_match_has_no_stored_label() {
+    fn resolve_actual_agent_falls_back_to_detected_label_when_validated_match_has_no_stored_label()
+    {
         let settings = test_settings();
 
         let resolved = resolve_actual_agent(
@@ -1589,13 +1623,7 @@ mod tests {
     fn resolve_actual_agent_uses_shell_resolved_agent_on_mismatch() {
         let settings = test_settings();
 
-        let resolved = resolve_actual_agent(
-            "claude",
-            &[],
-            Some("codex"),
-            Some("Codex"),
-            &settings,
-        );
+        let resolved = resolve_actual_agent("claude", &[], Some("codex"), Some("Codex"), &settings);
 
         assert_eq!(
             resolved,
@@ -1647,7 +1675,10 @@ mod tests {
     #[test]
     fn should_inject_continue_returns_false_when_continue_already_present() {
         assert!(!should_inject_continue(
-            true, false, true, "claude --continue"
+            true,
+            false,
+            true,
+            "claude --continue"
         ));
     }
 
@@ -1661,7 +1692,10 @@ mod tests {
         // R2.4 / G2: the GNU long-option-with-value form must also suppress
         // re-injection.
         assert!(!should_inject_continue(
-            true, false, true, "claude --continue=somevalue"
+            true,
+            false,
+            true,
+            "claude --continue=somevalue"
         ));
     }
 
@@ -1669,7 +1703,10 @@ mod tests {
     fn should_inject_continue_returns_false_when_uppercase_continue_present() {
         // D4 #6: case-insensitivity regression fence.
         assert!(!should_inject_continue(
-            true, false, true, "claude --CONTINUE"
+            true,
+            false,
+            true,
+            "claude --CONTINUE"
         ));
     }
 
@@ -1683,7 +1720,10 @@ mod tests {
     fn should_inject_continue_returns_false_when_continue_in_cmd_wrapper() {
         // D4 #8: token-level scan, not arg-index scan.
         assert!(!should_inject_continue(
-            true, false, true, "cmd /C claude --continue"
+            true,
+            false,
+            true,
+            "cmd /C claude --continue"
         ));
     }
 
@@ -1692,7 +1732,10 @@ mod tests {
         // D4 #9: token-equality fence — `--continued-mode` is NOT `--continue`.
         // Guards against a future regression to substring matching.
         assert!(should_inject_continue(
-            true, false, true, "claude --continued-mode something"
+            true,
+            false,
+            true,
+            "claude --continued-mode something"
         ));
     }
 }

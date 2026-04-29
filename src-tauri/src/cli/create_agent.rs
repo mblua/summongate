@@ -205,8 +205,7 @@ pub fn execute(args: CreateAgentArgs) -> i32 {
 
 /// Write a session request file to ~/.agentscommander/session-requests/.
 fn write_session_request(request: &SessionRequest) -> Result<(), String> {
-    let config_dir = config::config_dir()
-        .ok_or("Cannot determine config directory")?;
+    let config_dir = config::config_dir().ok_or("Cannot determine config directory")?;
 
     let requests_dir = config_dir.join("session-requests");
     std::fs::create_dir_all(&requests_dir)
@@ -215,8 +214,7 @@ fn write_session_request(request: &SessionRequest) -> Result<(), String> {
     let path = requests_dir.join(format!("{}.json", request.id));
     let json = serde_json::to_string_pretty(request)
         .map_err(|e| format!("Failed to serialize session request: {}", e))?;
-    std::fs::write(&path, json)
-        .map_err(|e| format!("Failed to write session request: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Failed to write session request: {}", e))?;
 
     Ok(())
 }

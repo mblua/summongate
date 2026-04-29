@@ -115,7 +115,8 @@ pub async fn get_updates(
         .into_iter()
         .filter_map(|u| {
             let msg = u.message?;
-            let from_name = msg.from
+            let from_name = msg
+                .from
                 .map(|f| f.first_name)
                 .unwrap_or_else(|| "Unknown".to_string());
             let chat_id = msg.chat.id;
@@ -131,7 +132,9 @@ pub async fn get_updates(
             } else if let Some(voice) = msg.voice {
                 Some(TelegramUpdate {
                     update_id,
-                    content: TelegramContent::Voice { file_id: voice.file_id },
+                    content: TelegramContent::Voice {
+                        file_id: voice.file_id,
+                    },
                     from_name,
                     chat_id,
                 })
@@ -164,7 +167,8 @@ pub async fn get_file(
 
     if !body.ok {
         return Err(AppError::Telegram(
-            body.description.unwrap_or_else(|| "getFile failed".to_string()),
+            body.description
+                .unwrap_or_else(|| "getFile failed".to_string()),
         ));
     }
 
@@ -186,7 +190,10 @@ pub async fn download_file(
         .map_err(|e| AppError::Telegram(e.to_string()))?;
 
     if !resp.status().is_success() {
-        return Err(AppError::Telegram(format!("Download failed: {}", resp.status())));
+        return Err(AppError::Telegram(format!(
+            "Download failed: {}",
+            resp.status()
+        )));
     }
 
     resp.bytes()

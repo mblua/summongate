@@ -39,6 +39,7 @@ const Titlebar: Component = () => {
 
   const applyWidthPreset = async (width: number) => {
     setLayoutOpen(false);
+    window.dispatchEvent(new CustomEvent("main-sidebar-width-change", { detail: { width } }));
     try {
       const settings = await SettingsAPI.get();
       await SettingsAPI.update({ ...settings, mainSidebarWidth: width });

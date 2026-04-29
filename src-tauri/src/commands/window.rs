@@ -117,17 +117,10 @@ pub(crate) async fn detach_terminal_inner(
             // G.10 tolerance: switch failure logs + emits null rather than propagating.
             match mgr.switch_session(next_uuid).await {
                 Ok(()) => {
-                    let _ = app.emit(
-                        "session_switched",
-                        serde_json::json!({ "id": next_id }),
-                    );
+                    let _ = app.emit("session_switched", serde_json::json!({ "id": next_id }));
                 }
                 Err(e) => {
-                    log::warn!(
-                        "[detach] switch to sibling {} failed: {}",
-                        next_id,
-                        e
-                    );
+                    log::warn!("[detach] switch to sibling {} failed: {}", next_id, e);
                     let _ = app.emit(
                         "session_switched",
                         serde_json::json!({ "id": serde_json::Value::Null }),
@@ -159,7 +152,9 @@ pub async fn detach_terminal(
     let geometry = {
         let uuid = Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
         let mgr = session_mgr.read().await;
-        mgr.get_session(uuid).await.and_then(|s| s.detached_geometry)
+        mgr.get_session(uuid)
+            .await
+            .and_then(|s| s.detached_geometry)
     };
     detach_terminal_inner(
         &app,
@@ -188,21 +183,44 @@ pub async fn attach_terminal(
 ) -> Result<(), String> {
     let uuid = Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
 
-    // Remove from DetachedSessionsState (idempotent).
+    // A2.2.G5 contract: silent no-op when the session is gone.
+    {
+        let mgr = session_mgr.read().await;
+        if mgr.get_session(uuid).await.is_none() {
+            let mut set = detached.lock().unwrap();
+            set.remove(&uuid);
+            let label = format!("terminal-{}", session_id.replace('-', ""));
+            if let Some(win) = app.get_webview_window(&label) {
+                let _ = win.destroy();
+            }
+            log::info!(
+                "[attach] session {} already destroyed; silent no-op",
+                session_id
+            );
+            return Ok(());
+        }
+    }
+
+    // Close the detached window if present. Use destroy() per R.2 to bypass any
+    // onCloseRequested handler (avoids recursion if this runs inside the X-click
+    // intercept path on the detached window). Destroy failure is a real attach
+    // failure: keep detached state intact so we do not render the same PTY twice.
+    let label = format!("terminal-{}", session_id.replace('-', ""));
+    if let Some(win) = app.get_webview_window(&label) {
+        win.destroy().map_err(|e| {
+            format!(
+                "Failed to destroy detached window {} during attach: {}",
+                label, e
+            )
+        })?;
+    }
+
+    // Remove from DetachedSessionsState only after the detached window is gone.
     {
         let mut set = detached.lock().unwrap();
         set.remove(&uuid);
     }
 
-    // Close the detached window if present. Use destroy() per R.2 to bypass any
-    // onCloseRequested handler (avoids recursion if this runs inside the X-click
-    // intercept path on the detached window).
-    let label = format!("terminal-{}", session_id.replace('-', ""));
-    if let Some(win) = app.get_webview_window(&label) {
-        let _ = win.destroy();
-    }
-
-    // A2.2.G5 contract: silent no-op when the session is gone.
     let mgr = session_mgr.read().await;
     if mgr.get_session(uuid).await.is_none() {
         log::info!(
@@ -223,10 +241,7 @@ pub async fn attach_terminal(
         "terminal_attached",
         serde_json::json!({ "sessionId": session_id }),
     );
-    let _ = app.emit(
-        "session_switched",
-        serde_json::json!({ "id": session_id }),
-    );
+    let _ = app.emit("session_switched", serde_json::json!({ "id": session_id }));
 
     Ok(())
 }
@@ -234,9 +249,7 @@ pub async fn attach_terminal(
 /// Return the list of session IDs currently in `DetachedSessionsState`. Used by
 /// the sidebar frontend to hydrate its `detachedIds` store on mount (plan §A2.3.G8).
 #[tauri::command]
-pub fn list_detached_sessions(
-    detached: State<'_, DetachedSessionsState>,
-) -> Vec<String> {
+pub fn list_detached_sessions(detached: State<'_, DetachedSessionsState>) -> Vec<String> {
     let set = detached.lock().unwrap();
     set.iter().map(|u| u.to_string()).collect()
 }
@@ -338,7 +351,10 @@ pub async fn open_guide_window(app: AppHandle) -> Result<(), String> {
         "guide",
         WebviewUrl::App("index.html?window=guide".into()),
     )
-    .title(format!("Guide — {}", crate::config::profile::app_title_suffix()))
+    .title(format!(
+        "Guide — {}",
+        crate::config::profile::app_title_suffix()
+    ))
     .icon(icon)
     .map_err(|e| e.to_string())?
     .inner_size(720.0, 560.0)

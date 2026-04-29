@@ -139,11 +139,7 @@ fn detect_wg_replica(root: &str) -> Option<WgReplicaInfo> {
         return None;
     }
 
-    let my_project = ac_new_dir
-        .parent()?
-        .file_name()?
-        .to_str()?
-        .to_string();
+    let my_project = ac_new_dir.parent()?.file_name()?.to_str()?.to_string();
 
     Some(WgReplicaInfo {
         my_agent_name,
@@ -348,7 +344,8 @@ fn execute_wg_discovery(wg: WgReplicaInfo) -> i32 {
             continue;
         }
         let peer_full_name = format!("{}:{}/{}", wg.my_project, wg.my_wg_name, agent_name);
-        let reachable = crate::config::teams::can_communicate(&my_full_name, &peer_full_name, &discovered);
+        let reachable =
+            crate::config::teams::can_communicate(&my_full_name, &peer_full_name, &discovered);
         peers.push(build_wg_peer(
             &wg.my_project,
             agent_name,
@@ -381,7 +378,11 @@ fn execute_wg_discovery(wg: WgReplicaInfo) -> i32 {
                     if peers.iter().any(|p| p.name == peer_name) {
                         continue;
                     }
-                    let reachable = crate::config::teams::can_communicate(&my_full_name, &peer_name, &discovered);
+                    let reachable = crate::config::teams::can_communicate(
+                        &my_full_name,
+                        &peer_name,
+                        &discovered,
+                    );
                     peers.push(build_wg_peer(
                         &wg.my_project,
                         &other_coord,
@@ -413,7 +414,6 @@ pub fn execute(args: ListPeersArgs) -> i32 {
         return 1;
     }
 
-
     let root = match args.root {
         Some(ref r) => r.clone(),
         None => {
@@ -442,7 +442,9 @@ pub fn execute(args: ListPeersArgs) -> i32 {
     // Also: if I'm a coordinator, show other coordinators (cross-team).
     let i_am_coordinator = discovered.iter().any(|t| {
         crate::config::teams::is_in_team(&my_name, t)
-            && t.coordinator_name.as_deref().is_some_and(|cn| cn == my_name)
+            && t.coordinator_name
+                .as_deref()
+                .is_some_and(|cn| cn == my_name)
     });
 
     for team in &discovered {
@@ -464,7 +466,8 @@ pub fn execute(args: ListPeersArgs) -> i32 {
             }
 
             // Determine reachability using the canonical routing rules
-            let reachable = crate::config::teams::can_communicate(&my_name, &peer_name, &discovered);
+            let reachable =
+                crate::config::teams::can_communicate(&my_name, &peer_name, &discovered);
 
             // Skip duplicates — add team to existing peer, upgrade reachable if needed
             if let Some(existing) = peers.iter_mut().find(|p| p.name == peer_name) {
@@ -484,7 +487,9 @@ pub fn execute(args: ListPeersArgs) -> i32 {
 
             let peer_ac = member_path
                 .map(|p| p.join(crate::config::agent_local_dir_name()))
-                .unwrap_or_else(|| PathBuf::from(&path_str).join(crate::config::agent_local_dir_name()));
+                .unwrap_or_else(|| {
+                    PathBuf::from(&path_str).join(crate::config::agent_local_dir_name())
+                });
 
             let status = if peer_ac.join("active").exists() {
                 "active"
@@ -593,7 +598,8 @@ pub fn execute(args: ListPeersArgs) -> i32 {
                         continue;
                     }
 
-                    let reachable = crate::config::teams::can_communicate(&my_name, &peer_name, &discovered);
+                    let reachable =
+                        crate::config::teams::can_communicate(&my_name, &peer_name, &discovered);
                     let mut peer = build_wg_peer(
                         &project_folder,
                         &agent_short,

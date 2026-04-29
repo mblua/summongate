@@ -3,8 +3,8 @@ use std::path::PathBuf;
 /// Opens a native folder picker dialog and returns the selected path.
 #[tauri::command]
 pub async fn pick_folder(default_path: Option<String>) -> Result<Option<String>, String> {
-    let mut dialog = rfd::AsyncFileDialog::new()
-        .set_title("Select parent folder for the new agent");
+    let mut dialog =
+        rfd::AsyncFileDialog::new().set_title("Select parent folder for the new agent");
 
     if let Some(ref p) = default_path {
         let path = PathBuf::from(p);
@@ -20,7 +20,10 @@ pub async fn pick_folder(default_path: Option<String>) -> Result<Option<String>,
 /// Creates an agent folder with a CLAUDE.md inside it.
 /// Returns the full path of the created folder.
 #[tauri::command]
-pub async fn create_agent_folder(parent_path: String, agent_name: String) -> Result<String, String> {
+pub async fn create_agent_folder(
+    parent_path: String,
+    agent_name: String,
+) -> Result<String, String> {
     let parent = PathBuf::from(&parent_path);
     if !parent.exists() {
         return Err(format!("Parent folder does not exist: {}", parent_path));
@@ -31,8 +34,7 @@ pub async fn create_agent_folder(parent_path: String, agent_name: String) -> Res
         return Err(format!("Folder already exists: {}", agent_dir.display()));
     }
 
-    std::fs::create_dir_all(&agent_dir)
-        .map_err(|e| format!("Failed to create folder: {}", e))?;
+    std::fs::create_dir_all(&agent_dir).map_err(|e| format!("Failed to create folder: {}", e))?;
 
     // Derive the display name: last component of parent / agent_name
     let parent_name = parent

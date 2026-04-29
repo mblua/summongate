@@ -70,9 +70,7 @@ pub fn start_server(
     // Serve static files if dist/ exists
     if let Some(path) = dist_path {
         log::info!("[web-server] Serving static files from {:?}", path);
-        app = app.fallback_service(
-            ServeDir::new(path).append_index_html_on_directories(true),
-        );
+        app = app.fallback_service(ServeDir::new(path).append_index_html_on_directories(true));
     } else {
         log::warn!("[web-server] No dist/ directory found — static file serving disabled");
     }
@@ -262,10 +260,13 @@ async fn handle_text_message(state: &WsState, text: &str) {
     // (We use the broadcaster's text broadcast, which goes to all clients.
     //  For command responses, we include the id so the client matches it.)
     let response_text = response.to_string();
-    state.broadcaster.broadcast_event("__cmd_response", &serde_json::json!({
-        "id": id,
-        "data": response,
-    }));
+    state.broadcaster.broadcast_event(
+        "__cmd_response",
+        &serde_json::json!({
+            "id": id,
+            "data": response,
+        }),
+    );
 
     // Actually, command responses should go to the requesting client only.
     // Since we don't have a per-client sender here, we broadcast with the id.

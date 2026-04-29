@@ -123,9 +123,7 @@ fn is_valid_wg_local_shape(local: &str) -> bool {
     let Some((digits, team)) = rest.split_once('-') else {
         return false;
     };
-    !digits.is_empty()
-        && digits.chars().all(|c| c.is_ascii_digit())
-        && !team.is_empty()
+    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) && !team.is_empty()
 }
 
 /// Enumerate project folders reachable from `project_paths`, mirroring the
@@ -203,10 +201,7 @@ pub fn resolve_agent_target(
         }
 
         // Existence check.
-        let agent = local
-            .split_once('/')
-            .map(|(_, a)| a)
-            .unwrap_or_default();
+        let agent = local.split_once('/').map(|(_, a)| a).unwrap_or_default();
         let wg = local.split_once('/').map(|(w, _)| w).unwrap_or_default();
         let replica_dir = format!("__agent_{}", agent);
         for (name, dir) in enumerate_project_dirs(project_paths) {
@@ -433,9 +428,9 @@ fn is_coordinator(agent_name: &str, team: &DiscoveredTeam) -> bool {
 
 /// Check if sender is a coordinator of any team that contains target as a member.
 pub fn is_coordinator_of(sender: &str, target: &str, teams: &[DiscoveredTeam]) -> bool {
-    teams.iter().any(|team| {
-        is_coordinator(sender, team) && is_in_team(target, team)
-    })
+    teams
+        .iter()
+        .any(|team| is_coordinator(sender, team) && is_in_team(target, team))
 }
 
 /// Check if an agent is a coordinator of ANY discovered team.
@@ -686,7 +681,10 @@ mod tests {
 
     #[test]
     fn extract_wg_team_peels_project_prefix() {
-        assert_eq!(extract_wg_team("proj-a:wg-1-dev-team/alice"), Some("dev-team"));
+        assert_eq!(
+            extract_wg_team("proj-a:wg-1-dev-team/alice"),
+            Some("dev-team")
+        );
         assert_eq!(extract_wg_team("wg-1-dev-team/alice"), Some("dev-team"));
         assert_eq!(extract_wg_team("origin-proj/alice"), None);
     }
@@ -729,9 +727,7 @@ mod tests {
     // The nested-slice shape is the most direct way to express the fixture; a
     // type alias would obscure the structure at the only call sites.
     #[allow(clippy::type_complexity)]
-    fn make_project_fixture(
-        projects: &[(&str, &[(&str, &[&str])])],
-    ) -> (FixtureRoot, Vec<String>) {
+    fn make_project_fixture(projects: &[(&str, &[(&str, &[&str])])]) -> (FixtureRoot, Vec<String>) {
         let tmp = FixtureRoot::new("teams-fixture");
         for (proj_name, wgs) in projects {
             let proj_dir = tmp.path().join(proj_name);
@@ -753,20 +749,14 @@ mod tests {
 
     #[test]
     fn resolve_agent_target_passes_through_qualified() {
-        let (_tmp, paths) = make_project_fixture(&[(
-            "proj-a",
-            &[("wg-1-devs", &["alice"])],
-        )]);
+        let (_tmp, paths) = make_project_fixture(&[("proj-a", &[("wg-1-devs", &["alice"])])]);
         let fqn = "proj-a:wg-1-devs/alice";
         assert_eq!(resolve_agent_target(fqn, &paths).unwrap(), fqn);
     }
 
     #[test]
     fn resolve_agent_target_qualifies_unambiguous_unqualified() {
-        let (_tmp, paths) = make_project_fixture(&[(
-            "proj-a",
-            &[("wg-1-devs", &["alice"])],
-        )]);
+        let (_tmp, paths) = make_project_fixture(&[("proj-a", &[("wg-1-devs", &["alice"])])]);
         let unqualified = "wg-1-devs/alice";
         assert_eq!(
             resolve_agent_target(unqualified, &paths).unwrap(),
@@ -794,10 +784,7 @@ mod tests {
 
     #[test]
     fn resolve_agent_target_rejects_unknown() {
-        let (_tmp, paths) = make_project_fixture(&[(
-            "proj-a",
-            &[("wg-1-devs", &["alice"])],
-        )]);
+        let (_tmp, paths) = make_project_fixture(&[("proj-a", &[("wg-1-devs", &["alice"])])]);
         // Qualified-but-missing.
         assert!(matches!(
             resolve_agent_target("proj-c:wg-1-devs/alice", &paths).unwrap_err(),
@@ -858,7 +845,10 @@ mod tests {
             resolve_agent_target("some-project/agent", &paths).unwrap(),
             "some-project/agent"
         );
-        assert_eq!(resolve_agent_target("bare-agent", &paths).unwrap(), "bare-agent");
+        assert_eq!(
+            resolve_agent_target("bare-agent", &paths).unwrap(),
+            "bare-agent"
+        );
     }
 
     /// Validation #16: `is_coordinator_for_cwd` correctness guard.

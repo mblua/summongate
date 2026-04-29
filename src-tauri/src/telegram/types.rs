@@ -27,4 +27,3 @@ pub enum BridgeStatus {
     Error(String),
     Detaching,
 }
-

@@ -14,7 +14,10 @@ impl WebAccessToken {
         if a.len() != b.len() {
             return false;
         }
-        a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+        a.iter()
+            .zip(b.iter())
+            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+            == 0
     }
 
     pub fn value(&self) -> &str {

@@ -120,6 +120,13 @@ const MainApp: Component = () => {
     setSidebarWidth((w) => clampSidebarWidth(w, window.innerWidth));
   };
 
+  const onSidebarWidthChange = (event: Event) => {
+    const width = (event as CustomEvent<{ width?: number }>).detail?.width;
+    if (typeof width === "number") {
+      setSidebarWidth(clampSidebarWidth(width, window.innerWidth));
+    }
+  };
+
   onMount(async () => {
     document.documentElement.classList.add("light-theme");
 
@@ -142,6 +149,7 @@ const MainApp: Component = () => {
     }
 
     window.addEventListener("resize", onWindowResize);
+    window.addEventListener("main-sidebar-width-change", onSidebarWidthChange);
 
     // Quit-confirmation guard (plan §A3B.3 / G.13 / G3-M1).
     // - If 0 detached windows → let the close proceed (Tauri exits normally).
@@ -170,6 +178,7 @@ const MainApp: Component = () => {
     if (cleanupGeometry) cleanupGeometry();
     if (splitterSaveTimeout) clearTimeout(splitterSaveTimeout);
     window.removeEventListener("resize", onWindowResize);
+    window.removeEventListener("main-sidebar-width-change", onSidebarWidthChange);
   });
 
   return (

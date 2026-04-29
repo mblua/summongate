@@ -1,10 +1,10 @@
 pub mod agent_config;
 pub mod claude_settings;
 pub mod profile;
-pub mod teams;
 pub mod session_context;
 pub mod sessions_persistence;
 pub mod settings;
+pub mod teams;
 
 use std::path::PathBuf;
 use std::sync::OnceLock;

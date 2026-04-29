@@ -249,7 +249,6 @@ fn find_provider_token(tokens: &[&str], provider: &str) -> Option<usize> {
         .position(|token| command_token_basename(token) == provider)
 }
 
-
 fn gemini_has_manual_resume(tokens: &[&str], gemini_idx: usize) -> bool {
     let mut idx = gemini_idx + 1;
     while idx < tokens.len() {
@@ -314,7 +313,6 @@ pub fn validate_agent_commands(settings: &AppSettings) -> Result<(), String> {
                 ));
             }
         }
-
     }
 
     Ok(())

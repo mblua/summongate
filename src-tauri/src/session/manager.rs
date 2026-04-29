@@ -342,8 +342,7 @@ impl SessionManager {
         let mut sessions = self.sessions.write().await;
         let mut changes = Vec::new();
         for (id, s) in sessions.iter_mut() {
-            let new_val =
-                crate::config::teams::is_coordinator_for_cwd(&s.working_directory, teams);
+            let new_val = crate::config::teams::is_coordinator_for_cwd(&s.working_directory, teams);
             if s.is_coordinator != new_val {
                 s.is_coordinator = new_val;
                 changes.push((*id, new_val));

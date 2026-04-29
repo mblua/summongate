@@ -63,16 +63,14 @@ pub fn execute(args: CloseSessionArgs) -> i32 {
     // entry (§AR2-G1). Fail-fast at the CLI gives users immediate feedback on
     // ambiguous or unknown targets without writing to the outbox.
     let settings = crate::config::settings::load_settings();
-    let resolved_target = match crate::config::teams::resolve_agent_target(
-        &args.target,
-        &settings.project_paths,
-    ) {
-        Ok(fqn) => fqn,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            return 1;
-        }
-    };
+    let resolved_target =
+        match crate::config::teams::resolve_agent_target(&args.target, &settings.project_paths) {
+            Ok(fqn) => fqn,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                return 1;
+            }
+        };
 
     // Pre-validate coordinator authorization.
     // Check master token from LocalDir as additional bypass (independent of validate_cli_token).
@@ -90,7 +88,9 @@ pub fn execute(args: CloseSessionArgs) -> i32 {
 
     if !is_master {
         let discovered = teams::discover_teams();
-        if discovered.is_empty() || !teams::is_coordinator_of(&sender, &resolved_target, &discovered) {
+        if discovered.is_empty()
+            || !teams::is_coordinator_of(&sender, &resolved_target, &discovered)
+        {
             eprintln!(
                 "Error: authorization denied — '{}' is not a coordinator of '{}'. \
                  Only coordinators can close sessions of their team agents.",
@@ -158,8 +158,12 @@ pub fn execute(args: CloseSessionArgs) -> i32 {
     }
 
     // Poll for delivery confirmation
-    let delivered_path = outbox_dir.join("delivered").join(format!("{}.json", msg_id));
-    let rejected_reason_path = outbox_dir.join("rejected").join(format!("{}.reason.txt", msg_id));
+    let delivered_path = outbox_dir
+        .join("delivered")
+        .join(format!("{}.json", msg_id));
+    let rejected_reason_path = outbox_dir
+        .join("rejected")
+        .join(format!("{}.reason.txt", msg_id));
 
     let confirm_timeout = std::time::Duration::from_secs(30);
     let confirm_poll = std::time::Duration::from_millis(250);
@@ -200,7 +204,8 @@ pub fn execute(args: CloseSessionArgs) -> i32 {
                     println!("{}", content);
                     // Parse response: exit 1 if no sessions were actually closed
                     if let Ok(resp) = serde_json::from_str::<serde_json::Value>(&content) {
-                        let closed = resp.get("sessions_closed")
+                        let closed = resp
+                            .get("sessions_closed")
                             .and_then(|v| v.as_u64())
                             .unwrap_or(0);
                         if closed == 0 {
@@ -217,7 +222,9 @@ pub fn execute(args: CloseSessionArgs) -> i32 {
         }
         if resp_start.elapsed() >= resp_timeout {
             // Delivery succeeded but response timed out — sessions were likely closed
-            println!("close-session delivered but response timed out (sessions may have been closed)");
+            println!(
+                "close-session delivered but response timed out (sessions may have been closed)"
+            );
             return 0;
         }
         std::thread::sleep(resp_poll);

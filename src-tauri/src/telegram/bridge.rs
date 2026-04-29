@@ -20,16 +20,15 @@ pub(super) struct BridgeLogger {
 
 impl BridgeLogger {
     pub(super) fn new(session_id: &str) -> Self {
-        let file = crate::config::config_dir()
-            .and_then(|dir| {
-                std::fs::create_dir_all(&dir).ok()?;
-                let path = dir.join("telegram-bridge.log");
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&path)
-                    .ok()
-            });
+        let file = crate::config::config_dir().and_then(|dir| {
+            std::fs::create_dir_all(&dir).ok()?;
+            let path = dir.join("telegram-bridge.log");
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .ok()
+        });
 
         if let Some(ref f) = file {
             let path = f.metadata().ok();
@@ -55,7 +54,11 @@ impl BridgeLogger {
             } else {
                 text.to_string()
             };
-            let _ = writeln!(f, "[{}] {} sid={} | {}", now, direction, session_id, preview);
+            let _ = writeln!(
+                f,
+                "[{}] {} sid={} | {}",
+                now, direction, session_id, preview
+            );
             let _ = f.flush();
         }
     }
@@ -91,7 +94,10 @@ impl DiagLogger {
             log::info!("Diagnostic logger active: diag-raw.log + diag-sent.log");
         }
 
-        Self { raw_file, sent_file }
+        Self {
+            raw_file,
+            sent_file,
+        }
     }
 
     /// Log stabilized rows (post-stabilization, pre-agent-filter)
@@ -275,7 +281,9 @@ const CLAUDE_CHROME_PATTERNS: &[&str] = &[
 ];
 
 /// Claude Code spinner characters (defense in depth - stabilization is primary)
-const CLAUDE_SPINNERS: &[char] = &['\u{273B}', '\u{2736}', '*', '\u{2722}', '\u{00B7}', '\u{25CF}', '\u{273D}'];
+const CLAUDE_SPINNERS: &[char] = &[
+    '\u{273B}', '\u{2736}', '*', '\u{2722}', '\u{00B7}', '\u{25CF}', '\u{273D}',
+];
 // ✻ ✶ * ✢ · ● ✽
 
 impl AgentFilter for ClaudeCodeFilter {
@@ -315,9 +323,7 @@ impl AgentFilter for ClaudeCodeFilter {
         }
 
         // Hook notifications
-        if trimmed.contains("(running stop hook")
-            || trimmed.contains("(running start hook")
-        {
+        if trimmed.contains("(running stop hook") || trimmed.contains("(running start hook") {
             return false;
         }
 
@@ -513,10 +519,16 @@ async fn output_task(
     let mut tick = tokio::time::interval(Duration::from_millis(TICK_MS));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    logger.log("INIT", &session_id, &format!(
-        "output_task started: filter={} stabilization={}ms tick={}ms",
-        filter.name(), STABILIZATION_MS, TICK_MS,
-    ));
+    logger.log(
+        "INIT",
+        &session_id,
+        &format!(
+            "output_task started: filter={} stabilization={}ms tick={}ms",
+            filter.name(),
+            STABILIZATION_MS,
+            TICK_MS,
+        ),
+    );
 
     loop {
         tokio::select! {
@@ -582,8 +594,14 @@ async fn output_task(
     }
     if !buffer.is_empty() {
         flush_buffer(
-            &mut buffer, &client, &token, chat_id,
-            &session_id, &app, &mut logger, &mut diag,
+            &mut buffer,
+            &client,
+            &token,
+            chat_id,
+            &session_id,
+            &app,
+            &mut logger,
+            &mut diag,
             false,
         )
         .await;
@@ -703,11 +721,7 @@ async fn poll_task(
                 logger.log(
                     "POLL_INIT",
                     &session_id_str,
-                    &format!(
-                        "skipped {} old messages, offset={}",
-                        updates.len(),
-                        offset
-                    ),
+                    &format!("skipped {} old messages, offset={}", updates.len(), offset),
                 );
             }
         }

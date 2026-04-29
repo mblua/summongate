@@ -50,7 +50,13 @@ pub async fn inject_text_into_session(
     };
 
     let send_enter = submit && shell.as_deref().map(needs_explicit_enter).unwrap_or(false);
-    log::info!("[inject] session={} submit={} shell={:?} send_enter={}", session_id, submit, shell, send_enter);
+    log::info!(
+        "[inject] session={} submit={} shell={:?} send_enter={}",
+        session_id,
+        submit,
+        shell,
+        send_enter
+    );
 
     // Write the text block
     {
@@ -63,7 +69,11 @@ pub async fn inject_text_into_session(
                 log::error!("[inject] PTY write FAILED session={}: {}", session_id, e);
                 format!("PTY write failed: {}", e)
             })?;
-        log::info!("[inject] PTY write OK session={} bytes={}", session_id, text.len());
+        log::info!(
+            "[inject] PTY write OK session={} bytes={}",
+            session_id,
+            text.len()
+        );
     }
 
     // Agent CLIs (Claude, Codex): send Enter twice with staggered delays.
@@ -92,7 +102,11 @@ pub async fn inject_text_into_session(
                 .and_then(|mgr| mgr.write(session_id, b"\r").map_err(|e| e.to_string()))
             {
                 Ok(()) => {}
-                Err(e) => log::warn!("[inject] Enter (2/2) failed for session {} (non-fatal): {}", session_id, e),
+                Err(e) => log::warn!(
+                    "[inject] Enter (2/2) failed for session {} (non-fatal): {}",
+                    session_id,
+                    e
+                ),
             }
         }
     }

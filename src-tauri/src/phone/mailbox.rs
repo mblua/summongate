@@ -318,9 +318,8 @@ impl MailboxPoller {
             let outbox_dir = path.parent().unwrap_or(Path::new(""));
             // outbox_dir is <repo>/.agentscommander/outbox — go up 2 levels to get the repo path
             if let Some(repo_path) = outbox_dir.parent().and_then(|p| p.parent()) {
-                let derived = crate::config::teams::agent_fqn_from_path(
-                    &repo_path.to_string_lossy(),
-                );
+                let derived =
+                    crate::config::teams::agent_fqn_from_path(&repo_path.to_string_lossy());
                 if !anti_spoof_accept(&msg.from, &derived) {
                     return self
                         .reject_message(
@@ -351,7 +350,8 @@ impl MailboxPoller {
         if canonicalize_msg_from_in_place(&mut msg.from, expected_from.as_deref()) {
             log::info!(
                 "[mailbox] canonicalized legacy msg.from '{}' → '{}'",
-                original_from_for_log, msg.from
+                original_from_for_log,
+                msg.from
             );
         }
 
@@ -367,20 +367,13 @@ impl MailboxPoller {
             match crate::config::teams::resolve_agent_target(&msg.to, &paths) {
                 Ok(fqn) => {
                     if fqn != msg.to {
-                        log::info!(
-                            "[mailbox] canonicalized msg.to '{}' → '{}'",
-                            msg.to, fqn
-                        );
+                        log::info!("[mailbox] canonicalized msg.to '{}' → '{}'", msg.to, fqn);
                         msg.to = fqn;
                     }
                 }
                 Err(e) => {
                     return self
-                        .reject_message(
-                            path,
-                            &msg,
-                            &format!("Unresolvable target: {}", e),
-                        )
+                        .reject_message(path, &msg, &format!("Unresolvable target: {}", e))
                         .await;
                 }
             }
@@ -819,11 +812,8 @@ impl MailboxPoller {
             let command_owned = command.clone();
             tauri::async_runtime::spawn(async move {
                 if is_clear {
-                    match Self::reinject_credentials_after_clear_static(
-                        &app_clone,
-                        session_id,
-                    )
-                    .await
+                    match Self::reinject_credentials_after_clear_static(&app_clone, session_id)
+                        .await
                     {
                         Ok(()) => { /* creds in — fall through to body */ }
                         Err(e) => {
@@ -839,12 +829,9 @@ impl MailboxPoller {
                     }
                 }
                 if !msg_clone.body.is_empty() {
-                    if let Err(e) = Self::inject_followup_after_idle_static(
-                        &app_clone,
-                        session_id,
-                        &msg_clone,
-                    )
-                    .await
+                    if let Err(e) =
+                        Self::inject_followup_after_idle_static(&app_clone, session_id, &msg_clone)
+                            .await
                     {
                         log::warn!(
                             "[mailbox] Follow-up body injection after /{} failed (session={}): {}",
@@ -1078,8 +1065,7 @@ impl MailboxPoller {
         let mut matches: Vec<&crate::session::session::SessionInfo> = sessions
             .iter()
             .filter(|s| {
-                crate::config::teams::agent_fqn_from_path(&s.working_directory)
-                    == agent_name
+                crate::config::teams::agent_fqn_from_path(&s.working_directory) == agent_name
             })
             .collect();
 
@@ -1134,8 +1120,7 @@ impl MailboxPoller {
         sessions
             .iter()
             .filter(|s| {
-                crate::config::teams::agent_fqn_from_path(&s.working_directory)
-                    == agent_name
+                crate::config::teams::agent_fqn_from_path(&s.working_directory) == agent_name
             })
             .filter_map(|s| Uuid::parse_str(&s.id).ok())
             .collect()
@@ -1426,8 +1411,7 @@ impl MailboxPoller {
     /// `rp` iteration (FQN can only match one replica dir per project) while
     /// the outer loop continues so cross-project ambiguity is still detected.
     async fn resolve_repo_path(&self, agent_name: &str, app: &tauri::AppHandle) -> Option<String> {
-        let (target_project, target_local) =
-            crate::config::teams::split_project_prefix(agent_name);
+        let (target_project, target_local) = crate::config::teams::split_project_prefix(agent_name);
         let is_qualified = target_project.is_some();
         let mut matches: Vec<String> = Vec::new();
 
@@ -1670,8 +1654,7 @@ impl MailboxPoller {
                 if std::path::Path::new(&candidate).is_dir() {
                     // If target is qualified, enforce same project on the candidate.
                     if let Some(want) = target_project {
-                        let candidate_fqn =
-                            crate::config::teams::agent_fqn_from_path(&candidate);
+                        let candidate_fqn = crate::config::teams::agent_fqn_from_path(&candidate);
                         let (cand_project, _) =
                             crate::config::teams::split_project_prefix(&candidate_fqn);
                         if cand_project != Some(want) {
@@ -1840,10 +1823,10 @@ impl MailboxPoller {
                 request.cwd.clone(),
                 Some(request.session_name.clone()),
                 Some(request.agent_id.clone()),
-                None,  // No agent label — auto-detected from shell
-                false, // Persist tooling
+                None,       // No agent label — auto-detected from shell
+                false,      // Persist tooling
                 Vec::new(), // git_repos
-                true, // skip_auto_resume = true → CLI session-request is a fresh create
+                true,       // skip_auto_resume = true → CLI session-request is a fresh create
             )
             .await
             {

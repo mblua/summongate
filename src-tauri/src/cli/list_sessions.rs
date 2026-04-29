@@ -86,12 +86,10 @@ pub fn execute(args: ListSessionsArgs) -> i32 {
     let entries: Vec<SessionEntry> = sessions
         .iter()
         .filter(|s| s.id.is_some()) // Only include entries with runtime data
-        .filter(|s| {
-            match (&status_filter, &s.status) {
-                (Some(filter), Some(st)) => status_tag(st) == filter.as_str(),
-                (Some(_), None) => false,
-                (None, _) => true,
-            }
+        .filter(|s| match (&status_filter, &s.status) {
+            (Some(filter), Some(st)) => status_tag(st) == filter.as_str(),
+            (Some(_), None) => false,
+            (None, _) => true,
         })
         .map(to_entry)
         .collect();

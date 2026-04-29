@@ -217,12 +217,11 @@ pub fn load_sessions() -> Vec<PersistedSession> {
                                 "[sessions] Upgrading legacy single-repo session '{}' → git_repos[1]={{label:{}, source:{}}}",
                                 ps.name, prefix, source
                             );
-                            ps.git_repos
-                                .push(crate::session::session::SessionRepo {
-                                    label: prefix,
-                                    source_path: source,
-                                    branch: None,
-                                });
+                            ps.git_repos.push(crate::session::session::SessionRepo {
+                                label: prefix,
+                                source_path: source,
+                                branch: None,
+                            });
                         }
                         (Some(source), None) => {
                             // Shouldn't happen in data this codebase produces, but serde(default)
@@ -233,20 +232,17 @@ pub fn load_sessions() -> Vec<PersistedSession> {
                                 .next_back()
                                 .unwrap_or("")
                                 .to_string();
-                            let label = dir
-                                .strip_prefix("repo-")
-                                .map(str::to_string)
-                                .unwrap_or(dir);
+                            let label =
+                                dir.strip_prefix("repo-").map(str::to_string).unwrap_or(dir);
                             log::warn!(
                                 "[sessions] Upgrading legacy session '{}' with source but no prefix; synthesized label '{}'",
                                 ps.name, label
                             );
-                            ps.git_repos
-                                .push(crate::session::session::SessionRepo {
-                                    label,
-                                    source_path: source,
-                                    branch: None,
-                                });
+                            ps.git_repos.push(crate::session::session::SessionRepo {
+                                label,
+                                source_path: source,
+                                branch: None,
+                            });
                         }
                         (None, Some(prefix)) if prefix == "multi-repo" => {
                             log::info!(
@@ -452,7 +448,6 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
         }
     }
 
-
     let is_claude = std::iter::once(shell)
         .chain(args.iter().flat_map(|s| s.split_whitespace()))
         .any(|t| {
@@ -481,7 +476,6 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
                 .unwrap_or(t)
                 .eq_ignore_ascii_case("gemini")
         });
-
 
     if !is_claude && !is_codex && !is_gemini {
         return args.to_vec();
@@ -516,7 +510,6 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
                 strip_gemini_tokens(&mut result, idx + 1);
             }
         }
-
 
         for arg in &mut result {
             let mut tokens: Vec<String> = arg
@@ -555,7 +548,6 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
                 }
             }
 
-
             if changed {
                 *arg = tokens.join(" ");
             }
@@ -569,7 +561,6 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
             }
         }
 
-
         result
     } else {
         let mut result = Vec::with_capacity(args.len());
@@ -579,13 +570,15 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
                 skip_next = false;
                 continue;
             }
-            if is_codex && idx == 0 && a.eq_ignore_ascii_case("resume")
+            if is_codex
+                && idx == 0
+                && a.eq_ignore_ascii_case("resume")
                 && args
                     .get(1)
                     .is_some_and(|next| next.eq_ignore_ascii_case("--last"))
-                {
-                    continue;
-                }
+            {
+                continue;
+            }
             if is_codex
                 && idx == 1
                 && args
@@ -658,7 +651,12 @@ mod tests {
     fn strip_auto_injected_args_removes_direct_gemini_resume_latest() {
         let stripped = strip_auto_injected_args(
             "gemini",
-            &["--resume".to_string(), "latest".to_string(), "-m".to_string(), "gpt-5".to_string()],
+            &[
+                "--resume".to_string(),
+                "latest".to_string(),
+                "-m".to_string(),
+                "gpt-5".to_string(),
+            ],
         );
         assert_eq!(stripped, vec!["-m".to_string(), "gpt-5".to_string()]);
     }
@@ -667,18 +665,39 @@ mod tests {
     fn strip_auto_injected_args_removes_cmd_gemini_resume_latest() {
         let stripped = strip_auto_injected_args(
             "cmd.exe",
-            &["/C".to_string(), "gemini".to_string(), "--resume".to_string(), "latest".to_string(), "-m".to_string(), "gpt-5".to_string()],
+            &[
+                "/C".to_string(),
+                "gemini".to_string(),
+                "--resume".to_string(),
+                "latest".to_string(),
+                "-m".to_string(),
+                "gpt-5".to_string(),
+            ],
         );
-        assert_eq!(stripped, vec!["/C".to_string(), "gemini".to_string(), "-m".to_string(), "gpt-5".to_string()]);
+        assert_eq!(
+            stripped,
+            vec![
+                "/C".to_string(),
+                "gemini".to_string(),
+                "-m".to_string(),
+                "gpt-5".to_string()
+            ]
+        );
     }
 
     #[test]
     fn strip_auto_injected_args_removes_embedded_cmd_gemini_resume_latest() {
         let stripped = strip_auto_injected_args(
             "cmd.exe",
-            &["/K".to_string(), "git pull && gemini --resume latest -m gpt-5".to_string()],
+            &[
+                "/K".to_string(),
+                "git pull && gemini --resume latest -m gpt-5".to_string(),
+            ],
         );
-        assert_eq!(stripped, vec!["/K".to_string(), "git pull && gemini -m gpt-5".to_string()]);
+        assert_eq!(
+            stripped,
+            vec!["/K".to_string(), "git pull && gemini -m gpt-5".to_string()]
+        );
     }
 
     #[test]
@@ -817,12 +836,11 @@ mod tests {
         if ps.git_repos.is_empty() {
             match (ps.git_branch_source.take(), ps.git_branch_prefix.take()) {
                 (Some(source), Some(prefix)) if prefix != "multi-repo" => {
-                    ps.git_repos
-                        .push(crate::session::session::SessionRepo {
-                            label: prefix,
-                            source_path: source,
-                            branch: None,
-                        });
+                    ps.git_repos.push(crate::session::session::SessionRepo {
+                        label: prefix,
+                        source_path: source,
+                        branch: None,
+                    });
                 }
                 _ => {}
             }
@@ -861,12 +879,11 @@ mod tests {
         if ps.git_repos.is_empty() {
             match (ps.git_branch_source.take(), ps.git_branch_prefix.take()) {
                 (Some(source), Some(prefix)) if prefix != "multi-repo" => {
-                    ps.git_repos
-                        .push(crate::session::session::SessionRepo {
-                            label: prefix,
-                            source_path: source,
-                            branch: None,
-                        });
+                    ps.git_repos.push(crate::session::session::SessionRepo {
+                        label: prefix,
+                        source_path: source,
+                        branch: None,
+                    });
                 }
                 _ => {}
             }

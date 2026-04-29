@@ -59,7 +59,9 @@ pub fn workgroup_root(agent_root: &Path) -> Result<PathBuf, MessagingError> {
             }
         }
     }
-    Err(MessagingError::NoWorkgroup(agent_root.display().to_string()))
+    Err(MessagingError::NoWorkgroup(
+        agent_root.display().to_string(),
+    ))
 }
 
 /// Messaging directory for a workgroup root. Creates the directory if missing.
@@ -152,7 +154,10 @@ pub fn validate_filename_shape(name: &str) -> Result<(), MessagingError> {
         if p.is_empty() {
             return Err(invalid());
         }
-        if !p.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()) {
+        if !p
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        {
             return Err(invalid());
         }
     }
@@ -207,17 +212,15 @@ pub fn create_message_file(
             format!("{}.{}.md", stem, n)
         };
         let path = messaging_dir.join(&filename);
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(file) => return Ok((path, file)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(MessagingError::Io(e)),
         }
     }
-    Err(MessagingError::CollisionExhausted(base_filename.to_string()))
+    Err(MessagingError::CollisionExhausted(
+        base_filename.to_string(),
+    ))
 }
 
 /// Validate that `filename` exists inside `messaging_dir` and points to a
@@ -434,22 +437,19 @@ mod tests {
 
     #[test]
     fn validate_filename_shape_accepts_canonical() {
-        assert!(validate_filename_shape(
-            "20260418-143052-wg7-lead-to-wg7-arch-redesign.md"
-        )
-        .is_ok());
+        assert!(
+            validate_filename_shape("20260418-143052-wg7-lead-to-wg7-arch-redesign.md").is_ok()
+        );
     }
 
     #[test]
     fn validate_filename_shape_accepts_collision_suffix() {
-        assert!(validate_filename_shape(
-            "20260418-143052-wg7-lead-to-wg7-arch-redesign.1.md"
-        )
-        .is_ok());
-        assert!(validate_filename_shape(
-            "20260418-143052-wg7-lead-to-wg7-arch-redesign.99.md"
-        )
-        .is_ok());
+        assert!(
+            validate_filename_shape("20260418-143052-wg7-lead-to-wg7-arch-redesign.1.md").is_ok()
+        );
+        assert!(
+            validate_filename_shape("20260418-143052-wg7-lead-to-wg7-arch-redesign.99.md").is_ok()
+        );
     }
 
     #[test]
@@ -462,8 +462,8 @@ mod tests {
             "20260418-143052-FROM-to-TO-slug.md", // uppercase
             "20260418-143052-from-to-to-slug.100.md", // 3-digit suffix
             "20260418-143052-from-to-to-slug.0.md", // zero suffix
-            "2026041-143052-from-to-to-slug.md", // date too short
-            "20260418-14305-from-to-to-slug.md", // time too short
+            "2026041-143052-from-to-to-slug.md",  // date too short
+            "20260418-14305-from-to-to-slug.md",  // time too short
         ];
         for c in cases {
             assert!(
@@ -547,10 +547,7 @@ mod tests {
 
         let abs_str = written_abs.to_string_lossy().to_string();
         let resolved = resolve_existing_message(&tmp, &abs_str).unwrap();
-        assert_eq!(
-            resolved.file_name().and_then(|n| n.to_str()).unwrap(),
-            base
-        );
+        assert_eq!(resolved.file_name().and_then(|n| n.to_str()).unwrap(), base);
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -624,10 +621,7 @@ mod tests {
 
         let rel = format!("{}/./{}", tmp.display(), base);
         let resolved = resolve_existing_message(&tmp, &rel).unwrap();
-        assert_eq!(
-            resolved.file_name().and_then(|n| n.to_str()).unwrap(),
-            base
-        );
+        assert_eq!(resolved.file_name().and_then(|n| n.to_str()).unwrap(), base);
         let _ = abs_written;
 
         let _ = std::fs::remove_dir_all(&tmp);
