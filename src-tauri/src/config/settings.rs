@@ -29,6 +29,19 @@ pub struct WindowGeometry {
     pub height: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MainSidebarSide {
+    Left,
+    Right,
+}
+
+impl Default for MainSidebarSide {
+    fn default() -> Self {
+        Self::Right
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -95,6 +108,9 @@ pub struct AppSettings {
     /// Clamped to [200, 600] at drag time and on load.
     #[serde(default = "default_main_sidebar_width")]
     pub main_sidebar_width: f64,
+    /// Side of the unified main window where the sidebar is placed.
+    #[serde(default)]
+    pub main_sidebar_side: MainSidebarSide,
     /// Keep the unified main window always on top.
     #[serde(default)]
     pub main_always_on_top: bool,
@@ -191,6 +207,7 @@ impl Default for AppSettings {
             terminal_geometry: None,
             main_geometry: None,
             main_sidebar_width: default_main_sidebar_width(),
+            main_sidebar_side: MainSidebarSide::default(),
             main_always_on_top: false,
             web_server_enabled: false,
             web_server_port: default_web_port(),
@@ -437,7 +454,7 @@ mod tests {
         assert!(err.contains("Gemini commands must not include --resume"));
     }
 
-    use super::{validate_agent_commands, AgentConfig, AppSettings};
+    use super::{validate_agent_commands, AgentConfig, AppSettings, MainSidebarSide};
 
     fn settings_with_agents(commands: &[(&str, &str)]) -> AppSettings {
         AppSettings {
@@ -518,6 +535,55 @@ mod tests {
         assert!(json.contains("\"coordSortByActivity\":true"));
         let back: AppSettings = serde_json::from_str(&json).expect("deserialize");
         assert!(back.coord_sort_by_activity);
+    }
+
+    #[test]
+    fn main_sidebar_side_round_trips_through_serde() {
+        let mut s = AppSettings::default();
+        assert_eq!(s.main_sidebar_side, MainSidebarSide::Right);
+        s.main_sidebar_side = MainSidebarSide::Left;
+        let json = serde_json::to_string(&s).expect("serialize");
+        assert!(json.contains("\"mainSidebarSide\":\"left\""));
+        let back: AppSettings = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.main_sidebar_side, MainSidebarSide::Left);
+    }
+
+    #[test]
+    fn main_sidebar_side_defaults_to_right_when_missing_from_json() {
+        let json = r#"{
+            "defaultShell": "bash",
+            "defaultShellArgs": [],
+            "agents": [],
+            "telegramBots": [],
+            "startOnlyCoordinators": true,
+            "sidebarAlwaysOnTop": false,
+            "raiseTerminalOnClick": true,
+            "voiceToTextEnabled": false,
+            "geminiApiKey": "",
+            "geminiModel": "gemini-2.5-flash",
+            "voiceAutoExecute": true,
+            "voiceAutoExecuteDelay": 15,
+            "sidebarZoom": 1.0,
+            "terminalZoom": 1.0,
+            "mainZoom": 1.0,
+            "guideZoom": 1.0,
+            "darkfactoryZoom": 1.0,
+            "sidebarGeometry": null,
+            "terminalGeometry": null,
+            "mainGeometry": null,
+            "mainSidebarWidth": 280.0,
+            "mainAlwaysOnTop": false,
+            "webServerEnabled": false,
+            "webServerPort": 7777,
+            "webServerBind": "127.0.0.1",
+            "projectPath": null,
+            "projectPaths": [],
+            "sidebarStyle": "noir-minimal",
+            "onboardingDismissed": false,
+            "coordSortByActivity": false
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("deserialize old json");
+        assert_eq!(s.main_sidebar_side, MainSidebarSide::Right);
     }
 
     #[test]

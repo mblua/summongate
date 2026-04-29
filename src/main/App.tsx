@@ -1,5 +1,6 @@
 import { Component, createSignal, onMount, onCleanup, Show } from "solid-js";
 import type { UnlistenFn } from "../shared/transport";
+import type { MainSidebarSide } from "../shared/types";
 import { SettingsAPI } from "../shared/ipc";
 import { isTauri } from "../shared/platform";
 import { initZoom } from "../shared/zoom";
@@ -14,6 +15,7 @@ const SIDEBAR_MIN_WIDTH = 200;
 const SIDEBAR_MAX_WIDTH = 600;
 const TERMINAL_MIN_WIDTH = 300;
 const DEFAULT_SIDEBAR_WIDTH = 280;
+const DEFAULT_SIDEBAR_SIDE: MainSidebarSide = "right";
 
 function clampSidebarWidth(raw: number, windowWidth: number): number {
   const upper = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, windowWidth - TERMINAL_MIN_WIDTH));
@@ -22,6 +24,7 @@ function clampSidebarWidth(raw: number, windowWidth: number): number {
 
 const MainApp: Component = () => {
   const [sidebarWidth, setSidebarWidth] = createSignal(DEFAULT_SIDEBAR_WIDTH);
+  const [sidebarSide, setSidebarSide] = createSignal<MainSidebarSide>(DEFAULT_SIDEBAR_SIDE);
   const [dragging, setDragging] = createSignal(false);
   const [quitModalCount, setQuitModalCount] = createSignal<number | null>(null);
 
@@ -46,12 +49,16 @@ const MainApp: Component = () => {
   const onPointerDown = (e: PointerEvent) => {
     e.preventDefault();
     const divider = e.currentTarget as HTMLElement;
+    const sideAtDragStart = sidebarSide();
     try { divider.setPointerCapture(e.pointerId); } catch { /* some targets refuse capture */ }
     document.body.style.cursor = "col-resize";
     setDragging(true);
 
     const onMove = (m: PointerEvent) => {
-      setSidebarWidth(clampSidebarWidth(m.clientX, window.innerWidth));
+      const rawWidth = sideAtDragStart === "left"
+        ? m.clientX
+        : window.innerWidth - m.clientX;
+      setSidebarWidth(clampSidebarWidth(rawWidth, window.innerWidth));
     };
     const onUp = (u: PointerEvent) => {
       try { divider.releasePointerCapture(u.pointerId); } catch { /* already released */ }
@@ -72,8 +79,8 @@ const MainApp: Component = () => {
   const onDividerKeyDown = (e: KeyboardEvent) => {
     const step = e.shiftKey ? 40 : 10;
     let next: number | null = null;
-    if (e.key === "ArrowLeft") next = sidebarWidth() - step;
-    else if (e.key === "ArrowRight") next = sidebarWidth() + step;
+    if (e.key === "ArrowLeft") next = sidebarWidth() + (sidebarSide() === "right" ? step : -step);
+    else if (e.key === "ArrowRight") next = sidebarWidth() + (sidebarSide() === "right" ? -step : step);
     else if (e.key === "Home") next = SIDEBAR_MIN_WIDTH;
     else if (e.key === "End") next = Math.min(SIDEBAR_MAX_WIDTH, window.innerWidth - TERMINAL_MIN_WIDTH);
     if (next === null) return;
@@ -127,6 +134,13 @@ const MainApp: Component = () => {
     }
   };
 
+  const onSidebarSideChange = (event: Event) => {
+    const side = (event as CustomEvent<{ side?: MainSidebarSide }>).detail?.side;
+    if (side === "left" || side === "right") {
+      setSidebarSide(side);
+    }
+  };
+
   onMount(async () => {
     document.documentElement.classList.add("light-theme");
 
@@ -140,6 +154,7 @@ const MainApp: Component = () => {
       const settings = await SettingsAPI.get();
       const saved = settings.mainSidebarWidth ?? DEFAULT_SIDEBAR_WIDTH;
       setSidebarWidth(clampSidebarWidth(saved, window.innerWidth));
+      setSidebarSide(settings.mainSidebarSide === "left" ? "left" : DEFAULT_SIDEBAR_SIDE);
       if (isTauri && settings.mainAlwaysOnTop) {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         await getCurrentWindow().setAlwaysOnTop(true);
@@ -150,6 +165,7 @@ const MainApp: Component = () => {
 
     window.addEventListener("resize", onWindowResize);
     window.addEventListener("main-sidebar-width-change", onSidebarWidthChange);
+    window.addEventListener("main-sidebar-side-change", onSidebarSideChange);
 
     // Quit-confirmation guard (plan §A3B.3 / G.13 / G3-M1).
     // - If 0 detached windows → let the close proceed (Tauri exits normally).
@@ -179,10 +195,17 @@ const MainApp: Component = () => {
     if (splitterSaveTimeout) clearTimeout(splitterSaveTimeout);
     window.removeEventListener("resize", onWindowResize);
     window.removeEventListener("main-sidebar-width-change", onSidebarWidthChange);
+    window.removeEventListener("main-sidebar-side-change", onSidebarSideChange);
   });
 
   return (
-    <div class="main-root" classList={{ "main-dragging": dragging() }}>
+    <div
+      class="main-root"
+      classList={{
+        "main-dragging": dragging(),
+        "main-sidebar-right": sidebarSide() === "right",
+      }}
+    >
       <Titlebar />
       <div class="main-body">
         <div class="main-sidebar-pane" style={{ width: `${sidebarWidth()}px` }}>
@@ -195,8 +218,9 @@ const MainApp: Component = () => {
           onKeyDown={onDividerKeyDown}
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize sidebar"
+          aria-label={`Resize ${sidebarSide()} sidebar`}
           aria-valuenow={Math.round(sidebarWidth())}
+          aria-valuetext={`${Math.round(sidebarWidth())} pixels, sidebar on ${sidebarSide()}`}
           aria-valuemin={SIDEBAR_MIN_WIDTH}
           aria-valuemax={SIDEBAR_MAX_WIDTH}
           tabindex="0"

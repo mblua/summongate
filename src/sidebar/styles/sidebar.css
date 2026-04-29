@@ -156,7 +156,7 @@ html, body, #root {
   position: absolute;
   top: 100%;
   right: 0;
-  min-width: 160px;
+  min-width: 180px;
   background: var(--sidebar-bg);
   border: 1px solid var(--sidebar-border);
   border-radius: 4px;
@@ -169,6 +169,40 @@ html, body, #root {
 @keyframes dropdown-in {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+.layout-section-label {
+  padding: 6px 12px 4px;
+  color: var(--titlebar-fg-muted, var(--titlebar-fg));
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.layout-segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 0 8px 4px;
+}
+
+.layout-segment {
+  min-height: 26px;
+  border: 1px solid var(--sidebar-border);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--titlebar-fg);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.layout-segment:hover,
+.layout-segment.active {
+  background: rgba(0, 212, 255, 0.12);
+  border-color: rgba(0, 212, 255, 0.35);
+  color: var(--sidebar-accent);
 }
 
 .layout-option {

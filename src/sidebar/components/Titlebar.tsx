@@ -2,6 +2,7 @@ import { Component, Show, For, createSignal, onMount, onCleanup } from "solid-js
 import iconUrl from "../../assets/icon-16.png";
 import { SettingsAPI } from "../../shared/ipc";
 import { isTauri } from "../../shared/platform";
+import type { MainSidebarSide } from "../../shared/types";
 
 declare const __APP_VERSION__: string;
 const APP_VERSION = __APP_VERSION__;
@@ -12,9 +13,15 @@ const SIDEBAR_WIDTH_PRESETS: Array<{ label: string; width: number }> = [
   { label: "Wide", width: 360 },
 ];
 
+const SIDEBAR_SIDE_PRESETS: Array<{ label: string; side: MainSidebarSide }> = [
+  { label: "Left", side: "left" },
+  { label: "Right", side: "right" },
+];
+
 const Titlebar: Component = () => {
   const [layoutOpen, setLayoutOpen] = createSignal(false);
   const [instanceLabel, setInstanceLabel] = createSignal("");
+  const [currentSide, setCurrentSide] = createSignal<MainSidebarSide>("right");
 
   const handleMinimize = async () => {
     if (!isTauri) return;
@@ -48,6 +55,18 @@ const Titlebar: Component = () => {
     }
   };
 
+  const applySidePreset = async (side: MainSidebarSide) => {
+    setLayoutOpen(false);
+    setCurrentSide(side);
+    window.dispatchEvent(new CustomEvent("main-sidebar-side-change", { detail: { side } }));
+    try {
+      const settings = await SettingsAPI.get();
+      await SettingsAPI.update({ ...settings, mainSidebarSide: side });
+    } catch (err) {
+      console.error("applySidePreset failed:", err);
+    }
+  };
+
   const handleClickOutside = (e: MouseEvent) => {
     if (layoutOpen() && !(e.target as HTMLElement).closest(".layout-dropdown-wrapper")) {
       setLayoutOpen(false);
@@ -57,6 +76,10 @@ const Titlebar: Component = () => {
   onMount(async () => {
     document.addEventListener("click", handleClickOutside);
     onCleanup(() => document.removeEventListener("click", handleClickOutside));
+    try {
+      const settings = await SettingsAPI.get();
+      setCurrentSide(settings.mainSidebarSide === "left" ? "left" : "right");
+    } catch { /* keep default */ }
     if (isTauri) {
       try {
         const { invoke } = await import("@tauri-apps/api/core");
@@ -88,12 +111,27 @@ const Titlebar: Component = () => {
           <button
             class={`titlebar-btn titlebar-btn-layout ${layoutOpen() ? "open" : ""}`}
             onClick={(e) => { e.stopPropagation(); setLayoutOpen(!layoutOpen()); }}
-            title="Sidebar width"
+            title="Sidebar layout"
           >
             &#x2637;
           </button>
           {layoutOpen() && (
             <div class="layout-dropdown">
+              <div class="layout-section-label">Side</div>
+              <div class="layout-segmented" role="group" aria-label="Sidebar side">
+                <For each={SIDEBAR_SIDE_PRESETS}>
+                  {(preset) => (
+                    <button
+                      class={`layout-segment ${currentSide() === preset.side ? "active" : ""}`}
+                      onClick={() => applySidePreset(preset.side)}
+                      aria-pressed={currentSide() === preset.side}
+                    >
+                      {preset.label}
+                    </button>
+                  )}
+                </For>
+              </div>
+              <div class="layout-section-label">Width</div>
               <For each={SIDEBAR_WIDTH_PRESETS}>
                 {(preset) => (
                   <button

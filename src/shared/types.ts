@@ -120,6 +120,8 @@ export interface WindowGeometry {
   height: number;
 }
 
+export type MainSidebarSide = "left" | "right";
+
 export interface AppSettings {
   defaultShell: string;
   defaultShellArgs: string[];
@@ -141,6 +143,7 @@ export interface AppSettings {
   terminalGeometry: WindowGeometry | null;
   mainGeometry: WindowGeometry | null;
   mainSidebarWidth: number;
+  mainSidebarSide: MainSidebarSide;
   mainAlwaysOnTop: boolean;
   webServerEnabled: boolean;
   webServerPort: number;
