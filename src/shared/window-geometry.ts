@@ -106,4 +106,3 @@ export async function initDetachedWindowGeometry(
     if (saveTimeout) clearTimeout(saveTimeout);
   };
 }
-
