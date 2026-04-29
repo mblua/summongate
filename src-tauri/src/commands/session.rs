@@ -799,6 +799,7 @@ pub async fn destroy_session_inner(app: &AppHandle, uuid: Uuid) -> Result<(), St
                     serde_json::json!({ "id": fb.to_string() }),
                 );
             } else {
+                mgr.clear_active().await;
                 let _ = app.emit(
                     "session_switched",
                     serde_json::json!({ "id": serde_json::Value::Null }),
@@ -980,15 +981,18 @@ pub async fn switch_session(
     let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
 
     // If this session is detached, focus its window instead of switching the main terminal
-    {
+    let is_detached = {
         let detached_set = detached.lock().unwrap();
-        if detached_set.contains(&uuid) {
-            let label = format!("terminal-{}", id.replace('-', ""));
-            if let Some(win) = app.get_webview_window(&label) {
-                let _ = win.set_focus();
-            }
-            return Ok(());
+        detached_set.contains(&uuid)
+    };
+    if is_detached {
+        let mgr = session_mgr.read().await;
+        mgr.clear_active_if(uuid).await;
+        let label = format!("terminal-{}", id.replace('-', ""));
+        if let Some(win) = app.get_webview_window(&label) {
+            let _ = win.set_focus();
         }
+        return Ok(());
     }
 
     let mgr = session_mgr.read().await;
@@ -1179,9 +1183,21 @@ fn resolve_agent_from_shell(
 #[tauri::command]
 pub async fn get_active_session(
     session_mgr: State<'_, Arc<tokio::sync::RwLock<SessionManager>>>,
+    detached: State<'_, DetachedSessionsState>,
 ) -> Result<Option<String>, String> {
     let mgr = session_mgr.read().await;
-    Ok(mgr.get_active().await.map(|id| id.to_string()))
+    let Some(active_id) = mgr.get_active().await else {
+        return Ok(None);
+    };
+    let is_detached = {
+        let set = detached.lock().unwrap();
+        set.contains(&active_id)
+    };
+    if is_detached {
+        mgr.clear_active_if(active_id).await;
+        return Ok(None);
+    }
+    Ok(Some(active_id.to_string()))
 }
 
 /// Create or reuse a root agent session.

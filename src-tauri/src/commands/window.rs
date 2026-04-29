@@ -121,6 +121,7 @@ pub(crate) async fn detach_terminal_inner(
                 }
                 Err(e) => {
                     log::warn!("[detach] switch to sibling {} failed: {}", next_id, e);
+                    mgr.clear_active().await;
                     let _ = app.emit(
                         "session_switched",
                         serde_json::json!({ "id": serde_json::Value::Null }),
@@ -128,6 +129,7 @@ pub(crate) async fn detach_terminal_inner(
                 }
             }
         } else {
+            mgr.clear_active().await;
             let _ = app.emit(
                 "session_switched",
                 serde_json::json!({ "id": serde_json::Value::Null }),

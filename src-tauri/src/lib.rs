@@ -584,7 +584,7 @@ pub fn run() {
                                         // detach does not race the post-loop active_id switch.
                                         let detached_state =
                                             app_handle.state::<DetachedSessionsState>();
-                                        if let Err(e) = commands::window::detach_terminal_inner(
+                                        let detached_result = commands::window::detach_terminal_inner(
                                             &app_handle,
                                             &session_mgr_clone,
                                             detached_state.inner(),
@@ -592,13 +592,16 @@ pub fn run() {
                                             ps.detached_geometry.clone(),
                                             true,
                                         )
-                                        .await
-                                        {
+                                        .await;
+                                        if let Err(e) = detached_result {
                                             log::warn!(
                                                 "[restore] detach_terminal_inner failed for '{}': {} — session stays live (attached)",
                                                 ps.name,
                                                 e
                                             );
+                                        } else {
+                                            let mgr = session_mgr_clone.read().await;
+                                            mgr.clear_active_if(uuid).await;
                                         }
                                     }
                                 }
@@ -644,6 +647,7 @@ pub fn run() {
                                         serde_json::json!({ "id": fb.to_string() }),
                                     );
                                 } else {
+                                    mgr.clear_active().await;
                                     let _ = tauri::Emitter::emit(
                                         &app_handle,
                                         "session_switched",

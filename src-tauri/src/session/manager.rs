@@ -175,6 +175,23 @@ impl SessionManager {
         *self.active_session.read().await
     }
 
+    /// Clear the active session and demote the previously-active session back
+    /// to Running if it is still present.
+    pub async fn clear_active(&self) {
+        let old_id = {
+            let mut active = self.active_session.write().await;
+            active.take()
+        };
+        if let Some(old_id) = old_id {
+            let mut sessions = self.sessions.write().await;
+            if let Some(old) = sessions.get_mut(&old_id) {
+                if old.status == SessionStatus::Active {
+                    old.status = SessionStatus::Running;
+                }
+            }
+        }
+    }
+
     pub async fn get_session(&self, id: Uuid) -> Option<Session> {
         self.sessions.read().await.get(&id).cloned()
     }
@@ -201,9 +218,8 @@ impl SessionManager {
     /// Used during restore to prevent deferred (Exited) sessions from
     /// blocking auto-activation of subsequent sessions.
     pub async fn clear_active_if(&self, id: Uuid) {
-        let mut active = self.active_session.write().await;
-        if *active == Some(id) {
-            *active = None;
+        if self.get_active().await == Some(id) {
+            self.clear_active().await;
         }
     }
 
@@ -487,5 +503,29 @@ mod tests {
             stored.effective_shell_args,
             Some(vec!["--continue".to_string(), "--debug".to_string()])
         );
+    }
+
+    #[tokio::test]
+    async fn clear_active_removes_active_and_demotes_status() {
+        let mgr = SessionManager::new();
+        let session = mgr
+            .create_session(
+                "powershell.exe".to_string(),
+                Vec::new(),
+                "C:\\tmp".to_string(),
+                None,
+                None,
+                Vec::new(),
+                false,
+            )
+            .await
+            .expect("create_session should succeed");
+
+        assert_eq!(mgr.get_active().await, Some(session.id));
+        mgr.clear_active().await;
+
+        assert_eq!(mgr.get_active().await, None);
+        let stored = mgr.get_session(session.id).await.unwrap();
+        assert_eq!(stored.status, SessionStatus::Running);
     }
 }

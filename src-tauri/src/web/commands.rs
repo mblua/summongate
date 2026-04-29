@@ -41,7 +41,22 @@ async fn dispatch_inner(state: &WsState, cmd: &str, args: &Value) -> Result<Valu
 
         "get_active_session" => {
             let mgr = state.session_mgr.read().await;
-            let active = mgr.get_active().await.map(|id| id.to_string());
+            let active = mgr.get_active().await;
+            let active = if let Some(active_id) = active {
+                let is_detached = {
+                    let detached = state.app_handle.state::<crate::DetachedSessionsState>();
+                    let set = detached.lock().unwrap();
+                    set.contains(&active_id)
+                };
+                if is_detached {
+                    mgr.clear_active_if(active_id).await;
+                    None
+                } else {
+                    Some(active_id.to_string())
+                }
+            } else {
+                None
+            };
             Ok(json!(active))
         }
 
@@ -96,12 +111,30 @@ async fn dispatch_inner(state: &WsState, cmd: &str, args: &Value) -> Result<Valu
 
             let active = {
                 let mgr = state.session_mgr.read().await;
-                mgr.get_active().await.map(|id| id.to_string())
+                if let Some(active_id) = mgr.get_active().await {
+                    let is_detached = {
+                        let detached = state.app_handle.state::<crate::DetachedSessionsState>();
+                        let set = detached.lock().unwrap();
+                        set.contains(&active_id)
+                    };
+                    if is_detached {
+                        mgr.clear_active_if(active_id).await;
+                        None
+                    } else {
+                        Some(active_id.to_string())
+                    }
+                } else {
+                    None
+                }
             };
             if let Some(active_id) = active {
                 state
                     .broadcaster
                     .broadcast_event("session_switched", &json!({ "id": active_id }));
+            } else {
+                state
+                    .broadcaster
+                    .broadcast_event("session_switched", &json!({ "id": Value::Null }));
             }
 
             Ok(json!(null))
@@ -117,6 +150,8 @@ async fn dispatch_inner(state: &WsState, cmd: &str, args: &Value) -> Result<Valu
                 set.contains(&uuid)
             };
             if is_detached {
+                let mgr = state.session_mgr.read().await;
+                mgr.clear_active_if(uuid).await;
                 let label = format!("terminal-{}", id.replace('-', ""));
                 if let Some(win) = state.app_handle.get_webview_window(&label) {
                     win.set_focus().map_err(|e| e.to_string())?;
