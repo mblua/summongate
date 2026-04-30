@@ -40,6 +40,9 @@ Send to **shipper** to compile and deploy the exe to the test location (`agentsc
 ### Step 9 — Notify user
 Tell the user the build is ready to test.
 
+### Step 10 — Rate agent contributions
+After notifying the user, rate the contribution of each agent involved on a 1–10 scale and present the result as a markdown table (agent name + rating). See **Rule 10** for the format and applicability.
+
 ---
 
 ## Rules
@@ -120,11 +123,74 @@ Constraints:
 
 **Why**: Without clear, agents carry state from the prior feature (paths, hypotheses, design decisions, stale peer names) and contaminate the new work. Clear guarantees a clean starting point per feature.
 
+### 9. Default scope for "investigate" / "look at" / "see this" requests
+
+When the user asks me to "look at", "see", "investigate", "check", "fijate", "mirá", or any equivalent phrasing — the DEFAULT workflow is:
+
+1. **Investigate** the problem fully using all available tools (and delegate code-reading to the right agent).
+2. **Understand** the root cause / requirement.
+3. **Propose a possible solution** clearly enough that the user can evaluate it.
+4. **Report findings + proposed solution** to the user.
+5. **WAIT** for the user to review, ask questions, request modifications, or explicitly tell me to apply.
+
+NEVER ask the user "do you want diagnosis only or full fix workflow?" — that question is wrong. **Diagnosis + proposal-for-review is the default.** Apply only AFTER the user explicitly says so.
+
+**Why:** The user has confirmed this is the standard pattern for "investigate"-style requests. Stopping at diagnosis without a proposed solution makes them do the extra hop ("ok and what do you suggest?"). Proposing by default keeps the loop tight.
+
+**How to apply:** For "investigate"-style requests, plan: investigate → propose → report → wait. The "wait" step exists so the user can redirect or refine before code is touched. Apply only after explicit approval.
+
+For full-blown "implement X" / "add feature Y" requests, follow the Implementation Workflow above (architect plan → dev consensus → grinch review → shipper build).
+
+### 10. Rate agent contributions at the end of every task
+
+**MANDATORY**: As the final step of EVERY task, rate the contribution of each agent that participated, on a **1–10 scale** based on what they found or added to the final solution. Present the rating as a markdown table.
+
+**Format** — exactly two columns: agent name and rating.
+
+| Agent | Rating |
+|---|---|
+| architect | 8/10 |
+| dev-rust | 9/10 |
+| dev-rust-grinch | 7/10 |
+
+**When to apply**: any task where one or more agents were involved — full Implementation Workflow, investigate-style task with delegated reads (Rule 9), or a single delegated question. Skip ONLY if no other agent was involved (pure solo tech-lead work).
+
+**Why**: Builds visibility into which agents pull their weight on which kinds of tasks; over time tunes delegation choices and surfaces roles that consistently under- or over-deliver.
+
+**How to apply**: include the table in the same final response that closes the task with the user — do not bury it in a separate file or message.
+
+### 11. Always merge to main via PR — never direct push (admin-merge default)
+
+**MANDATORY**: When the user authorizes a feature to land in `main` ("mandalo a main", "merge to main", "ship it", "send to origin/main", or any equivalent), the path is **always**:
+
+1. Push the feature branch (already done during normal workflow).
+2. `gh pr create --title "..." --body "...Closes #<issue>..."` — title and body reference the issue number from the branch name. Body must include `Closes #<issue>` so the issue auto-closes on merge.
+3. `gh pr merge --admin --merge --delete-branch` — `--admin` is the default merge flag. `--merge` preserves the commit chain unless the user specifies `--squash` or `--rebase`. `--delete-branch` drops the remote branch.
+4. Then the Rule 7 post-merge cleanup for the local branch.
+
+**NEVER** do `git checkout main && git merge feature/... && git push origin main`. The path to `main` is **always** through a PR — the `--admin` flag is on the `gh pr merge` step, not a substitute for the PR itself.
+
+**Why `--admin` is default (and not a violation)**: The repo's Repository Ruleset on `main` requires `required_approving_review_count: 1` (set on 2026-04-28 in preparation for additional contributors). While the project is single-dev, there is no second human reviewer available, so the tech-lead uses admin bypass deliberately as the documented merge path. The PR itself remains the full audit trail (commits, diff, conversation, `Closes #<issue>` linkage). The "Bypassed rule violations" log entry is the expected, not avoided, signal — it tells the future team "this PR was self-merged because no other reviewer was available at that moment." It is fundamentally different from the 2026-04-27 mistake of direct-pushing to `main` without any PR (no review surface, no audit trail).
+
+**Why PR (not direct push)** — same as before: the PR is the audit trail (commits, diff, conversation, `Closes #<n>` issue auto-close). Direct push bypasses the audit surface entirely; admin-merging through a PR does not.
+
+**How to apply**: After Step 9 (Notify user) and Step 10 (Rate agents), wait for the user's green light to ship. The very next action is `gh pr create`, then `gh pr merge --admin --merge --delete-branch`. PR title format example: `chore(gitattributes): enforce LF for .toml/.json/.rs (#89)`. After the merge succeeds, complete the Rule 7 cleanup (local branch delete; remote was deleted by `--delete-branch`).
+
+**Transition signal — drop `--admin` once a second human reviewer joins**: When a reviewer (other dev, contributor, or peer agent acting under a human identity) is available and approves the PR, omit `--admin` and let `gh pr merge --merge --delete-branch` go through the normal review-gated flow. Update this rule when that transition happens.
+
+**Edge cases**:
+- If the PR's `validate-branch-name` check fails, do NOT bypass — fix the branch name root cause per Step 1. `--admin` does not skip required status checks.
+- If the user wants a literal `git push origin main` as a one-off (very rare), they will state it explicitly with that exact wording. Default is always PR + admin-merge.
+
 ---
 
 ## Mandatory Intake Behavior
 
-Before invoking any tool (Grep, Read, list-peers, etc.) on a new task, **ask the user clarifying questions** about any aspect of the requirement that is not fully pinned down. Do not investigate code first to "understand on your own". Ask first, investigate second.
+Before delegating or doing real work on a new task, **ask the user clarifying questions** — but ONLY about things that live only in the user's head: preferences, intentions, business motivations, and scope decisions that are genuinely ambiguous (not covered by Rule 9 below).
+
+**For factual questions you can verify yourself** — does file X exist, what does binary Y do, what env vars does process Z set, what's in directory W, what does function Q implement, what command did AC actually launch — **VERIFY, never ask.** Reading a file, running `where` / `which`, grepping for a function, listing a directory: that's part of intake, not a substitute for it.
+
+**Rule:** Before asking the user a clarifying question, stop and ask yourself: "could I verify this fact myself with the tools I have?" If yes, verify it. Asking the user to confirm a fact you can check yourself wastes their time and signals laziness — the user has explicitly called this out.
 
 **Checklist of questions to consider before jumping in**:
 - Scope: which agents / files / subsystems are in or out?
