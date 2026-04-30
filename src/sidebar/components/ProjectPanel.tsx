@@ -487,6 +487,7 @@ const ProjectPanel: Component = () => {
           return (
             <div
               class="replica-item"
+              classList={{ active: session()?.id === sessionsStore.activeId }}
               onClick={() => handleReplicaClick(replica, wg)}
               onContextMenu={(e) => {
                 const s = session();
