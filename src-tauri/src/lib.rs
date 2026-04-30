@@ -99,10 +99,25 @@ pub fn run() {
             });
         let log_file = std::sync::Arc::new(log_file);
 
-        env_logger::Builder::from_env(
-            env_logger::Env::default().default_filter_or("agentscommander=info"),
-        )
-        .format({
+        // #93 precedence: RUST_LOG env > settings.logLevel > "agentscommander=info" default.
+        // - read_log_level_only is read-only and side-effect-free: does NOT trigger
+        //   migrations, auto-token-gen, or save_settings, so all log calls inside the
+        //   full load_settings() flow re-fire on the post-init SettingsState construction
+        //   call and are captured.
+        // - from_env(Env::default()) preserves RUST_LOG_STYLE handling (color output).
+        // - No floor is applied: if `resolved_filter` is malformed (e.g. user typo in
+        //   settings.json::logLevel), parse_filters produces no matching directives for
+        //   agentscommander* targets, and all logs from those targets are suppressed.
+        //   The user-facing recovery is to fix the typo. Same behavior pre-#93 had for
+        //   malformed RUST_LOG values; #93 does not introduce a new failure mode.
+        let resolved_filter = std::env::var("RUST_LOG")
+            .ok()
+            .or_else(crate::config::settings::read_log_level_only)
+            .unwrap_or_else(|| "agentscommander=info".to_string());
+
+        env_logger::Builder::from_env(env_logger::Env::default())
+            .parse_filters(&resolved_filter)
+            .format({
             let log_file = std::sync::Arc::clone(&log_file);
             move |buf, record| {
                 let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
