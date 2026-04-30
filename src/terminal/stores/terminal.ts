@@ -5,6 +5,7 @@ const [activeSessionName, setActiveSessionName] = createSignal<string>("");
 const [activeShell, setActiveShell] = createSignal<string>("");
 const [activeShellArgs, setActiveShellArgs] = createSignal<string[] | null>(null);
 const [activeWorkingDirectory, setActiveWorkingDirectory] = createSignal<string>('');
+const [activeWorkgroupBrief, setActiveWorkgroupBrief] = createSignal<string | null>(null);
 
 export const terminalStore = {
   get activeSessionId() {
@@ -22,10 +23,13 @@ export const terminalStore = {
   get activeWorkingDirectory() {
     return activeWorkingDirectory();
   },
+  get activeWorkgroupBrief() {
+    return activeWorkgroupBrief();
+  },
 
   /**
    * Partial-update contract: `id` always applied; any of `name` / `shell` /
-   * `shellArgs` / `workingDirectory` omitted or passed as `undefined` leaves
+   * `shellArgs` / `workingDirectory` / `workgroupBrief` omitted or passed as `undefined` leaves
    * the current value untouched. Rename events rely on this — they pass only
    * `(id, name)` so shell/args/cwd are preserved. Do NOT change the
    * undefined-skip semantics without auditing every caller.
@@ -35,12 +39,14 @@ export const terminalStore = {
     name?: string,
     shell?: string,
     shellArgs?: string[] | null,
-    workingDirectory?: string
+    workingDirectory?: string,
+    workgroupBrief?: string | null
   ) {
     setActiveSessionId(id);
     if (name !== undefined) setActiveSessionName(name);
     if (shell !== undefined) setActiveShell(shell);
     if (shellArgs !== undefined) setActiveShellArgs(shellArgs);
     if (workingDirectory !== undefined) setActiveWorkingDirectory(workingDirectory);
+    if (workgroupBrief !== undefined) setActiveWorkgroupBrief(workgroupBrief);
   },
 };
