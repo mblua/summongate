@@ -11,8 +11,7 @@ use crate::telegram::types::{BridgeInfo, BridgeStatus, TelegramBotConfig};
 /// Shared map of session_id → mpsc sender. The PTY read loop checks this
 /// to clone bytes to an active bridge. Uses std::sync::Mutex because the
 /// PTY read loop runs on a std::thread, not tokio.
-pub type OutputSenderMap =
-    Arc<Mutex<HashMap<Uuid, tokio::sync::mpsc::Sender<Vec<u8>>>>>;
+pub type OutputSenderMap = Arc<Mutex<HashMap<Uuid, tokio::sync::mpsc::Sender<Vec<u8>>>>>;
 
 pub struct TelegramBridgeManager {
     bridges: HashMap<Uuid, BridgeHandle>,
@@ -89,10 +88,7 @@ impl TelegramBridgeManager {
 
     pub fn detach(&mut self, session_id: Uuid) -> Result<(), AppError> {
         let handle = self.bridges.remove(&session_id).ok_or_else(|| {
-            AppError::Telegram(format!(
-                "No bridge attached to session {}",
-                session_id
-            ))
+            AppError::Telegram(format!("No bridge attached to session {}", session_id))
         })?;
 
         handle.cancel.cancel();
@@ -124,7 +120,10 @@ impl TelegramBridgeManager {
             handle.cancel.cancel();
         }
         if !self.bridges.is_empty() {
-            log::info!("[telegram] Cancelled {} active bridges for shutdown", self.bridges.len());
+            log::info!(
+                "[telegram] Cancelled {} active bridges for shutdown",
+                self.bridges.len()
+            );
         }
     }
 }

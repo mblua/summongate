@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use crate::config::teams::DiscoveredTeam;
 use super::types::{AgentInfo, Conversation, PhoneMessage};
+use crate::config::teams::DiscoveredTeam;
 
 /// Returns <config_dir>/conversations/
 fn conversations_dir() -> Option<PathBuf> {
@@ -14,7 +14,9 @@ pub fn list_agents(teams: &[DiscoveredTeam]) -> Vec<AgentInfo> {
 
     for team in teams {
         for (i, name) in team.agent_names.iter().enumerate() {
-            let path = team.agent_paths.get(i)
+            let path = team
+                .agent_paths
+                .get(i)
                 .and_then(|p| p.as_ref())
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
@@ -80,8 +82,7 @@ fn find_existing(files: &[(u32, PathBuf)], a: &str, b: &str) -> Option<PathBuf> 
 fn save_conversation(path: &Path, conv: &Conversation) -> Result<(), String> {
     let json = serde_json::to_string_pretty(conv)
         .map_err(|e| format!("Failed to serialize conversation: {}", e))?;
-    std::fs::write(path, json)
-        .map_err(|e| format!("Failed to write conversation: {}", e))?;
+    std::fs::write(path, json).map_err(|e| format!("Failed to write conversation: {}", e))?;
     Ok(())
 }
 

@@ -39,8 +39,14 @@ impl IdleDetector {
     /// Mark that a resize just happened for this session.
     /// PTY output within RESIZE_GRACE will be ignored (prompt repaint noise).
     pub fn record_resize(&self, session_id: Uuid) {
-        log::info!("[idle] RESIZE recorded for {}", &session_id.to_string()[..8]);
-        self.resize_grace.lock().unwrap().insert(session_id, Instant::now());
+        log::info!(
+            "[idle] RESIZE recorded for {}",
+            &session_id.to_string()[..8]
+        );
+        self.resize_grace
+            .lock()
+            .unwrap()
+            .insert(session_id, Instant::now());
     }
 
     /// Record PTY activity (with byte count for diagnostics).
@@ -50,7 +56,12 @@ impl IdleDetector {
         if let Some(&last_resize) = self.resize_grace.lock().unwrap().get(&session_id) {
             let elapsed = last_resize.elapsed();
             if elapsed < RESIZE_GRACE {
-                log::info!("[idle] SUPPRESSED {} ({} bytes, {}ms after resize)", sid, byte_count, elapsed.as_millis());
+                log::info!(
+                    "[idle] SUPPRESSED {} ({} bytes, {}ms after resize)",
+                    sid,
+                    byte_count,
+                    elapsed.as_millis()
+                );
                 return;
             }
         }
@@ -63,7 +74,11 @@ impl IdleDetector {
             idle_set.remove(&session_id)
         };
         if was_idle {
-            log::info!("[idle] BUSY {} ({} bytes, was idle → now busy)", sid, byte_count);
+            log::info!(
+                "[idle] BUSY {} ({} bytes, was idle → now busy)",
+                sid,
+                byte_count
+            );
             (self.on_busy)(session_id);
         }
     }
@@ -104,9 +119,7 @@ impl IdleDetector {
                         Some(d) => d,
                         None => continue, // last_seen is in the future — skip
                     };
-                    if elapsed > IDLE_THRESHOLD
-                        && !idle_set.contains(&session_id)
-                    {
+                    if elapsed > IDLE_THRESHOLD && !idle_set.contains(&session_id) {
                         idle_set.insert(session_id);
                         log::info!(
                             "[idle] IDLE {} ({}ms since last activity)",

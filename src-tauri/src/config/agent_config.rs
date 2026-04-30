@@ -139,7 +139,12 @@ pub fn set_last_coding_agent(
     // Also write to root config.json so discovery can find it regardless of instance
     upsert_config(&Path::new(repo_path).join("config.json"), agent_id, &entry)?;
 
-    log::info!("Updated lastCodingAgent to '{}' ({}) in {} + root config.json", agent_id, app_label, local_dir_name);
+    log::info!(
+        "Updated lastCodingAgent to '{}' ({}) in {} + root config.json",
+        agent_id,
+        app_label,
+        local_dir_name
+    );
     Ok(())
 }
 
@@ -151,7 +156,11 @@ fn ensure_object<'a>(
 ) -> &'a mut serde_json::Map<String, serde_json::Value> {
     let val = map.entry(key).or_insert_with(|| serde_json::json!({}));
     if !val.is_object() {
-        log::warn!("upsert_config: '{}' was not an object at {:?}, resetting", key, context);
+        log::warn!(
+            "upsert_config: '{}' was not an object at {:?}, resetting",
+            key,
+            context
+        );
         *val = serde_json::json!({});
     }
     val.as_object_mut().expect("just set to object")
@@ -169,11 +178,18 @@ fn upsert_config(
         let content = std::fs::read_to_string(config_path)
             .map_err(|e| format!("Failed to read config: {}", e))?;
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap_or_else(|e| {
-            log::warn!("Failed to parse config at {:?}, starting fresh: {}", config_path, e);
+            log::warn!(
+                "Failed to parse config at {:?}, starting fresh: {}",
+                config_path,
+                e
+            );
             serde_json::json!({})
         });
         if !parsed.is_object() {
-            log::warn!("upsert_config: root at {:?} is not an object, starting fresh", config_path);
+            log::warn!(
+                "upsert_config: root at {:?} is not an object, starting fresh",
+                config_path
+            );
             serde_json::json!({})
         } else {
             parsed
@@ -188,14 +204,13 @@ fn upsert_config(
     tooling.insert("lastCodingAgent".to_string(), serde_json::json!(agent_id));
 
     let coding_agents = ensure_object(tooling, "codingAgents", config_path);
-    let entry_val = serde_json::to_value(entry)
-        .map_err(|e| format!("Failed to serialize entry: {}", e))?;
+    let entry_val =
+        serde_json::to_value(entry).map_err(|e| format!("Failed to serialize entry: {}", e))?;
     coding_agents.insert(agent_id.to_string(), entry_val);
 
     let json = serde_json::to_string_pretty(&root)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    std::fs::write(config_path, json)
-        .map_err(|e| format!("Failed to write config: {}", e))?;
+    std::fs::write(config_path, json).map_err(|e| format!("Failed to write config: {}", e))?;
 
     Ok(())
 }

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::config::settings::WindowGeometry;
 use crate::session::manager::SessionManager;
 use crate::session::session::{SessionStatus, TEMP_SESSION_PREFIX};
 
@@ -31,6 +32,19 @@ pub struct PersistedSession {
     pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_label: Option<String>,
+
+    /// True if the session was detached into its own window at snapshot time.
+    /// Phase 3 restore re-spawns a detached window for every persisted row with
+    /// `was_detached=true` (except deferred sessions — see plan §R.9). Sourced
+    /// from `Session::was_detached` under Fix A — NOT from `DetachedSessionsState`.
+    #[serde(default)]
+    pub was_detached: bool,
+
+    /// Last-known geometry of this session's detached window. `None` for sessions
+    /// that were never detached, or detached without any drag/resize yet. Auto-GC'd
+    /// when the session is destroyed (field travels with the PersistedSession row).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detached_geometry: Option<WindowGeometry>,
 
     // ── Legacy fields — read-only, consumed by the upgrade pass in load_sessions. ──
     // `skip_serializing_if = "Option::is_none"` means snapshot_sessions never writes them
@@ -203,12 +217,11 @@ pub fn load_sessions() -> Vec<PersistedSession> {
                                 "[sessions] Upgrading legacy single-repo session '{}' → git_repos[1]={{label:{}, source:{}}}",
                                 ps.name, prefix, source
                             );
-                            ps.git_repos
-                                .push(crate::session::session::SessionRepo {
-                                    label: prefix,
-                                    source_path: source,
-                                    branch: None,
-                                });
+                            ps.git_repos.push(crate::session::session::SessionRepo {
+                                label: prefix,
+                                source_path: source,
+                                branch: None,
+                            });
                         }
                         (Some(source), None) => {
                             // Shouldn't happen in data this codebase produces, but serde(default)
@@ -219,20 +232,17 @@ pub fn load_sessions() -> Vec<PersistedSession> {
                                 .next_back()
                                 .unwrap_or("")
                                 .to_string();
-                            let label = dir
-                                .strip_prefix("repo-")
-                                .map(str::to_string)
-                                .unwrap_or(dir);
+                            let label =
+                                dir.strip_prefix("repo-").map(str::to_string).unwrap_or(dir);
                             log::warn!(
                                 "[sessions] Upgrading legacy session '{}' with source but no prefix; synthesized label '{}'",
                                 ps.name, label
                             );
-                            ps.git_repos
-                                .push(crate::session::session::SessionRepo {
-                                    label,
-                                    source_path: source,
-                                    branch: None,
-                                });
+                            ps.git_repos.push(crate::session::session::SessionRepo {
+                                label,
+                                source_path: source,
+                                branch: None,
+                            });
                         }
                         (None, Some(prefix)) if prefix == "multi-repo" => {
                             log::info!(
@@ -328,6 +338,11 @@ pub async fn snapshot_sessions(mgr: &SessionManager) -> Vec<PersistedSession> {
             is_coordinator: s.is_coordinator,
             agent_id: s.agent_id.clone(),
             agent_label: s.agent_label.clone(),
+            // Fix A: read detach state directly from the Session (via SessionInfo). The
+            // `DetachedSessionsState` set is NOT consulted at persist time — the Destroyed
+            // handler clears the set before `RunEvent::Exit` runs the final persist.
+            was_detached: s.was_detached,
+            detached_geometry: s.detached_geometry.clone(),
             // Legacy fields are always None on new saves; skip_serializing_if elides them.
             git_branch_source: None,
             git_branch_prefix: None,
@@ -433,7 +448,6 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
         }
     }
 
-
     let is_claude = std::iter::once(shell)
         .chain(args.iter().flat_map(|s| s.split_whitespace()))
         .any(|t| {
@@ -462,7 +476,6 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
                 .unwrap_or(t)
                 .eq_ignore_ascii_case("gemini")
         });
-
 
     if !is_claude && !is_codex && !is_gemini {
         return args.to_vec();
@@ -497,7 +510,6 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
                 strip_gemini_tokens(&mut result, idx + 1);
             }
         }
-
 
         for arg in &mut result {
             let mut tokens: Vec<String> = arg
@@ -536,7 +548,6 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
                 }
             }
 
-
             if changed {
                 *arg = tokens.join(" ");
             }
@@ -550,7 +561,6 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
             }
         }
 
-
         result
     } else {
         let mut result = Vec::with_capacity(args.len());
@@ -560,13 +570,15 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
                 skip_next = false;
                 continue;
             }
-            if is_codex && idx == 0 && a.eq_ignore_ascii_case("resume")
+            if is_codex
+                && idx == 0
+                && a.eq_ignore_ascii_case("resume")
                 && args
                     .get(1)
                     .is_some_and(|next| next.eq_ignore_ascii_case("--last"))
-                {
-                    continue;
-                }
+            {
+                continue;
+            }
             if is_codex
                 && idx == 1
                 && args
@@ -639,7 +651,12 @@ mod tests {
     fn strip_auto_injected_args_removes_direct_gemini_resume_latest() {
         let stripped = strip_auto_injected_args(
             "gemini",
-            &["--resume".to_string(), "latest".to_string(), "-m".to_string(), "gpt-5".to_string()],
+            &[
+                "--resume".to_string(),
+                "latest".to_string(),
+                "-m".to_string(),
+                "gpt-5".to_string(),
+            ],
         );
         assert_eq!(stripped, vec!["-m".to_string(), "gpt-5".to_string()]);
     }
@@ -648,18 +665,39 @@ mod tests {
     fn strip_auto_injected_args_removes_cmd_gemini_resume_latest() {
         let stripped = strip_auto_injected_args(
             "cmd.exe",
-            &["/C".to_string(), "gemini".to_string(), "--resume".to_string(), "latest".to_string(), "-m".to_string(), "gpt-5".to_string()],
+            &[
+                "/C".to_string(),
+                "gemini".to_string(),
+                "--resume".to_string(),
+                "latest".to_string(),
+                "-m".to_string(),
+                "gpt-5".to_string(),
+            ],
         );
-        assert_eq!(stripped, vec!["/C".to_string(), "gemini".to_string(), "-m".to_string(), "gpt-5".to_string()]);
+        assert_eq!(
+            stripped,
+            vec![
+                "/C".to_string(),
+                "gemini".to_string(),
+                "-m".to_string(),
+                "gpt-5".to_string()
+            ]
+        );
     }
 
     #[test]
     fn strip_auto_injected_args_removes_embedded_cmd_gemini_resume_latest() {
         let stripped = strip_auto_injected_args(
             "cmd.exe",
-            &["/K".to_string(), "git pull && gemini --resume latest -m gpt-5".to_string()],
+            &[
+                "/K".to_string(),
+                "git pull && gemini --resume latest -m gpt-5".to_string(),
+            ],
         );
-        assert_eq!(stripped, vec!["/K".to_string(), "git pull && gemini -m gpt-5".to_string()]);
+        assert_eq!(
+            stripped,
+            vec!["/K".to_string(), "git pull && gemini -m gpt-5".to_string()]
+        );
     }
 
     #[test]
@@ -784,6 +822,8 @@ mod tests {
             is_coordinator: false,
             agent_id: None,
             agent_label: None,
+            was_detached: false,
+            detached_geometry: None,
             git_branch_source: Some("C:/repos/agentscommander".into()),
             git_branch_prefix: Some("agentscommander".into()),
             id: None,
@@ -796,12 +836,11 @@ mod tests {
         if ps.git_repos.is_empty() {
             match (ps.git_branch_source.take(), ps.git_branch_prefix.take()) {
                 (Some(source), Some(prefix)) if prefix != "multi-repo" => {
-                    ps.git_repos
-                        .push(crate::session::session::SessionRepo {
-                            label: prefix,
-                            source_path: source,
-                            branch: None,
-                        });
+                    ps.git_repos.push(crate::session::session::SessionRepo {
+                        label: prefix,
+                        source_path: source,
+                        branch: None,
+                    });
                 }
                 _ => {}
             }
@@ -827,6 +866,8 @@ mod tests {
             is_coordinator: false,
             agent_id: None,
             agent_label: None,
+            was_detached: false,
+            detached_geometry: None,
             git_branch_source: None,
             git_branch_prefix: Some("multi-repo".into()),
             id: None,
@@ -838,12 +879,11 @@ mod tests {
         if ps.git_repos.is_empty() {
             match (ps.git_branch_source.take(), ps.git_branch_prefix.take()) {
                 (Some(source), Some(prefix)) if prefix != "multi-repo" => {
-                    ps.git_repos
-                        .push(crate::session::session::SessionRepo {
-                            label: prefix,
-                            source_path: source,
-                            branch: None,
-                        });
+                    ps.git_repos.push(crate::session::session::SessionRepo {
+                        label: prefix,
+                        source_path: source,
+                        branch: None,
+                    });
                 }
                 _ => {}
             }

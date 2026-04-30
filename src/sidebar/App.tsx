@@ -18,6 +18,8 @@ import {
   onTelegramBridgeAttached,
   onTelegramBridgeDetached,
   onTelegramBridgeError,
+  onTerminalDetached,
+  onTerminalAttached,
 } from "../shared/ipc";
 import { registerShortcuts, unregisterShortcuts } from "../shared/shortcuts";
 import { initZoom } from "../shared/zoom";
@@ -34,7 +36,15 @@ import ProjectPanel from "./components/ProjectPanel";
 import OnboardingModal from "./components/OnboardingModal";
 import "./styles/sidebar.css";
 
-const SidebarApp: Component = () => {
+interface SidebarAppProps {
+  /**
+   * True when mounted inside MainApp's unified layout. Skips window-level
+   * initializers; those are main-window concerns.
+   */
+  embedded?: boolean;
+}
+
+const SidebarApp: Component<SidebarAppProps> = (props) => {
   const [showOnboarding, setShowOnboarding] = createSignal(false);
   const unlisteners: UnlistenFn[] = [];
   let shortcutHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -45,7 +55,7 @@ const SidebarApp: Component = () => {
   const blockContextMenu = (e: Event) => e.preventDefault();
 
   const handleRaiseTerminal = async (e: MouseEvent) => {
-    if (!isTauri || !raiseTerminalEnabled) return;
+    if (!isTauri || props.embedded || !raiseTerminalEnabled) return;
     // Don't steal focus from interactive elements
     const tag = (e.target as HTMLElement).tagName;
     if (tag === "SELECT" || tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON") return;
@@ -62,8 +72,10 @@ const SidebarApp: Component = () => {
   onMount(async () => {
     document.documentElement.classList.add("light-theme");
     shortcutHandler = registerShortcuts();
-    cleanupZoom = await initZoom("sidebar");
-    cleanupGeometry = await initWindowGeometry("sidebar");
+    if (!props.embedded) {
+      cleanupZoom = await initZoom("sidebar");
+      cleanupGeometry = await initWindowGeometry("sidebar");
+    }
 
     // Apply window settings
     const appSettings = await SettingsAPI.get();
@@ -73,19 +85,22 @@ const SidebarApp: Component = () => {
     const style = appSettings.sidebarStyle;
     const removedThemes = ["classic", "signal-grid"];
     document.documentElement.dataset.sidebarStyle = (!style || removedThemes.includes(style)) ? "noir-minimal" : style;
-    if (appSettings.sidebarAlwaysOnTop && isTauri) {
+    if (!props.embedded && appSettings.sidebarAlwaysOnTop && isTauri) {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       await getCurrentWindow().setAlwaysOnTop(true);
     }
-    document.addEventListener("mousedown", handleRaiseTerminal);
+    if (!props.embedded) {
+      document.addEventListener("mousedown", handleRaiseTerminal);
+    }
 
     // Block the default browser context menu globally — custom menus are used instead
     document.addEventListener("contextmenu", blockContextMenu);
 
-    // Always apply Sidebar Right layout on startup
-    try {
-      await applyWindowLayout("right");
-    } catch {}
+    if (!props.embedded) {
+      try {
+        await applyWindowLayout("right");
+      } catch {}
+    }
 
     // Load settings into reactive store (for voice-to-text visibility etc.)
     await settingsStore.load();
@@ -131,8 +146,35 @@ const SidebarApp: Component = () => {
     unlisteners.push(
       await onSessionDestroyed(({ id }) => {
         sessionsStore.removeSession(id);
+        // Detached-window cleanup: if the session had a detached window,
+        // its destroy also closes that window. Clear the store flag so
+        // UI (icons, menu items) doesn't linger in detached state.
+        sessionsStore.setDetached(id, false);
       })
     );
+
+    unlisteners.push(
+      await onTerminalDetached(({ sessionId }) =>
+        sessionsStore.setDetached(sessionId, true)
+      )
+    );
+
+    unlisteners.push(
+      await onTerminalAttached(({ sessionId }) =>
+        sessionsStore.setDetached(sessionId, false)
+      )
+    );
+
+    // Hydrate detachedIds from backend (G.8 race safety — covers detach
+    // events that fired before this component mounted, e.g. from the
+    // Phase-3 restore path or from a prior detach survived across a
+    // SidebarApp re-mount in the unified window).
+    try {
+      const ids = await WindowAPI.listDetached();
+      ids.forEach((id) => sessionsStore.setDetached(id, true));
+    } catch (e) {
+      console.warn("[sidebar] listDetached hydration failed:", e);
+    }
 
     unlisteners.push(
       await onSessionSwitched(({ id }) => {
@@ -207,7 +249,9 @@ const SidebarApp: Component = () => {
   return (
     <>
       <div class="sidebar-layout">
-        <Titlebar />
+        <Show when={!props.embedded}>
+          <Titlebar />
+        </Show>
         <ActionBar />
         <RootAgentBanner />
         <div class="sidebar-scrollable">

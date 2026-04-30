@@ -114,16 +114,14 @@ pub fn execute(args: SendArgs) -> i32 {
     // canonicalizes on receive (§AR2-norm) so direct outbox writes cannot
     // bypass the reject-on-ambiguity rule.
     let settings = crate::config::settings::load_settings();
-    let resolved_to = match crate::config::teams::resolve_agent_target(
-        &args.to,
-        &settings.project_paths,
-    ) {
-        Ok(fqn) => fqn,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            return 1;
-        }
-    };
+    let resolved_to =
+        match crate::config::teams::resolve_agent_target(&args.to, &settings.project_paths) {
+            Ok(fqn) => fqn,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                return 1;
+            }
+        };
 
     // ── Pre-validate routing ──────────────────────────────────────────────
 
@@ -291,8 +289,12 @@ pub fn execute(args: SendArgs) -> i32 {
     // ── Poll for delivery confirmation ────────────────────────────────────
     // The MailboxPoller will pick up the file and move it to delivered/ or
     // rejected/. Wait until we know the outcome.
-    let delivered_path = outbox_dir.join("delivered").join(format!("{}.json", msg_id));
-    let rejected_reason_path = outbox_dir.join("rejected").join(format!("{}.reason.txt", msg_id));
+    let delivered_path = outbox_dir
+        .join("delivered")
+        .join(format!("{}.json", msg_id));
+    let rejected_reason_path = outbox_dir
+        .join("rejected")
+        .join(format!("{}.reason.txt", msg_id));
 
     let confirm_timeout = std::time::Duration::from_secs(30);
     let confirm_poll = std::time::Duration::from_millis(250);
@@ -331,7 +333,10 @@ pub fn execute(args: SendArgs) -> i32 {
 
         loop {
             if resp_start.elapsed() >= timeout {
-                eprintln!("Error: timeout waiting for response after {}s", args.timeout);
+                eprintln!(
+                    "Error: timeout waiting for response after {}s",
+                    args.timeout
+                );
                 return 1;
             }
 

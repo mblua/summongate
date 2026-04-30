@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
+use tauri::Manager;
 use uuid::Uuid;
 
 use crate::config::settings::SettingsState;
@@ -40,7 +41,22 @@ async fn dispatch_inner(state: &WsState, cmd: &str, args: &Value) -> Result<Valu
 
         "get_active_session" => {
             let mgr = state.session_mgr.read().await;
-            let active = mgr.get_active().await.map(|id| id.to_string());
+            let active = mgr.get_active().await;
+            let active = if let Some(active_id) = active {
+                let is_detached = {
+                    let detached = state.app_handle.state::<crate::DetachedSessionsState>();
+                    let set = detached.lock().unwrap();
+                    set.contains(&active_id)
+                };
+                if is_detached {
+                    mgr.clear_active_if(active_id).await;
+                    None
+                } else {
+                    Some(active_id.to_string())
+                }
+            } else {
+                None
+            };
             Ok(json!(active))
         }
 
@@ -74,10 +90,10 @@ async fn dispatch_inner(state: &WsState, cmd: &str, args: &Value) -> Result<Valu
                 cwd,
                 session_name,
                 agent_id,
-                None,  // agent_label (auto-detected)
-                false, // skip_tooling_save
+                None,       // agent_label (auto-detected)
+                false,      // skip_tooling_save
                 Vec::new(), // git_repos
-                true, // skip_auto_resume = true → fresh create, no `--continue` injection
+                true,       // skip_auto_resume = true → fresh create, no `--continue` injection
             )
             .await?;
 
@@ -88,30 +104,37 @@ async fn dispatch_inner(state: &WsState, cmd: &str, args: &Value) -> Result<Valu
             let id = require_str(args, "id")?;
             let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
 
+            crate::commands::session::destroy_session_inner(&state.app_handle, uuid).await?;
             state
-                .pty_mgr
-                .lock()
-                .unwrap()
-                .kill(uuid)
-                .map_err(|e| e.to_string())?;
+                .broadcaster
+                .broadcast_event("session_destroyed", &json!({ "id": id }));
 
-            let mgr = state.session_mgr.read().await;
-            let new_active = mgr.destroy_session(uuid).await.map_err(|e| e.to_string())?;
-
-            broadcast_all(
-                &state.app_handle,
-                &state.broadcaster,
-                "session_destroyed",
-                &json!({ "id": id }),
-            );
-
-            if let Some(new_id) = new_active {
-                broadcast_all(
-                    &state.app_handle,
-                    &state.broadcaster,
-                    "session_switched",
-                    &json!({ "id": new_id.to_string() }),
-                );
+            let active = {
+                let mgr = state.session_mgr.read().await;
+                if let Some(active_id) = mgr.get_active().await {
+                    let is_detached = {
+                        let detached = state.app_handle.state::<crate::DetachedSessionsState>();
+                        let set = detached.lock().unwrap();
+                        set.contains(&active_id)
+                    };
+                    if is_detached {
+                        mgr.clear_active_if(active_id).await;
+                        None
+                    } else {
+                        Some(active_id.to_string())
+                    }
+                } else {
+                    None
+                }
+            };
+            if let Some(active_id) = active {
+                state
+                    .broadcaster
+                    .broadcast_event("session_switched", &json!({ "id": active_id }));
+            } else {
+                state
+                    .broadcaster
+                    .broadcast_event("session_switched", &json!({ "id": Value::Null }));
             }
 
             Ok(json!(null))
@@ -120,6 +143,21 @@ async fn dispatch_inner(state: &WsState, cmd: &str, args: &Value) -> Result<Valu
         "switch_session" => {
             let id = require_str(args, "id")?;
             let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
+
+            let is_detached = {
+                let detached = state.app_handle.state::<crate::DetachedSessionsState>();
+                let set = detached.lock().unwrap();
+                set.contains(&uuid)
+            };
+            if is_detached {
+                let mgr = state.session_mgr.read().await;
+                mgr.clear_active_if(uuid).await;
+                let label = format!("terminal-{}", id.replace('-', ""));
+                if let Some(win) = state.app_handle.get_webview_window(&label) {
+                    win.set_focus().map_err(|e| e.to_string())?;
+                }
+                return Ok(json!(null));
+            }
 
             let mgr = state.session_mgr.read().await;
             mgr.switch_session(uuid).await.map_err(|e| e.to_string())?;
@@ -272,11 +310,22 @@ async fn dispatch_inner(state: &WsState, cmd: &str, args: &Value) -> Result<Valu
             Ok(json!(null))
         }
 
+        "list_detached_sessions" => {
+            let detached = state.app_handle.state::<crate::DetachedSessionsState>();
+            let set = detached.lock().unwrap();
+            Ok(json!(set.iter().map(|u| u.to_string()).collect::<Vec<_>>()))
+        }
+
         // --- Window commands (no-ops for web clients) ---
+        // Browser-remote clients don't have Tauri windows; these all return null.
+        // 0.8.0: `close_detached_terminal` removed; `ensure_terminal_window`
+        // renamed to `focus_main_window`; `attach_terminal`, `list_detached_sessions`,
+        // `set_detached_geometry` added (plan §R.5 / §A2.10).
         "detach_terminal"
-        | "close_detached_terminal"
+        | "attach_terminal"
+        | "set_detached_geometry"
         | "open_in_explorer"
-        | "ensure_terminal_window"
+        | "focus_main_window"
         | "open_guide_window" => Ok(json!(null)),
 
         // --- Repos ---

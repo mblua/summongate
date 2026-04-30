@@ -4,6 +4,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use super::session::{Session, SessionInfo, SessionRepo, SessionStatus};
+use crate::config::settings::WindowGeometry;
 use crate::errors::AppError;
 
 pub struct SessionManager {
@@ -67,6 +68,8 @@ impl SessionManager {
             git_repos_gen: 0,
             token: Uuid::new_v4(),
             is_claude: false,
+            was_detached: false,
+            detached_geometry: None,
         };
 
         self.sessions.write().await.insert(id, session.clone());
@@ -172,6 +175,23 @@ impl SessionManager {
         *self.active_session.read().await
     }
 
+    /// Clear the active session and demote the previously-active session back
+    /// to Running if it is still present.
+    pub async fn clear_active(&self) {
+        let old_id = {
+            let mut active = self.active_session.write().await;
+            active.take()
+        };
+        if let Some(old_id) = old_id {
+            let mut sessions = self.sessions.write().await;
+            if let Some(old) = sessions.get_mut(&old_id) {
+                if old.status == SessionStatus::Active {
+                    old.status = SessionStatus::Running;
+                }
+            }
+        }
+    }
+
     pub async fn get_session(&self, id: Uuid) -> Option<Session> {
         self.sessions.read().await.get(&id).cloned()
     }
@@ -198,9 +218,21 @@ impl SessionManager {
     /// Used during restore to prevent deferred (Exited) sessions from
     /// blocking auto-activation of subsequent sessions.
     pub async fn clear_active_if(&self, id: Uuid) {
-        let mut active = self.active_session.write().await;
-        if *active == Some(id) {
-            *active = None;
+        let cleared_id = {
+            let mut active = self.active_session.write().await;
+            if *active == Some(id) {
+                active.take()
+            } else {
+                None
+            }
+        };
+        if let Some(old_id) = cleared_id {
+            let mut sessions = self.sessions.write().await;
+            if let Some(old) = sessions.get_mut(&old_id) {
+                if old.status == SessionStatus::Active {
+                    old.status = SessionStatus::Running;
+                }
+            }
         }
     }
 
@@ -247,6 +279,27 @@ impl SessionManager {
         let mut sessions = self.sessions.write().await;
         if let Some(s) = sessions.get_mut(&id) {
             s.is_claude = val;
+        }
+    }
+
+    /// Set `was_detached` on the session. Authoritative store for persistence under
+    /// Fix A (plan §A3.2). Mutated ONLY by `detach_terminal_inner` (→true) and
+    /// `attach_terminal` (→false). See plan §10 rule — the `WindowEvent::Destroyed`
+    /// handler must NOT call this.
+    pub async fn set_was_detached(&self, id: Uuid, detached: bool) {
+        let mut sessions = self.sessions.write().await;
+        if let Some(s) = sessions.get_mut(&id) {
+            s.was_detached = detached;
+        }
+    }
+
+    /// Record the detached window's last-known geometry. Called by the frontend on
+    /// drag/resize via the `set_detached_geometry` Tauri command. Read at spawn
+    /// time by `detach_terminal_inner` (including the Phase 3 restore path).
+    pub async fn set_detached_geometry(&self, id: Uuid, geometry: WindowGeometry) {
+        let mut sessions = self.sessions.write().await;
+        if let Some(s) = sessions.get_mut(&id) {
+            s.detached_geometry = Some(geometry);
         }
     }
 
@@ -318,8 +371,7 @@ impl SessionManager {
         let mut sessions = self.sessions.write().await;
         let mut changes = Vec::new();
         for (id, s) in sessions.iter_mut() {
-            let new_val =
-                crate::config::teams::is_coordinator_for_cwd(&s.working_directory, teams);
+            let new_val = crate::config::teams::is_coordinator_for_cwd(&s.working_directory, teams);
             if s.is_coordinator != new_val {
                 s.is_coordinator = new_val;
                 changes.push((*id, new_val));
@@ -464,5 +516,69 @@ mod tests {
             stored.effective_shell_args,
             Some(vec!["--continue".to_string(), "--debug".to_string()])
         );
+    }
+
+    #[tokio::test]
+    async fn clear_active_removes_active_and_demotes_status() {
+        let mgr = SessionManager::new();
+        let session = mgr
+            .create_session(
+                "powershell.exe".to_string(),
+                Vec::new(),
+                "C:\\tmp".to_string(),
+                None,
+                None,
+                Vec::new(),
+                false,
+            )
+            .await
+            .expect("create_session should succeed");
+
+        assert_eq!(mgr.get_active().await, Some(session.id));
+        mgr.clear_active().await;
+
+        assert_eq!(mgr.get_active().await, None);
+        let stored = mgr.get_session(session.id).await.unwrap();
+        assert_eq!(stored.status, SessionStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn clear_active_if_preserves_non_matching_active_session() {
+        let mgr = SessionManager::new();
+        let first = mgr
+            .create_session(
+                "powershell.exe".to_string(),
+                Vec::new(),
+                "C:\\tmp\\one".to_string(),
+                None,
+                None,
+                Vec::new(),
+                false,
+            )
+            .await
+            .expect("create first session");
+        let second = mgr
+            .create_session(
+                "powershell.exe".to_string(),
+                Vec::new(),
+                "C:\\tmp\\two".to_string(),
+                None,
+                None,
+                Vec::new(),
+                false,
+            )
+            .await
+            .expect("create second session");
+
+        mgr.switch_session(second.id)
+            .await
+            .expect("switch to second session");
+        mgr.clear_active_if(first.id).await;
+
+        assert_eq!(mgr.get_active().await, Some(second.id));
+        let first_stored = mgr.get_session(first.id).await.unwrap();
+        let second_stored = mgr.get_session(second.id).await.unwrap();
+        assert_eq!(first_stored.status, SessionStatus::Running);
+        assert_eq!(second_stored.status, SessionStatus::Active);
     }
 }

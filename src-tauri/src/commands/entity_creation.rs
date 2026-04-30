@@ -91,7 +91,13 @@ fn sanitize_name(raw: &str) -> Result<String, String> {
     let sanitized: String = raw
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .split('-')
         .filter(|s| !s.is_empty())
@@ -112,7 +118,10 @@ fn validate_existing_name(name: &str, entity_label: &str) -> Result<(), String> 
         return Err(format!("{} name cannot be empty", entity_label));
     }
     if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-        return Err(format!("Invalid {} name: only alphanumeric characters and hyphens are allowed", entity_label));
+        return Err(format!(
+            "Invalid {} name: only alphanumeric characters and hyphens are allowed",
+            entity_label
+        ));
     }
     Ok(())
 }
@@ -121,10 +130,7 @@ fn validate_existing_name(name: &str, entity_label: &str) -> Result<(), String> 
 /// `https://github.com/org/my-repo.git` → `my-repo`
 fn repo_dir_name_from_url(url: &str) -> String {
     let without_trailing = url.trim_end_matches('/');
-    let last_segment = without_trailing
-        .rsplit('/')
-        .next()
-        .unwrap_or("repo");
+    let last_segment = without_trailing.rsplit('/').next().unwrap_or("repo");
     last_segment
         .strip_suffix(".git")
         .unwrap_or(last_segment)
@@ -138,8 +144,7 @@ fn agent_matches(team_agent_entry: &str, agent_name: &str) -> bool {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or(team_agent_entry);
-    entry_dir == format!("_agent_{}", agent_name)
-        || entry_dir == agent_name
+    entry_dir == format!("_agent_{}", agent_name) || entry_dir == agent_name
 }
 
 /// Parse YAML frontmatter from a Role.md file.
@@ -245,10 +250,7 @@ pub async fn create_agent_matrix(
 /// Removes {project_path}/.ac-new/_agent_{agent_name}/ entirely.
 /// Checks that no team references this agent before deleting.
 #[tauri::command]
-pub async fn delete_agent_matrix(
-    project_path: String,
-    agent_name: String,
-) -> Result<(), String> {
+pub async fn delete_agent_matrix(project_path: String, agent_name: String) -> Result<(), String> {
     validate_existing_name(&agent_name, "Agent")?;
 
     let base = Path::new(&project_path).join(".ac-new");
@@ -280,8 +282,12 @@ pub async fn delete_agent_matrix(
         if !config_path.exists() {
             continue;
         }
-        let content = std::fs::read_to_string(&config_path)
-            .map_err(|e| format!("Cannot read team config {}/config.json for integrity check: {}", dir_name, e))?;
+        let content = std::fs::read_to_string(&config_path).map_err(|e| {
+            format!(
+                "Cannot read team config {}/config.json for integrity check: {}",
+                dir_name, e
+            )
+        })?;
         let config: serde_json::Value = serde_json::from_str(&content)
             .map_err(|e| format!("Cannot parse team config {}/config.json: {}", dir_name, e))?;
         let agents = config
@@ -319,9 +325,7 @@ pub async fn delete_agent_matrix(
 /// List all agent matrices across multiple project paths.
 /// Scans {project}/.ac-new/_agent_*/ and reads Role.md frontmatter.
 #[tauri::command]
-pub async fn list_all_agents(
-    project_paths: Vec<String>,
-) -> Result<Vec<AgentInfo>, String> {
+pub async fn list_all_agents(project_paths: Vec<String>) -> Result<Vec<AgentInfo>, String> {
     let mut agents: Vec<AgentInfo> = Vec::new();
 
     for project_path in &project_paths {
@@ -465,7 +469,10 @@ pub async fn create_workgroup(
 
     // Ensure gitignore protects workgroup clones from parent repo operations
     if let Err(e) = crate::commands::ac_discovery::ensure_ac_new_gitignore(&base) {
-        log::warn!("[create_workgroup] Failed to ensure .ac-new/.gitignore: {}", e);
+        log::warn!(
+            "[create_workgroup] Failed to ensure .ac-new/.gitignore: {}",
+            e
+        );
     }
 
     // Read team config
@@ -503,7 +510,11 @@ pub async fn create_workgroup(
     let team_agents: Vec<String> = team_config
         .get("agents")
         .and_then(|a| a.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let team_repos: Vec<RepoAssignment> = team_config
@@ -516,7 +527,11 @@ pub async fn create_workgroup(
                     let agents = v
                         .get("agents")
                         .and_then(|a| a.as_array())
-                        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|x| x.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     Some(RepoAssignment { url, agents })
                 })
@@ -597,7 +612,11 @@ pub async fn create_workgroup(
         let matrix_dir = if Path::new(agent_path).is_absolute() {
             Path::new(agent_path).to_path_buf()
         } else {
-            base.join(agent_path.trim_start_matches("../").trim_start_matches("./"))
+            base.join(
+                agent_path
+                    .trim_start_matches("../")
+                    .trim_start_matches("./"),
+            )
         };
         if matrix_dir.join("Role.md").exists() {
             context_entries.push(format!("{}/Role.md", identity_rel));
@@ -707,7 +726,11 @@ pub async fn delete_team(
     for wg_dir in &wg_dirs {
         let wg_name = wg_dir.file_name().unwrap_or_default().to_string_lossy();
         if let Err(e) = std::fs::remove_dir_all(wg_dir) {
-            log::warn!("[entity_creation] Failed to delete workgroup {}: {}", wg_name, e);
+            log::warn!(
+                "[entity_creation] Failed to delete workgroup {}: {}",
+                wg_name,
+                e
+            );
         } else {
             log::info!("[entity_creation] Deleted workgroup: {}", wg_name);
         }
@@ -835,7 +858,10 @@ pub async fn update_team(
         Ok(result) => {
             log::info!(
                 "[entity_creation] Synced {} workgroups, {} replicas for team '{}' ({} errors)",
-                result.workgroups_updated, result.replicas_updated, team_name, result.errors.len()
+                result.workgroups_updated,
+                result.replicas_updated,
+                team_name,
+                result.errors.len()
             );
         }
         Err(e) => {
@@ -857,20 +883,14 @@ fn build_session_repo(replica_dir: &Path, rel: &str) -> Option<SessionRepo> {
     let resolved = replica_dir.join(rel);
     let abs = std::fs::canonicalize(&resolved).ok()?;
     let s = abs.to_string_lossy();
-    let source_path = s
-        .strip_prefix(r"\\?\")
-        .unwrap_or(&s)
-        .to_string();
+    let source_path = s.strip_prefix(r"\\?\").unwrap_or(&s).to_string();
     let dir = source_path
         .replace('\\', "/")
         .split('/')
         .next_back()
         .unwrap_or("")
         .to_string();
-    let label = dir
-        .strip_prefix("repo-")
-        .map(str::to_string)
-        .unwrap_or(dir);
+    let label = dir.strip_prefix("repo-").map(str::to_string).unwrap_or(dir);
     Some(SessionRepo {
         label,
         source_path,
@@ -936,8 +956,7 @@ async fn sync_workgroup_repos_inner(
             Ok(entries) => entries
                 .flatten()
                 .filter(|e| {
-                    e.path().is_dir()
-                        && e.file_name().to_string_lossy().starts_with("__agent_")
+                    e.path().is_dir() && e.file_name().to_string_lossy().starts_with("__agent_")
                 })
                 .map(|e| e.path())
                 .collect(),
@@ -1005,8 +1024,7 @@ async fn sync_workgroup_repos_inner(
                 .unwrap_or_default();
 
             let required = ["$AGENTSCOMMANDER_CONTEXT", "$REPOS_WORKSPACE_INFO"];
-            let mut new_context: Vec<String> =
-                required.iter().map(|s| s.to_string()).collect();
+            let mut new_context: Vec<String> = required.iter().map(|s| s.to_string()).collect();
             for entry in &existing_context {
                 if !required.contains(&entry.as_str()) {
                     new_context.push(entry.clone());
@@ -1345,12 +1363,19 @@ fn compute_relative_identity(agent_path: &str, replica_dir: &Path, ac_new_dir: &
         // agent_path is like "../_agent_foo" or "_agent_foo"
         // From replica inside wg-N-team/ we need to go ../../_agent_foo
         let agent_in_ac_new = ac_new_dir.join(
-            agent_path.trim_start_matches("../").trim_start_matches("./"),
+            agent_path
+                .trim_start_matches("../")
+                .trim_start_matches("./"),
         );
         if let Ok(rel) = pathdiff_relative(replica_dir, &agent_in_ac_new) {
             return rel;
         }
-        return format!("../../{}", agent_path.trim_start_matches("../").trim_start_matches("./"));
+        return format!(
+            "../../{}",
+            agent_path
+                .trim_start_matches("../")
+                .trim_start_matches("./")
+        );
     }
 
     // Absolute path — try to make relative
@@ -1433,7 +1458,11 @@ async fn git_clone_async(url: &str, target: &Path) -> Result<(), String> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let trimmed = stderr.trim();
         // Cap error message length to avoid sending huge progress output to frontend
-        let capped = if trimmed.len() > 512 { &trimmed[..512] } else { trimmed };
+        let capped = if trimmed.len() > 512 {
+            &trimmed[..512]
+        } else {
+            trimmed
+        };
         return Err(format!("git clone failed: {}", capped));
     }
 

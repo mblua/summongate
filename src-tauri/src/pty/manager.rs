@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
@@ -199,7 +199,7 @@ fn strip_ansi_csi(s: &str) -> String {
             match chars.peek() {
                 Some(&'[') => {
                     chars.next(); // skip '['
-                    // CSI: skip parameter/intermediate bytes until final byte (0x40..=0x7E)
+                                  // CSI: skip parameter/intermediate bytes until final byte (0x40..=0x7E)
                     while let Some(&next) = chars.peek() {
                         chars.next();
                         if ('@'..='~').contains(&next) {
@@ -209,7 +209,7 @@ fn strip_ansi_csi(s: &str) -> String {
                 }
                 Some(&']') => {
                     chars.next(); // skip ']'
-                    // OSC: consume until BEL (\x07) or ST (ESC \)
+                                  // OSC: consume until BEL (\x07) or ST (ESC \)
                     while let Some(&ch) = chars.peek() {
                         if ch == '\x07' {
                             chars.next();
@@ -229,7 +229,7 @@ fn strip_ansi_csi(s: &str) -> String {
                 }
                 Some(&'P') => {
                     chars.next(); // skip 'P'
-                    // DCS: consume until ST (ESC \)
+                                  // DCS: consume until ST (ESC \)
                     while let Some(&ch) = chars.peek() {
                         if ch == '\x1b' {
                             chars.next();
@@ -325,7 +325,9 @@ impl PtyManager {
         };
         command.cwd(cwd);
         command.env("TERM", "xterm-256color");
-        if let Some(git_ceiling_dirs) = crate::config::session_context::git_ceiling_directories_for_session_root(cwd) {
+        if let Some(git_ceiling_dirs) =
+            crate::config::session_context::git_ceiling_directories_for_session_root(cwd)
+        {
             command.env("GIT_CEILING_DIRECTORIES", &git_ceiling_dirs);
             log::info!(
                 "[pty] Applied GIT_CEILING_DIRECTORIES for session cwd {}: {}",
@@ -420,7 +422,8 @@ impl PtyManager {
                         } else {
                             log::info!(
                                 "[idle] SKIPPED activity for {} ({} bytes, escape-only output)",
-                                &id.to_string()[..8], n
+                                &id.to_string()[..8],
+                                n
                             );
                         }
                         scan_response_markers(id, &text, &response_watchers);
@@ -503,11 +506,14 @@ impl PtyManager {
 
         // Broadcast resize to WS clients so browser mirrors can update dimensions
         if let Some(ref bc) = self.ws_broadcaster {
-            bc.broadcast_event("pty_resized", &serde_json::json!({
-                "sessionId": id.to_string(),
-                "cols": cols,
-                "rows": rows,
-            }));
+            bc.broadcast_event(
+                "pty_resized",
+                &serde_json::json!({
+                    "sessionId": id.to_string(),
+                    "cols": cols,
+                    "rows": rows,
+                }),
+            );
         }
 
         Ok(())
@@ -602,12 +608,7 @@ fn scan_response_markers(session_id: Uuid, text: &str, watchers: &ResponseWatche
                 }
 
                 // Write the response file
-                let response_content = watcher
-                    .buffer
-                    .take()
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string();
+                let response_content = watcher.buffer.take().unwrap_or_default().trim().to_string();
 
                 let response_path = watcher.response_dir.join(format!("{}.json", rid));
                 if let Err(e) = std::fs::create_dir_all(&watcher.response_dir) {
@@ -686,4 +687,3 @@ fn scan_response_markers(session_id: Uuid, text: &str, watchers: &ResponseWatche
         }
     }
 }
-

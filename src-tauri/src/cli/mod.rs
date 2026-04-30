@@ -40,7 +40,7 @@ pub enum Commands {
 /// Attach to parent console on Windows release builds so CLI output is visible.
 #[cfg(target_os = "windows")]
 pub fn attach_parent_console() {
-    use windows_sys::Win32::System::Console::{AttachConsole, AllocConsole, ATTACH_PARENT_PROCESS};
+    use windows_sys::Win32::System::Console::{AllocConsole, AttachConsole, ATTACH_PARENT_PROCESS};
     unsafe {
         if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
             AllocConsole();

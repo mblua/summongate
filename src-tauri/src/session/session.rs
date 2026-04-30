@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::config::settings::WindowGeometry;
+
 /// Mangle a CWD path the same way Claude Code does for its project directories.
 /// Non-alphanumeric, non-hyphen characters are replaced with '-'.
 /// Used by session creation (--continue detection) and the JSONL watcher.
@@ -87,6 +89,24 @@ pub struct Session {
     /// Used by the Telegram bridge to choose JSONL watcher vs PTY pipeline.
     #[serde(default)]
     pub is_claude: bool,
+    /// True while this session has a live detached window (or is marked to re-spawn
+    /// one on next launch). Source of truth for persistence — `snapshot_sessions`
+    /// reads this directly, NOT from `DetachedSessionsState`.
+    ///
+    /// Mutated ONLY by:
+    ///   - `detach_terminal_inner` → true (after window build + session recheck)
+    ///   - `attach_terminal` → false (before emitting `terminal_attached`)
+    ///
+    /// The `WindowEvent::Destroyed` handler at `lib.rs` does NOT touch this field
+    /// (see plan §A3.12 NEW-3 + §10 rule) — it only clears `DetachedSessionsState`
+    /// and emits `terminal_attached` for frontend sync.
+    #[serde(default)]
+    pub was_detached: bool,
+    /// Last-known geometry of this session's detached window. Written on drag/resize
+    /// via `set_detached_geometry`; read at spawn time by `detach_terminal_inner`
+    /// (including the Phase 3 restore path).
+    #[serde(default)]
+    pub detached_geometry: Option<WindowGeometry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -128,6 +148,13 @@ pub struct SessionInfo {
     pub token: String,
     #[serde(default)]
     pub is_claude: bool,
+    #[serde(default)]
+    pub was_detached: bool,
+    /// Not serialized to the frontend — internal carrier for `snapshot_sessions`
+    /// so persistence can read the last-known detached-window geometry without a
+    /// second lock round-trip through `SessionManager::get_session`.
+    #[serde(skip)]
+    pub detached_geometry: Option<WindowGeometry>,
 }
 
 impl From<&Session> for SessionInfo {
@@ -150,6 +177,8 @@ impl From<&Session> for SessionInfo {
             is_coordinator: s.is_coordinator,
             token: s.token.to_string(),
             is_claude: s.is_claude,
+            was_detached: s.was_detached,
+            detached_geometry: s.detached_geometry.clone(),
         }
     }
 }
@@ -178,6 +207,8 @@ mod tests {
             git_repos_gen: 0,
             token: Uuid::nil(),
             is_claude: false,
+            was_detached: false,
+            detached_geometry: None,
         }
     }
 

@@ -29,7 +29,15 @@ pub fn spawn_watch_task(
     app: tauri::AppHandle,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        watch_loop(cwd, bot_token, chat_id, session_id.clone(), cancel, app.clone()).await;
+        watch_loop(
+            cwd,
+            bot_token,
+            chat_id,
+            session_id.clone(),
+            cancel,
+            app.clone(),
+        )
+        .await;
         log::info!("[JSONL_EXIT] Watcher task ended for session {}", session_id);
     })
 }
@@ -80,7 +88,11 @@ fn extract_assistant_text(line: &str) -> Option<String> {
     match content {
         serde_json::Value::String(s) => {
             let trimmed = s.trim();
-            if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
         }
         serde_json::Value::Array(arr) => {
             let mut texts = Vec::new();
@@ -95,7 +107,11 @@ fn extract_assistant_text(line: &str) -> Option<String> {
                     }
                 }
             }
-            if texts.is_empty() { None } else { Some(texts.join("\n")) }
+            if texts.is_empty() {
+                None
+            } else {
+                Some(texts.join("\n"))
+            }
         }
         _ => None,
     }
@@ -173,7 +189,10 @@ async fn watch_loop(
     app: tauri::AppHandle,
 ) {
     let project_dir = match dirs::home_dir() {
-        Some(home) => home.join(".claude").join("projects").join(mangle_cwd_for_claude(&cwd)),
+        Some(home) => home
+            .join(".claude")
+            .join("projects")
+            .join(mangle_cwd_for_claude(&cwd)),
         None => {
             log::error!("[JSONL_ERR] Cannot resolve home directory — JSONL watcher dormant");
             // Stay alive but dormant until cancelled
@@ -321,8 +340,14 @@ async fn watch_loop(
     }
     if !buffer.is_empty() {
         flush_buffer(
-            &mut buffer, &client, &token, chat_id,
-            &session_id, &app, &mut logger, &mut diag,
+            &mut buffer,
+            &client,
+            &token,
+            chat_id,
+            &session_id,
+            &app,
+            &mut logger,
+            &mut diag,
             true,
         )
         .await;

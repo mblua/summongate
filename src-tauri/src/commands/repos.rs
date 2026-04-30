@@ -35,7 +35,11 @@ fn detect_agents(repo_path: &Path) -> Vec<String> {
 /// Always uses forward slash as separator regardless of OS.
 pub fn derive_repo_name(path: &Path) -> Option<String> {
     let file_name = path.file_name().and_then(|n| n.to_str())?;
-    let name = match path.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()) {
+    let name = match path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+    {
         Some(parent) => format!("{}/{}", parent, file_name),
         None => file_name.to_string(),
     };

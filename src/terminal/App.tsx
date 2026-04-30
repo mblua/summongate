@@ -3,6 +3,7 @@ import type { UnlistenFn } from "../shared/transport";
 import { isTauri } from "../shared/platform";
 import {
   SessionAPI,
+  WindowAPI,
   onSessionSwitched,
   onSessionCreated,
   onSessionDestroyed,
@@ -11,7 +12,7 @@ import {
 } from "../shared/ipc";
 import { registerShortcuts, unregisterShortcuts } from "../shared/shortcuts";
 import { initZoom } from "../shared/zoom";
-import { initWindowGeometry } from "../shared/window-geometry";
+import { initWindowGeometry, initDetachedWindowGeometry } from "../shared/window-geometry";
 import { settingsStore } from "../shared/stores/settings";
 import { terminalStore } from "./stores/terminal";
 import Titlebar from "./components/Titlebar";
@@ -23,6 +24,12 @@ import "./styles/terminal.css";
 interface TerminalAppProps {
   lockedSessionId?: string;
   detached?: boolean;
+  /**
+   * True when mounted inside MainApp's unified layout. Skips titlebar
+   * render, window-level initializers, and redundant theme listener
+   * (DW.2 + DW.5 + Arb-4).
+   */
+  embedded?: boolean;
 }
 
 const TerminalApp: Component<TerminalAppProps> = (props) => {
@@ -61,8 +68,59 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
   onMount(async () => {
     document.documentElement.classList.add("light-theme");
     shortcutHandler = registerShortcuts();
-    cleanupZoom = await initZoom("terminal");
-    cleanupGeometry = await initWindowGeometry("terminal");
+
+    // Register destroy listener FIRST to catch any destroy event fired
+    // during the async awaits below (A2.3.G7 mount-race window).
+    unlisteners.push(
+      await onSessionDestroyed(async ({ id }) => {
+        if (props.lockedSessionId && id === props.lockedSessionId) {
+          // Our locked session was destroyed, close this detached window.
+          // R.2 discipline: destroy() not close() so onCloseRequested is
+          // not fired (avoids looping into attach_terminal on a dead session).
+          if (isTauri) {
+            const { getCurrentWindow } = await import("@tauri-apps/api/window");
+            getCurrentWindow().destroy();
+          }
+          return;
+        }
+        if (!props.lockedSessionId) {
+          await loadActiveSession();
+        }
+      })
+    );
+
+    // Detached-window X → re-attach to main, not destroy (plan §A2.2.G4 / G.13).
+    // Register as early as possible in onMount so the race window from first
+    // paint to handler-registered is minimized. If attach fails (session
+    // destroyed mid-flight, backend command error, etc.), fall back to
+    // destroying the window so the user isn't stuck.
+    if (isTauri && props.detached && props.lockedSessionId) {
+      const sessionId = props.lockedSessionId;
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const win = getCurrentWindow();
+      const unlistenCloseRequested = await win.onCloseRequested(async (e) => {
+        e.preventDefault();
+        try {
+          await WindowAPI.attach(sessionId);
+        } catch (err) {
+          console.error("[detached] attach failed during close; destroying window:", err);
+          try { await win.destroy(); } catch { /* best-effort */ }
+        }
+      });
+      unlisteners.push(unlistenCloseRequested);
+    }
+
+    // Window-level initializers — skipped when embedded (main owns these).
+    if (!props.embedded) {
+      // Detached windows use "detached" (mapped to terminalZoom in zoomKeyMap).
+      cleanupZoom = await initZoom(props.detached ? "detached" : "terminal");
+      if (props.detached && props.lockedSessionId) {
+        // Per-session geometry persistence (plan §A2.4.Arb1).
+        cleanupGeometry = await initDetachedWindowGeometry(props.lockedSessionId);
+      } else {
+        cleanupGeometry = await initWindowGeometry("terminal");
+      }
+    }
     settingsStore.load();
     await loadActiveSession();
 
@@ -104,22 +162,6 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
     }
 
     unlisteners.push(
-      await onSessionDestroyed(async ({ id }) => {
-        if (props.lockedSessionId && id === props.lockedSessionId) {
-          // Our locked session was destroyed, close this detached window
-          if (isTauri) {
-            const { getCurrentWindow } = await import("@tauri-apps/api/window");
-            getCurrentWindow().close();
-          }
-          return;
-        }
-        if (!props.lockedSessionId) {
-          await loadActiveSession();
-        }
-      })
-    );
-
-    unlisteners.push(
       await onSessionRenamed(({ id, name }) => {
         if (id === terminalStore.activeSessionId) {
           terminalStore.setActiveSession(id, name);
@@ -127,16 +169,19 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       })
     );
 
-    // Theme sync: follow sidebar theme toggle
-    unlisteners.push(
-      await onThemeChanged(({ light }) => {
-        if (light) {
-          document.documentElement.classList.add("light-theme");
-        } else {
-          document.documentElement.classList.remove("light-theme");
-        }
-      })
-    );
+    // Theme sync: follow sidebar theme toggle (redundant in embedded mode —
+    // sidebar's toggle already flips the shared documentElement classList).
+    if (!props.embedded) {
+      unlisteners.push(
+        await onThemeChanged(({ light }) => {
+          if (light) {
+            document.documentElement.classList.add("light-theme");
+          } else {
+            document.documentElement.classList.remove("light-theme");
+          }
+        })
+      );
+    }
   });
 
   onCleanup(() => {
@@ -148,7 +193,9 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
 
   return (
     <div class="terminal-layout">
-      <Titlebar detached={props.detached} />
+      <Show when={!props.embedded}>
+        <Titlebar detached={props.detached} lockedSessionId={props.lockedSessionId} />
+      </Show>
       <LastPrompt sessionId={props.lockedSessionId} />
       <Show
         when={terminalStore.activeSessionId}
@@ -170,7 +217,7 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
           </div>
         }
       >
-        <TerminalView />
+        <TerminalView lockedSessionId={props.lockedSessionId} />
       </Show>
       <StatusBar detached={props.detached} />
     </div>

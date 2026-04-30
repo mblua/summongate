@@ -129,7 +129,6 @@ fn codex_tokens_have_resume(tokens: &[&str], start: usize) -> bool {
     false
 }
 
-
 fn gemini_tokens_have_resume(tokens: &[&str], start: usize) -> bool {
     let mut idx = start;
     while idx < tokens.len() {
@@ -401,7 +400,12 @@ pub async fn create_session_inner(
             false
         }
     };
-    if should_inject_continue(is_claude, skip_auto_resume, claude_project_exists, &full_cmd) {
+    if should_inject_continue(
+        is_claude,
+        skip_auto_resume,
+        claude_project_exists,
+        &full_cmd,
+    ) {
         if let Some(ref aid) = agent_id {
             if executable_basename(&shell) == "cmd" {
                 if let Some(last) = shell_args.last_mut() {
@@ -437,7 +441,6 @@ pub async fn create_session_inner(
             }
         }
     }
-
 
     let materialized_context_path = if let Some(target) = context_target {
         match crate::config::session_context::materialize_agent_context_file(&cwd, target) {
@@ -537,8 +540,7 @@ pub async fn create_session_inner(
                 }
             }
 
-            let cred_block =
-                crate::pty::credentials::build_credentials_block(&token, &cwd_clone);
+            let cred_block = crate::pty::credentials::build_credentials_block(&token, &cwd_clone);
 
             match crate::pty::inject::inject_text_into_session(
                 &app_clone,
@@ -568,12 +570,9 @@ pub async fn create_session_inner(
     let info = SessionInfo::from(&session);
     let _ = app.emit("session_created", info.clone());
 
-    // Show the terminal window when a session is created
-    if let Some(win) = app.get_webview_window("terminal") {
-        if let Err(e) = win.show() {
-            log::warn!("[session] Failed to show terminal window: {}", e);
-        }
-    }
+    // 0.8.0: removed the "Show the terminal window when a session is created" branch.
+    // Under the unified-window model the main window is created up-front and stays
+    // visible; session creation has no window-show responsibility.
 
     // Save lastCodingAgent + codingAgents (skip for temp sessions)
     if !skip_tooling_save {
@@ -762,28 +761,62 @@ pub async fn destroy_session_inner(app: &AppHandle, uuid: Uuid) -> Result<(), St
 
     let _ = app.emit("session_destroyed", serde_json::json!({ "id": id }));
 
-    // Close any detached terminal window for this session
+    // Close any detached terminal window for this session.
+    // R.2: `destroy()` — not `close()` — so the Phase 2 `onCloseRequested` handler
+    // on the detached window is bypassed. Triggering the handler here would call
+    // `attach_terminal` on a session that's been destroyed (benign no-op per
+    // A2.2.G5) but emits extra window-lifecycle noise for no gain.
     let detached_label = format!("terminal-{}", id.replace('-', ""));
     if let Some(detached_win) = app.get_webview_window(&detached_label) {
-        let _ = detached_win.close();
+        let _ = detached_win.destroy();
     }
 
-    // If a new session was auto-activated, emit switch event
+    // If a new session was auto-activated, emit switch event.
+    // Plan §A2.2.G2: the manager's `order.first()` choice is unaware of
+    // `DetachedSessionsState`; if the next-active is a detached session, emitting
+    // its id to main would cause main + the detached window to both own an xterm
+    // for the same session (duplicate display + keystroke routing ambiguity). Filter
+    // here — if detached, walk the list for the first non-detached session instead.
     if let Some(new_id) = new_active {
-        let _ = app.emit(
-            "session_switched",
-            serde_json::json!({ "id": new_id.to_string() }),
-        );
-    }
-
-    // Hide the terminal window when no sessions remain
-    if mgr.list_sessions().await.is_empty() {
-        if let Some(win) = app.get_webview_window("terminal") {
-            if let Err(e) = win.hide() {
-                log::warn!("[session] Failed to hide terminal window: {}", e);
+        let is_detached = {
+            let detached = app.state::<DetachedSessionsState>();
+            let set = detached.lock().unwrap();
+            set.contains(&new_id)
+        };
+        if is_detached {
+            let sessions = mgr.list_sessions().await;
+            let fallback = {
+                let detached = app.state::<DetachedSessionsState>();
+                let set = detached.lock().unwrap();
+                sessions
+                    .iter()
+                    .find_map(|s| Uuid::parse_str(&s.id).ok().filter(|u| !set.contains(u)))
+            };
+            if let Some(fb) = fallback {
+                let _ = mgr.switch_session(fb).await;
+                let _ = app.emit(
+                    "session_switched",
+                    serde_json::json!({ "id": fb.to_string() }),
+                );
+            } else {
+                mgr.clear_active().await;
+                let _ = app.emit(
+                    "session_switched",
+                    serde_json::json!({ "id": serde_json::Value::Null }),
+                );
             }
+        } else {
+            let _ = app.emit(
+                "session_switched",
+                serde_json::json!({ "id": new_id.to_string() }),
+            );
         }
     }
+
+    // 0.8.0: removed the "Hide the terminal window when no sessions remain" branch.
+    // Under the unified-window model the main window stays visible (sidebar remains
+    // usable for creating/opening sessions); the embedded terminal pane shows an
+    // empty-state placeholder when no active session exists.
 
     Ok(())
 }
@@ -834,15 +867,7 @@ pub async fn restart_session(
     let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
 
     // 1. Read config from existing session BEFORE destroying it
-    let (
-        shell,
-        shell_args,
-        cwd,
-        name,
-        stored_agent_id,
-        stored_agent_label,
-        git_repos,
-    ) = {
+    let (shell, shell_args, cwd, name, stored_agent_id, stored_agent_label, git_repos) = {
         let mgr = session_mgr.read().await;
         let session = mgr.get_session(uuid).await.ok_or("Session not found")?;
         (
@@ -956,15 +981,18 @@ pub async fn switch_session(
     let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
 
     // If this session is detached, focus its window instead of switching the main terminal
-    {
+    let is_detached = {
         let detached_set = detached.lock().unwrap();
-        if detached_set.contains(&uuid) {
-            let label = format!("terminal-{}", id.replace('-', ""));
-            if let Some(win) = app.get_webview_window(&label) {
-                let _ = win.set_focus();
-            }
-            return Ok(());
+        detached_set.contains(&uuid)
+    };
+    if is_detached {
+        let mgr = session_mgr.read().await;
+        mgr.clear_active_if(uuid).await;
+        let label = format!("terminal-{}", id.replace('-', ""));
+        if let Some(win) = app.get_webview_window(&label) {
+            let _ = win.set_focus();
         }
+        return Ok(());
     }
 
     let mgr = session_mgr.read().await;
@@ -1155,9 +1183,21 @@ fn resolve_agent_from_shell(
 #[tauri::command]
 pub async fn get_active_session(
     session_mgr: State<'_, Arc<tokio::sync::RwLock<SessionManager>>>,
+    detached: State<'_, DetachedSessionsState>,
 ) -> Result<Option<String>, String> {
     let mgr = session_mgr.read().await;
-    Ok(mgr.get_active().await.map(|id| id.to_string()))
+    let Some(active_id) = mgr.get_active().await else {
+        return Ok(None);
+    };
+    let is_detached = {
+        let set = detached.lock().unwrap();
+        set.contains(&active_id)
+    };
+    if is_detached {
+        mgr.clear_active_if(active_id).await;
+        return Ok(None);
+    }
+    Ok(Some(active_id.to_string()))
 }
 
 /// Create or reuse a root agent session.
@@ -1337,30 +1377,69 @@ mod tests {
     fn inject_gemini_resume_prefixes_direct_gemini_args() {
         let mut args = vec!["-m".to_string(), "gpt-5".to_string()];
         assert!(super::inject_gemini_resume("gemini", &mut args));
-        assert_eq!(args, vec!["--resume".to_string(), "latest".to_string(), "-m".to_string(), "gpt-5".to_string()]);
+        assert_eq!(
+            args,
+            vec![
+                "--resume".to_string(),
+                "latest".to_string(),
+                "-m".to_string(),
+                "gpt-5".to_string()
+            ]
+        );
     }
 
     #[test]
     fn inject_gemini_resume_inserts_into_cmd_tokenized_wrapper() {
-        let mut args = vec!["/C".to_string(), "gemini".to_string(), "-m".to_string(), "gpt-5".to_string()];
+        let mut args = vec![
+            "/C".to_string(),
+            "gemini".to_string(),
+            "-m".to_string(),
+            "gpt-5".to_string(),
+        ];
         assert!(super::inject_gemini_resume("cmd.exe", &mut args));
-        assert_eq!(args, vec!["/C".to_string(), "gemini".to_string(), "--resume".to_string(), "latest".to_string(), "-m".to_string(), "gpt-5".to_string()]);
+        assert_eq!(
+            args,
+            vec![
+                "/C".to_string(),
+                "gemini".to_string(),
+                "--resume".to_string(),
+                "latest".to_string(),
+                "-m".to_string(),
+                "gpt-5".to_string()
+            ]
+        );
     }
 
     #[test]
     fn inject_gemini_resume_inserts_into_embedded_cmd_wrapper() {
         let mut args = vec!["/K".to_string(), "git pull && gemini -m gpt-5".to_string()];
         assert!(super::inject_gemini_resume("cmd.exe", &mut args));
-        assert_eq!(args, vec!["/K".to_string(), "git pull && gemini --resume latest -m gpt-5".to_string()]);
+        assert_eq!(
+            args,
+            vec![
+                "/K".to_string(),
+                "git pull && gemini --resume latest -m gpt-5".to_string()
+            ]
+        );
     }
 
     #[test]
     fn inject_gemini_resume_skips_existing_resume_tokens() {
-        let mut args = vec!["--resume".to_string(), "latest".to_string(), "gpt-5".to_string()];
+        let mut args = vec![
+            "--resume".to_string(),
+            "latest".to_string(),
+            "gpt-5".to_string(),
+        ];
         assert!(!super::inject_gemini_resume("gemini", &mut args));
-        assert_eq!(args, vec!["--resume".to_string(), "latest".to_string(), "gpt-5".to_string()]);
+        assert_eq!(
+            args,
+            vec![
+                "--resume".to_string(),
+                "latest".to_string(),
+                "gpt-5".to_string()
+            ]
+        );
     }
-
 
     #[test]
     fn inject_codex_resume_prefixes_direct_codex_args() {
@@ -1523,7 +1602,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_actual_agent_falls_back_to_detected_label_when_validated_match_has_no_stored_label() {
+    fn resolve_actual_agent_falls_back_to_detected_label_when_validated_match_has_no_stored_label()
+    {
         let settings = test_settings();
 
         let resolved = resolve_actual_agent(
@@ -1559,13 +1639,7 @@ mod tests {
     fn resolve_actual_agent_uses_shell_resolved_agent_on_mismatch() {
         let settings = test_settings();
 
-        let resolved = resolve_actual_agent(
-            "claude",
-            &[],
-            Some("codex"),
-            Some("Codex"),
-            &settings,
-        );
+        let resolved = resolve_actual_agent("claude", &[], Some("codex"), Some("Codex"), &settings);
 
         assert_eq!(
             resolved,
@@ -1617,7 +1691,10 @@ mod tests {
     #[test]
     fn should_inject_continue_returns_false_when_continue_already_present() {
         assert!(!should_inject_continue(
-            true, false, true, "claude --continue"
+            true,
+            false,
+            true,
+            "claude --continue"
         ));
     }
 
@@ -1631,7 +1708,10 @@ mod tests {
         // R2.4 / G2: the GNU long-option-with-value form must also suppress
         // re-injection.
         assert!(!should_inject_continue(
-            true, false, true, "claude --continue=somevalue"
+            true,
+            false,
+            true,
+            "claude --continue=somevalue"
         ));
     }
 
@@ -1639,7 +1719,10 @@ mod tests {
     fn should_inject_continue_returns_false_when_uppercase_continue_present() {
         // D4 #6: case-insensitivity regression fence.
         assert!(!should_inject_continue(
-            true, false, true, "claude --CONTINUE"
+            true,
+            false,
+            true,
+            "claude --CONTINUE"
         ));
     }
 
@@ -1653,7 +1736,10 @@ mod tests {
     fn should_inject_continue_returns_false_when_continue_in_cmd_wrapper() {
         // D4 #8: token-level scan, not arg-index scan.
         assert!(!should_inject_continue(
-            true, false, true, "cmd /C claude --continue"
+            true,
+            false,
+            true,
+            "cmd /C claude --continue"
         ));
     }
 
@@ -1662,7 +1748,10 @@ mod tests {
         // D4 #9: token-equality fence — `--continued-mode` is NOT `--continue`.
         // Guards against a future regression to substring matching.
         assert!(should_inject_continue(
-            true, false, true, "claude --continued-mode something"
+            true,
+            false,
+            true,
+            "claude --continued-mode something"
         ));
     }
 }

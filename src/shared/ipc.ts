@@ -13,6 +13,7 @@ import type {
   AgentInfo,
   AcDiscoveryResult,
   TeamConfigResult,
+  WindowGeometry,
 } from "./types";
 
 export interface SessionRepoInput {
@@ -176,13 +177,45 @@ export const WindowAPI = {
   detach: (sessionId: string) =>
     transport.invoke<string>("detach_terminal", { sessionId }),
 
-  closeDetached: (sessionId: string) =>
-    transport.invoke<void>("close_detached_terminal", { sessionId }),
+  /**
+   * Re-attach a detached session to the main window. Closes the detached
+   * window, removes the session from DetachedSessionsState, switches main
+   * to that session. Rust contract (plan §A2.2.G5): silent no-op if the
+   * session was already destroyed.
+   */
+  attach: (sessionId: string) =>
+    transport.invoke<void>("attach_terminal", { sessionId }),
+
+  /**
+   * Stateless authoritative list of detached session UUIDs. Used for
+   * hydrating sessionsStore.detachedIds on SidebarApp mount (G.8 race
+   * safety).
+   */
+  listDetached: () =>
+    transport.invoke<string[]>("list_detached_sessions"),
+
+  /**
+   * Persist a detached window's geometry to its PersistedSession so it
+   * re-spawns at the same position+size after an app restart. Per plan
+   * §A2.4.Arb1 (R.6 option a) — backend stores the value on
+   * PersistedSession.detached_geometry and auto-GCs when the session is
+   * destroyed.
+   */
+  setDetachedGeometry: (sessionId: string, geometry: WindowGeometry) =>
+    transport.invoke<void>("set_detached_geometry", { sessionId, geometry }),
 
   openInExplorer: (path: string) =>
     transport.invoke<void>("open_in_explorer", { path }),
 
-  ensureTerminal: () => transport.invoke<void>("ensure_terminal_window"),
+  /**
+   * Focus the main unified window (raising it, recreating if missing).
+   * Rust command renamed from `ensure_terminal_window` → `focus_main_window`
+   * in v0.8 (dev-rust owns that rename). Per plan §A2.4.Arb3 / R.4.
+   */
+  focusMain: () => transport.invoke<void>("focus_main_window"),
+
+  /** @deprecated use focusMain(); back-compat alias, drop at v0.9 */
+  ensureTerminal: () => transport.invoke<void>("focus_main_window"),
 };
 
 // Telegram Bridge API
@@ -209,6 +242,21 @@ export function onPtyResized(
     "pty_resized",
     callback
   );
+}
+
+export function onTerminalDetached(
+  callback: (data: { sessionId: string; windowLabel: string }) => void
+): Promise<UnlistenFn> {
+  return transport.listen<{ sessionId: string; windowLabel: string }>(
+    "terminal_detached",
+    callback
+  );
+}
+
+export function onTerminalAttached(
+  callback: (data: { sessionId: string }) => void
+): Promise<UnlistenFn> {
+  return transport.listen<{ sessionId: string }>("terminal_attached", callback);
 }
 
 export function onSessionGitRepos(

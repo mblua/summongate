@@ -1,19 +1,42 @@
-import { Component, Show, createSignal, onMount, onCleanup } from "solid-js";
+import { Component, Show, For, createSignal, onMount, onCleanup } from "solid-js";
 import iconUrl from "../../assets/icon-16.png";
-import { applyWindowLayout } from "../../shared/window-layout";
+import { SettingsAPI } from "../../shared/ipc";
 import { isTauri } from "../../shared/platform";
+import type { MainSidebarSide } from "../../shared/types";
 
 declare const __APP_VERSION__: string;
 const APP_VERSION = __APP_VERSION__;
 
+const SIDEBAR_WIDTH_PRESETS: Array<{ label: string; width: number }> = [
+  { label: "Narrow", width: 200 },
+  { label: "Default", width: 280 },
+  { label: "Wide", width: 360 },
+];
+
+const SIDEBAR_SIDE_PRESETS: Array<{ label: string; side: MainSidebarSide }> = [
+  { label: "Left", side: "left" },
+  { label: "Right", side: "right" },
+];
+
 const Titlebar: Component = () => {
   const [layoutOpen, setLayoutOpen] = createSignal(false);
   const [instanceLabel, setInstanceLabel] = createSignal("");
+  const [currentSide, setCurrentSide] = createSignal<MainSidebarSide>("right");
 
   const handleMinimize = async () => {
     if (!isTauri) return;
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     getCurrentWindow().minimize();
+  };
+  const handleMaximize = async () => {
+    if (!isTauri) return;
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    if (await win.isMaximized()) {
+      win.unmaximize();
+    } else {
+      win.maximize();
+    }
   };
   const handleClose = async () => {
     if (!isTauri) return;
@@ -21,12 +44,26 @@ const Titlebar: Component = () => {
     getCurrentWindow().close();
   };
 
-  const handleLayout = async (side: "left" | "right") => {
+  const applyWidthPreset = async (width: number) => {
     setLayoutOpen(false);
+    window.dispatchEvent(new CustomEvent("main-sidebar-width-change", { detail: { width } }));
     try {
-      await applyWindowLayout(side);
+      const settings = await SettingsAPI.get();
+      await SettingsAPI.update({ ...settings, mainSidebarWidth: width });
     } catch (err) {
-      console.error("applyLayout failed:", err);
+      console.error("applyWidthPreset failed:", err);
+    }
+  };
+
+  const applySidePreset = async (side: MainSidebarSide) => {
+    setLayoutOpen(false);
+    setCurrentSide(side);
+    window.dispatchEvent(new CustomEvent("main-sidebar-side-change", { detail: { side } }));
+    try {
+      const settings = await SettingsAPI.get();
+      await SettingsAPI.update({ ...settings, mainSidebarSide: side });
+    } catch (err) {
+      console.error("applySidePreset failed:", err);
     }
   };
 
@@ -39,6 +76,10 @@ const Titlebar: Component = () => {
   onMount(async () => {
     document.addEventListener("click", handleClickOutside);
     onCleanup(() => document.removeEventListener("click", handleClickOutside));
+    try {
+      const settings = await SettingsAPI.get();
+      setCurrentSide(settings.mainSidebarSide === "left" ? "left" : "right");
+    } catch { /* keep default */ }
     if (isTauri) {
       try {
         const { invoke } = await import("@tauri-apps/api/core");
@@ -70,26 +111,47 @@ const Titlebar: Component = () => {
           <button
             class={`titlebar-btn titlebar-btn-layout ${layoutOpen() ? "open" : ""}`}
             onClick={(e) => { e.stopPropagation(); setLayoutOpen(!layoutOpen()); }}
-            title="Layout"
+            title="Sidebar layout"
           >
             &#x2637;
           </button>
           {layoutOpen() && (
             <div class="layout-dropdown">
-              <button class="layout-option" onClick={() => handleLayout("right")}>
-                <span class="layout-option-icon">&#x25E8;</span>
-                Sidebar Right
-              </button>
-              <button class="layout-option" onClick={() => handleLayout("left")}>
-                <span class="layout-option-icon">&#x25E7;</span>
-                Sidebar Left
-              </button>
+              <div class="layout-section-label">Side</div>
+              <div class="layout-segmented" role="group" aria-label="Sidebar side">
+                <For each={SIDEBAR_SIDE_PRESETS}>
+                  {(preset) => (
+                    <button
+                      class={`layout-segment ${currentSide() === preset.side ? "active" : ""}`}
+                      onClick={() => applySidePreset(preset.side)}
+                      aria-pressed={currentSide() === preset.side}
+                    >
+                      {preset.label}
+                    </button>
+                  )}
+                </For>
+              </div>
+              <div class="layout-section-label">Width</div>
+              <For each={SIDEBAR_WIDTH_PRESETS}>
+                {(preset) => (
+                  <button
+                    class="layout-option"
+                    onClick={() => applyWidthPreset(preset.width)}
+                  >
+                    <span class="layout-option-icon">&#x2630;</span>
+                    {preset.label} — {preset.width}px
+                  </button>
+                )}
+              </For>
             </div>
           )}
         </div>
         <Show when={isTauri}>
           <button class="titlebar-btn" onClick={handleMinimize} title="Minimize">
             &#x2014;
+          </button>
+          <button class="titlebar-btn" onClick={handleMaximize} title="Maximize">
+            &#x25A1;
           </button>
           <button
             class="titlebar-btn titlebar-btn-close"

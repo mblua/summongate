@@ -16,7 +16,10 @@ use crate::session::session::SessionRepo;
 /// Flow: read config.json → get lastCodingAgent ID → get its `app` label
 /// (e.g. "Claude Code") → find the agent in our settings with that label
 /// → return OUR agent's ID. This decouples discovery from foreign agent IDs.
-fn read_preferred_agent_id(dir: &Path, instance_agents: &[crate::config::settings::AgentConfig]) -> Option<String> {
+fn read_preferred_agent_id(
+    dir: &Path,
+    instance_agents: &[crate::config::settings::AgentConfig],
+) -> Option<String> {
     let config_path = dir.join("config.json");
     let content = std::fs::read_to_string(&config_path).ok()?;
     let v: serde_json::Value = serde_json::from_str(&content).ok()?;
@@ -24,17 +27,22 @@ fn read_preferred_agent_id(dir: &Path, instance_agents: &[crate::config::setting
 
     // Get the foreign agent ID and its app label
     let foreign_id = tooling.get("lastCodingAgent")?.as_str()?;
-    let app_label = tooling.get("codingAgents")?
+    let app_label = tooling
+        .get("codingAgents")?
         .get(foreign_id)?
         .get("app")?
         .as_str()?;
 
     // Match by label against this instance's configured agents
-    let matches: Vec<_> = instance_agents.iter().filter(|a| a.label == app_label).collect();
+    let matches: Vec<_> = instance_agents
+        .iter()
+        .filter(|a| a.label == app_label)
+        .collect();
     if matches.len() > 1 {
         log::warn!(
             "[discovery] Multiple agents with label '{}' — using first match (id={})",
-            app_label, matches[0].id
+            app_label,
+            matches[0].id
         );
     }
     let local_agent = matches.into_iter().next()?;
@@ -132,9 +140,7 @@ fn extract_origin_project(identity_abs_path: &std::path::Path) -> Option<String>
 /// - project_folder = directory containing .ac-new/
 /// - agent_name = folder name with "_agent_" prefix stripped
 fn agent_display_name(project_folder: &str, dir_name: &str) -> String {
-    let agent_name = dir_name
-        .strip_prefix("_agent_")
-        .unwrap_or(dir_name);
+    let agent_name = dir_name.strip_prefix("_agent_").unwrap_or(dir_name);
     format!("{}/{}", project_folder, agent_name)
 }
 
@@ -150,7 +156,8 @@ fn resolve_agent_ref(project_folder: &str, agent_ref: &str) -> String {
     if trimmed.contains(':') || trimmed.starts_with('/') {
         // Absolute path: extract origin project from folder before .ac-new
         let parts: Vec<&str> = trimmed.split('/').collect();
-        let origin = parts.iter()
+        let origin = parts
+            .iter()
             .position(|p| *p == ".ac-new")
             .and_then(|i| if i > 0 { Some(parts[i - 1]) } else { None })
             .unwrap_or(project_folder);
@@ -252,11 +259,7 @@ impl DiscoveryBranchWatcher {
     /// Update this project's replicas in the watcher. `ac_new_parent_dir` is the directory
     /// that directly contains `.ac-new/` — NOT a grand-parent from `settings.project_paths`.
     /// See the invariant comment on the `replicas` field.
-    pub fn update_replicas_for_project(
-        &self,
-        ac_new_parent_dir: &str,
-        workgroups: &[AcWorkgroup],
-    ) {
+    pub fn update_replicas_for_project(&self, ac_new_parent_dir: &str, workgroups: &[AcWorkgroup]) {
         // Invariant guard: catch mistaken call-site passes (e.g. a `base_path` parent)
         // in dev builds. Release builds log a warn and return to prevent silent corruption.
         let has_ac_new = Path::new(ac_new_parent_dir).join(".ac-new").is_dir();
@@ -304,10 +307,7 @@ impl DiscoveryBranchWatcher {
                             .next_back()
                             .unwrap_or("")
                             .to_string();
-                        let label = dir
-                            .strip_prefix("repo-")
-                            .map(str::to_string)
-                            .unwrap_or(dir);
+                        let label = dir.strip_prefix("repo-").map(str::to_string).unwrap_or(dir);
                         (label, rp.clone())
                     })
                     .collect();
@@ -641,7 +641,11 @@ pub async fn discover_ac_agents(
 
                     let preferred_agent_id = read_preferred_agent_id(&path, &cfg.agents);
 
-                    log::info!("[ac-discovery] agent: dir={:?}, preferred_agent_id={:?}", dir_name, preferred_agent_id);
+                    log::info!(
+                        "[ac-discovery] agent: dir={:?}, preferred_agent_id={:?}",
+                        dir_name,
+                        preferred_agent_id
+                    );
 
                     agents.push(AcAgentMatrix {
                         name: display_name,
@@ -653,11 +657,17 @@ pub async fn discover_ac_agents(
 
                 // Workgroups: wg-*
                 if dir_name.starts_with("wg-") {
-                    let brief = path.join("BRIEF.md")
+                    let brief = path
+                        .join("BRIEF.md")
                         .exists()
                         .then(|| std::fs::read_to_string(path.join("BRIEF.md")).ok())
                         .flatten()
-                        .and_then(|content| content.lines().next().map(|l| l.trim_start_matches("# ").to_string()));
+                        .and_then(|content| {
+                            content
+                                .lines()
+                                .next()
+                                .map(|l| l.trim_start_matches("# ").to_string())
+                        });
 
                     // Find first repo-* directory for CWD
                     let repo_path = std::fs::read_dir(&path)
@@ -689,13 +699,19 @@ pub async fn discover_ac_agents(
                                     .unwrap_or(&wg_dir_name)
                                     .to_string();
 
-                                let replica_config = wg_path.join("config.json")
+                                let replica_config = wg_path
+                                    .join("config.json")
                                     .exists()
-                                    .then(|| std::fs::read_to_string(wg_path.join("config.json")).ok())
+                                    .then(|| {
+                                        std::fs::read_to_string(wg_path.join("config.json")).ok()
+                                    })
                                     .flatten()
-                                    .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok());
+                                    .and_then(|content| {
+                                        serde_json::from_str::<serde_json::Value>(&content).ok()
+                                    });
 
-                                let identity_path = replica_config.as_ref()
+                                let identity_path = replica_config
+                                    .as_ref()
                                     .and_then(|v| v.get("identity")?.as_str().map(String::from));
 
                                 // Resolve identity to determine origin project
@@ -722,19 +738,19 @@ pub async fn discover_ac_agents(
                                 });
 
                                 // Extract repos from config.json and resolve to absolute paths
-                                let repo_paths: Vec<String> = replica_config.as_ref()
+                                let repo_paths: Vec<String> = replica_config
+                                    .as_ref()
                                     .and_then(|v| v.get("repos")?.as_array().cloned())
                                     .unwrap_or_default()
                                     .iter()
                                     .filter_map(|r| r.as_str())
                                     .filter_map(|rel| {
                                         let resolved = wg_path.join(rel);
-                                        std::fs::canonicalize(&resolved).ok()
-                                            .map(|p| {
-                                                let s = p.to_string_lossy();
-                                                // Strip \\?\ UNC prefix that canonicalize adds on Windows
-                                                s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
-                                            })
+                                        std::fs::canonicalize(&resolved).ok().map(|p| {
+                                            let s = p.to_string_lossy();
+                                            // Strip \\?\ UNC prefix that canonicalize adds on Windows
+                                            s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+                                        })
                                     })
                                     .collect();
 
@@ -849,8 +865,7 @@ pub async fn discover_ac_agents(
             let suffix = teams.iter().find(|t| {
                 wg.agents.iter().any(|agent| {
                     t.agents.iter().any(|team_ref| {
-                        team_ref.rsplit('/').next()
-                            .is_some_and(|s| s == agent.name)
+                        team_ref.rsplit('/').next().is_some_and(|s| s == agent.name)
                     })
                 })
             });
@@ -893,7 +908,11 @@ pub async fn discover_ac_agents(
         );
     }
 
-    Ok(AcDiscoveryResult { agents, teams, workgroups })
+    Ok(AcDiscoveryResult {
+        agents,
+        teams,
+        workgroups,
+    })
 }
 
 /// Check if a folder has a .ac-new/ subdirectory.
@@ -945,8 +964,11 @@ pub(crate) fn ensure_ac_new_gitignore(ac_new_dir: &Path) -> Result<(), String> {
 
         if !additions.is_empty() {
             let separator = if content.ends_with('\n') { "" } else { "\n" };
-            std::fs::write(&gitignore_path, format!("{}{}{}", content, separator, additions))
-                .map_err(|e| format!("Failed to update .ac-new/.gitignore: {}", e))?;
+            std::fs::write(
+                &gitignore_path,
+                format!("{}{}{}", content, separator, additions),
+            )
+            .map_err(|e| format!("Failed to update .ac-new/.gitignore: {}", e))?;
         }
     } else {
         let mut content = String::new();
@@ -1050,11 +1072,17 @@ pub async fn discover_project(
 
         // Workgroups: wg-*
         if dir_name.starts_with("wg-") {
-            let brief = entry_path.join("BRIEF.md")
+            let brief = entry_path
+                .join("BRIEF.md")
                 .exists()
                 .then(|| std::fs::read_to_string(entry_path.join("BRIEF.md")).ok())
                 .flatten()
-                .and_then(|content| content.lines().next().map(|l| l.trim_start_matches("# ").to_string()));
+                .and_then(|content| {
+                    content
+                        .lines()
+                        .next()
+                        .map(|l| l.trim_start_matches("# ").to_string())
+                });
 
             let repo_path = std::fs::read_dir(&entry_path)
                 .ok()
@@ -1084,13 +1112,17 @@ pub async fn discover_project(
                             .unwrap_or(&wg_dir_name)
                             .to_string();
 
-                        let replica_config = wg_path.join("config.json")
+                        let replica_config = wg_path
+                            .join("config.json")
                             .exists()
                             .then(|| std::fs::read_to_string(wg_path.join("config.json")).ok())
                             .flatten()
-                            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok());
+                            .and_then(|content| {
+                                serde_json::from_str::<serde_json::Value>(&content).ok()
+                            });
 
-                        let identity_path = replica_config.as_ref()
+                        let identity_path = replica_config
+                            .as_ref()
                             .and_then(|v| v.get("identity")?.as_str().map(String::from));
 
                         // Resolve identity to determine origin project
@@ -1115,18 +1147,18 @@ pub async fn discover_project(
                             read_preferred_agent_id(&wg_path.join(rel), &cfg.agents)
                         });
 
-                        let repo_paths: Vec<String> = replica_config.as_ref()
+                        let repo_paths: Vec<String> = replica_config
+                            .as_ref()
                             .and_then(|v| v.get("repos")?.as_array().cloned())
                             .unwrap_or_default()
                             .iter()
                             .filter_map(|r| r.as_str())
                             .filter_map(|rel| {
                                 let resolved = wg_path.join(rel);
-                                std::fs::canonicalize(&resolved).ok()
-                                    .map(|p| {
-                                        let s = p.to_string_lossy();
-                                        s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
-                                    })
+                                std::fs::canonicalize(&resolved).ok().map(|p| {
+                                    let s = p.to_string_lossy();
+                                    s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+                                })
                             })
                             .collect();
 
@@ -1235,8 +1267,7 @@ pub async fn discover_project(
             let suffix = teams.iter().find(|t| {
                 wg.agents.iter().any(|agent| {
                     t.agents.iter().any(|team_ref| {
-                        team_ref.rsplit('/').next()
-                            .is_some_and(|s| s == agent.name)
+                        team_ref.rsplit('/').next().is_some_and(|s| s == agent.name)
                     })
                 })
             });
@@ -1271,7 +1302,11 @@ pub async fn discover_project(
         );
     }
 
-    Ok(AcDiscoveryResult { agents, teams, workgroups })
+    Ok(AcDiscoveryResult {
+        agents,
+        teams,
+        workgroups,
+    })
 }
 
 /// Read the `context` array from a replica's config.json.
@@ -1311,8 +1346,7 @@ pub async fn set_replica_context_files(path: String, files: Vec<String>) -> Resu
     let mut config: serde_json::Value = if config_path.exists() {
         let content = std::fs::read_to_string(&config_path)
             .map_err(|e| format!("Failed to read config.json: {}", e))?;
-        serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse config.json: {}", e))?
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config.json: {}", e))?
     } else {
         serde_json::json!({})
     };

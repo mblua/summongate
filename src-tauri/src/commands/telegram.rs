@@ -109,14 +109,9 @@ pub async fn telegram_send_test(token: String) -> Result<i64, String> {
         .map(|u| u.chat_id)
         .ok_or_else(|| "No messages found. Send any message to your bot in Telegram first, then click Test again.".to_string())?;
 
-    crate::telegram::api::send_message(
-        &client,
-        &token,
-        chat_id,
-        "agentscommander connected",
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    crate::telegram::api::send_message(&client, &token, chat_id, "agentscommander connected")
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(chat_id)
 }

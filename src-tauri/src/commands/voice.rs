@@ -66,7 +66,12 @@ pub async fn transcribe_audio(
         .map_err(|e| format!("Gemini API request failed: {}", e))?;
 
     let status = resp.status();
-    log::debug!("Gemini request: model={}, audio_size={} bytes, status={}", model, audio_bytes.len(), status);
+    log::debug!(
+        "Gemini request: model={}, audio_size={} bytes, status={}",
+        model,
+        audio_bytes.len(),
+        status
+    );
 
     if !status.is_success() {
         let error_body = resp.text().await.unwrap_or_default();
@@ -87,23 +92,20 @@ pub async fn transcribe_audio(
         .map_err(|e| format!("Failed to read Gemini response body: {}", e))?;
     log::debug!("Gemini raw response: {}", text_body);
 
-    let gemini_resp: GeminiResponse = serde_json::from_str(&text_body)
-        .map_err(|e| {
-            log::error!("Failed to parse Gemini response: {}. Raw body: {}", e, text_body);
-            format!("Failed to parse Gemini response: {}", e)
-        })?;
+    let gemini_resp: GeminiResponse = serde_json::from_str(&text_body).map_err(|e| {
+        log::error!(
+            "Failed to parse Gemini response: {}. Raw body: {}",
+            e,
+            text_body
+        );
+        format!("Failed to parse Gemini response: {}", e)
+    })?;
 
     let text = gemini_resp
         .candidates
         .and_then(|c| c.into_iter().next())
         .and_then(|c| c.content)
-        .and_then(|content| {
-            content
-                .parts
-                .into_iter()
-                .filter_map(|p| p.text)
-                .next()
-        })
+        .and_then(|content| content.parts.into_iter().filter_map(|p| p.text).next())
         .unwrap_or_default()
         .trim()
         .to_string();
@@ -127,7 +129,11 @@ pub async fn voice_transcribe(
     let model = cfg.gemini_model.clone();
     drop(cfg);
 
-    let model = if model.is_empty() { "gemini-2.5-flash".to_string() } else { model };
+    let model = if model.is_empty() {
+        "gemini-2.5-flash".to_string()
+    } else {
+        model
+    };
 
     if api_key.is_empty() {
         return Err("Gemini API key not configured".to_string());

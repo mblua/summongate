@@ -278,6 +278,20 @@ const ProjectPanel: Component = () => {
           }
         };
 
+        const toggleReplicaDetach = async (sessionId: string) => {
+          setReplicaCtxMenu(null);
+          cleanupCtx();
+          try {
+            if (sessionsStore.isDetached(sessionId)) {
+              await WindowAPI.attach(sessionId);
+            } else {
+              await WindowAPI.detach(sessionId);
+            }
+          } catch (e) {
+            console.error("Failed to toggle detached session:", e);
+          }
+        };
+
         const handleProjectContextMenu = (e: MouseEvent) => {
           e.preventDefault();
           e.stopPropagation();
@@ -403,6 +417,7 @@ const ProjectPanel: Component = () => {
           };
           const isLive = () => isSessionLive(session());
           const bridge = () => { const s = session(); return s ? bridgesStore.getBridge(s.id) : undefined; };
+          const isDetached = () => { const s = session(); return s ? sessionsStore.isDetached(s.id) : false; };
           const isRecording = () => { const s = session(); return s ? voiceRecorder.recordingSessionId() === s.id : false; };
           const isProcessing = () => { const s = session(); return s ? voiceRecorder.processingSessionId() === s.id : false; };
           const [showBotMenu, setShowBotMenu] = createSignal(false);
@@ -426,10 +441,19 @@ const ProjectPanel: Component = () => {
             const s = session();
             try { await WindowAPI.openInExplorer(s ? s.workingDirectory : replica.path); } catch (err) { console.error("Failed to open explorer:", err); }
           };
-          const handleDetach = (e: MouseEvent) => {
+          const handleDetach = async (e: MouseEvent) => {
             e.stopPropagation();
             const s = session();
-            if (s) WindowAPI.detach(s.id);
+            if (!s) return;
+            try {
+              if (isDetached()) {
+                await WindowAPI.attach(s.id);
+              } else {
+                await WindowAPI.detach(s.id);
+              }
+            } catch (err) {
+              console.error("replica detach/attach toggle failed:", err);
+            }
           };
           const handleTelegramClick = async (e: MouseEvent) => {
             e.stopPropagation();
@@ -529,7 +553,13 @@ const ProjectPanel: Component = () => {
                   title={!settingsStore.voiceEnabled ? "Enable voice-to-text in Settings and set a Gemini API key to use this." : isRecording() ? "Stop recording" : isProcessing() ? "Transcribing..." : voiceRecorder.micError() ? voiceRecorder.micError()! : "Voice to text"}
                 >&#x1F399;</button>
                 <button class="session-item-explorer" onClick={handleOpenExplorer} title="Open folder in explorer">&#x1F4C2;</button>
-                <button class="session-item-detach" onClick={handleDetach} title="Detach to own window">&#x29C9;</button>
+                <button
+                  class="session-item-detach"
+                  classList={{ attached: isDetached() }}
+                  onClick={handleDetach}
+                  title={isDetached() ? "Re-attach to main window" : "Open in new window"}
+                  innerHTML={isDetached() ? "&#x2934;" : "&#x29C9;"}
+                />
                 <Show when={bridge()}>
                   <div class="session-item-bridge-dot" style={{ background: bridge()!.color }} title={`Telegram: ${bridge()!.botLabel}`} />
                 </Show>
@@ -1129,6 +1159,16 @@ const ProjectPanel: Component = () => {
                     }}
                   >
                     Coding Agent
+                  </button>
+                  <div class="context-separator" />
+                  <button
+                    class="session-context-option"
+                    onClick={() => {
+                      const menu = replicaCtxMenu();
+                      if (menu) toggleReplicaDetach(menu.sessionId);
+                    }}
+                  >
+                    {sessionsStore.isDetached(replicaCtxMenu()!.sessionId) ? "Re-attach to main" : "Open in new window"}
                   </button>
                 </div>
               </Portal>

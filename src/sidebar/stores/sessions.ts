@@ -161,6 +161,20 @@ const filteredSessionsMemo = createMemo(() => {
 
 const [collapsedTeams, setCollapsedTeams] = createSignal<Record<string, boolean>>({});
 
+/**
+ * Detached-session UUID set. A session id is here iff a detached terminal
+ * window for it currently exists. Hydrated by SidebarApp.onMount via
+ * WindowAPI.listDetached (G.8 race safety) and maintained through
+ * terminal_detached / terminal_attached / session_destroyed events.
+ *
+ * NOTE: this store is NOT the authoritative source of truth for "is the
+ * detached window open?" — the Tauri window list is. Read the Tauri
+ * window list directly when correctness matters (e.g. quit-confirmation
+ * count per G3-B1). This signal exists only to drive sidebar UI
+ * (icon/title toggles, context-menu items).
+ */
+const [detachedIds, setDetachedIds] = createSignal<Set<string>>(new Set());
+
 const groupedSessionsMemo = createMemo((): { groups: TeamSessionGroup[]; ungrouped: Session[] } => {
   const sessions = filteredSessionsMemo();
   const teams = state.teams;
@@ -388,6 +402,24 @@ export const sessionsStore = {
   /** Find a session whose name exactly matches the given string */
   findSessionByName(name: string): Session | undefined {
     return state.sessions.find((s) => s.name === name);
+  },
+
+  /** True iff a detached window currently exists for this session id. */
+  isDetached(id: string): boolean {
+    return detachedIds().has(id);
+  },
+
+  /** Toggle detached state. Creates a new Set reference so subscribers re-run. */
+  setDetached(id: string, detached: boolean) {
+    const current = detachedIds();
+    if (detached === current.has(id)) return; // no-op
+    const next = new Set(current);
+    if (detached) next.add(id); else next.delete(id);
+    setDetachedIds(next);
+  },
+
+  clearDetached() {
+    setDetachedIds(new Set<string>());
   },
 
 };
