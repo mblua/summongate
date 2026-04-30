@@ -143,6 +143,12 @@ pub struct AppSettings {
     /// Per-session timestamps live in the frontend store and are NOT persisted.
     #[serde(default)]
     pub coord_sort_by_activity: bool,
+    /// Optional logger filter expression. Applied at startup if `RUST_LOG` is unset.
+    /// Uses standard `env_logger` filter syntax (e.g. `info,agentscommander_lib::config::teams=trace`).
+    /// Phase 1 of #93 — settings-level control with `RUST_LOG` env override (backwards-compat).
+    /// Phase 2 (UI dropdown) and Phase 3 (live reload) are deferred per the issue.
+    #[serde(default)]
+    pub log_level: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -218,6 +224,7 @@ impl Default for AppSettings {
             root_token: None,
             onboarding_dismissed: false,
             coord_sort_by_activity: false,
+            log_level: None,
         }
     }
 }
@@ -411,6 +418,23 @@ pub fn load_settings() -> AppSettings {
     settings
 }
 
+/// Read only the `logLevel` field from `settings.json` without triggering migrations,
+/// auto-token-gen, or any in-memory mutation. Used by `lib.rs` at logger-init time so
+/// the full `load_settings` flow can run post-init with log calls captured.
+///
+/// Returns `None` on missing file, missing field, malformed JSON, unreadable filesystem,
+/// or any other read error — fully read-only and side-effect-free.
+fn read_log_level_from_path(path: &std::path::Path) -> Option<String> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    v.get("logLevel")?.as_str().map(String::from)
+}
+
+/// See `read_log_level_from_path`. Resolves the canonical settings path and delegates.
+pub fn read_log_level_only() -> Option<String> {
+    read_log_level_from_path(&settings_path()?)
+}
+
 /// Save settings to the app config directory (see config_dir()).
 /// Atomic write (tmp + rename) per G.14 — mirrors `sessions_persistence::save_sessions`.
 /// Splitter-drag debouncing raises save frequency in 0.8.0; atomic writes ensure a crash
@@ -535,6 +559,123 @@ mod tests {
         assert!(json.contains("\"coordSortByActivity\":true"));
         let back: AppSettings = serde_json::from_str(&json).expect("deserialize");
         assert!(back.coord_sort_by_activity);
+    }
+
+    #[test]
+    fn log_level_round_trips_through_serde() {
+        let mut s = AppSettings::default();
+        assert!(s.log_level.is_none());
+        s.log_level = Some("info,agentscommander_lib::config::teams=debug".to_string());
+        let json = serde_json::to_string(&s).expect("serialize");
+        assert!(json.contains("\"logLevel\":\"info,agentscommander_lib::config::teams=debug\""));
+        let back: AppSettings = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            back.log_level,
+            Some("info,agentscommander_lib::config::teams=debug".to_string())
+        );
+    }
+
+    #[test]
+    fn log_level_defaults_to_none_when_missing_from_json() {
+        // Old settings.json without the new field must deserialize to None.
+        let json = r#"{
+            "defaultShell": "bash",
+            "defaultShellArgs": [],
+            "agents": [],
+            "telegramBots": [],
+            "startOnlyCoordinators": true,
+            "sidebarAlwaysOnTop": false,
+            "raiseTerminalOnClick": true,
+            "voiceToTextEnabled": false,
+            "geminiApiKey": "",
+            "geminiModel": "gemini-2.5-flash",
+            "voiceAutoExecute": true,
+            "voiceAutoExecuteDelay": 15,
+            "sidebarZoom": 1.0,
+            "terminalZoom": 1.0,
+            "mainZoom": 1.0,
+            "guideZoom": 1.0,
+            "darkfactoryZoom": 1.0,
+            "sidebarGeometry": null,
+            "terminalGeometry": null,
+            "mainGeometry": null,
+            "mainSidebarWidth": 280.0,
+            "mainSidebarSide": "right",
+            "mainAlwaysOnTop": false,
+            "webServerEnabled": false,
+            "webServerPort": 7777,
+            "webServerBind": "127.0.0.1",
+            "projectPath": null,
+            "projectPaths": [],
+            "sidebarStyle": "noir-minimal",
+            "onboardingDismissed": false,
+            "coordSortByActivity": false
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("deserialize old json");
+        assert!(s.log_level.is_none());
+    }
+
+    #[test]
+    fn read_log_level_only_returns_value_when_present() {
+        let dir = std::env::temp_dir().join(format!("rlol-present-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        std::fs::write(
+            &path,
+            r#"{"logLevel":"info,agentscommander_lib::config::teams=debug","other":"x"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            super::read_log_level_from_path(&path),
+            Some("info,agentscommander_lib::config::teams=debug".to_string())
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_log_level_only_returns_none_when_log_level_missing() {
+        let dir = std::env::temp_dir().join(format!("rlol-missing-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        std::fs::write(&path, r#"{"other":"value"}"#).unwrap();
+        assert_eq!(super::read_log_level_from_path(&path), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_log_level_only_returns_none_when_settings_missing() {
+        let path = std::env::temp_dir()
+            .join(format!("rlol-no-such-file-{}.json", std::process::id()));
+        // Intentionally do not create the file.
+        assert_eq!(super::read_log_level_from_path(&path), None);
+    }
+
+    #[test]
+    fn read_log_level_only_returns_none_when_json_malformed() {
+        let dir = std::env::temp_dir().join(format!("rlol-malformed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        std::fs::write(&path, "{ invalid json no closing brace").unwrap();
+        assert_eq!(super::read_log_level_from_path(&path), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_log_level_only_returns_some_empty_string_when_log_level_is_empty() {
+        // Asserts read_log_level_only returns Some("") (not None) when logLevel is the
+        // empty string — the helper preserves the user's intent (the field is set, just
+        // empty). Downstream filter machinery handles the rest, with semantics distinct
+        // from the malformed-string case: empty-string → parse_filters("") produces 0
+        // directives → env_filter's hidden {None, Error} default applies → Error-only logs
+        // flow globally; malformed-string → 1 non-matching directive → all
+        // agentscommander* logs suppressed. The helper is symmetric on both inputs
+        // (returns Some(value)); the observable difference is at env_filter::Builder::build.
+        let dir = std::env::temp_dir().join(format!("rlol-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        std::fs::write(&path, r#"{"logLevel":"","other":"value"}"#).unwrap();
+        assert_eq!(super::read_log_level_from_path(&path), Some(String::new()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

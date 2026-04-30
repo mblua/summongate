@@ -84,3 +84,19 @@ The workflow publishes a status check named `validate-branch-name` on the branch
    ```bash
    git push -u origin <new-name>
    ```
+
+<!-- Status: as of issue #93, Phase 1 only. Phase 2 (UI dropdown) and Phase 3 (live reload via tracing-subscriber) are aspirational and may or may not ship. -->
+
+## Log filter precedence
+
+The runtime log filter is resolved at startup via this chain:
+
+1. `RUST_LOG` environment variable (if set) — used as the filter expression. Backwards compatible; preferred for ad-hoc debugging from a terminal.
+2. `settings.logLevel` field in `~/.agentscommander*/settings.json` (if `Some`) — used as the filter expression. Persistent across restarts, survives Windows GUI launches (shortcut/double-click).
+3. Default: `agentscommander=info`.
+
+Filter expressions follow standard `env_logger` syntax (e.g. `info,agentscommander_lib::config::teams=trace`).
+
+⚠️ **Caveat — malformed filters silently suppress agentscommander logs.** If the value does not parse as a valid env_logger filter (e.g., typo, unrecognized level keyword, single `:` instead of `::`), no matching directives are produced for `agentscommander*` targets and all `agentscommander*` logs are suppressed at runtime. Verify your filter once with `RUST_LOG=<filter> agentscommander_mb.exe` from a terminal before persisting it in `settings.json`. This is the same behavior the binary had pre-#93 for malformed `RUST_LOG` values — Phase 1 of #93 does not change this.
+
+Phase 2 of #93 (if shipped) will surface this in the sidebar UI; Phase 3 (if shipped) will move to live reload via `tracing-subscriber`.

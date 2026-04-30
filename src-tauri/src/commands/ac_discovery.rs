@@ -2,6 +2,7 @@ use futures::future::join_all;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
@@ -9,6 +10,11 @@ use tauri::{AppHandle, Emitter, State};
 use crate::config::settings::SettingsState;
 use crate::session::manager::SessionManager;
 use crate::session::session::SessionRepo;
+
+/// Per-call monotonic ID partitioning concurrent `discover_*` invocations in the log
+/// stream. See plan §3 A0 (round-2 G5 + round-3 H1 placement-fix). Consumed only by
+/// `format!`-into-log; `Relaxed` is canonical for an observed-but-not-synchronizing counter.
+static DISCOVERY_CALL_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Resolve the preferred coding agent for a directory by matching the app
 /// label from the agent's config.json against THIS instance's settings.
@@ -569,6 +575,7 @@ pub async fn discover_ac_agents(
     // Lock-safe: discover_teams() reads settings from disk via load_settings()
     // and does NOT acquire SettingsState; the read guard above stays valid.
     let teams_snapshot = crate::config::teams::discover_teams();
+    let call_id = DISCOVERY_CALL_ID.fetch_add(1, Ordering::Relaxed);
     let mut agents: Vec<AcAgentMatrix> = Vec::new();
     let mut teams: Vec<AcTeam> = Vec::new();
     let mut workgroups: Vec<AcWorkgroup> = Vec::new();
@@ -771,6 +778,16 @@ pub async fn discover_ac_agents(
                                     &teams_snapshot,
                                 );
 
+                                log::debug!(
+                                    "[ac-discovery] call={} replica — project='{}' wg='{}' replica='{}' fqn='{}:{}/{}' is_coordinator={}",
+                                    call_id,
+                                    project_folder,
+                                    dir_name,
+                                    replica_name,
+                                    project_folder, dir_name, replica_name,
+                                    is_coordinator
+                                );
+
                                 wg_agents.push(AcAgentReplica {
                                     name: replica_name,
                                     path: wg_path.to_string_lossy().to_string(),
@@ -908,6 +925,21 @@ pub async fn discover_ac_agents(
         );
     }
 
+    let total_replicas: usize = workgroups.iter().map(|wg| wg.agents.len()).sum();
+    let total_coordinator: usize = workgroups
+        .iter()
+        .flat_map(|wg| wg.agents.iter())
+        .filter(|a| a.is_coordinator)
+        .count();
+    log::debug!(
+        "[ac-discovery] call={} discover_ac_agents: summary — workgroups={} teams={} replicas={} coordinator={}",
+        call_id,
+        workgroups.len(),
+        teams.len(),
+        total_replicas,
+        total_coordinator
+    );
+
     Ok(AcDiscoveryResult {
         agents,
         teams,
@@ -1028,6 +1060,7 @@ pub async fn discover_project(
     // Placed AFTER the .ac-new-missing early return so non-AC folders don't
     // pay a wasted filesystem scan (§15 Finding F1).
     let teams_snapshot = crate::config::teams::discover_teams();
+    let call_id = DISCOVERY_CALL_ID.fetch_add(1, Ordering::Relaxed);
 
     let project_folder = base
         .file_name()
@@ -1178,6 +1211,16 @@ pub async fn discover_project(
                             &teams_snapshot,
                         );
 
+                        log::debug!(
+                            "[ac-discovery] call={} replica — project='{}' wg='{}' replica='{}' fqn='{}:{}/{}' is_coordinator={}",
+                            call_id,
+                            project_folder,
+                            dir_name,
+                            replica_name,
+                            project_folder, dir_name, replica_name,
+                            is_coordinator
+                        );
+
                         wg_agents.push(AcAgentReplica {
                             name: replica_name,
                             path: wg_path.to_string_lossy().to_string(),
@@ -1301,6 +1344,22 @@ pub async fn discover_project(
             },
         );
     }
+
+    let total_replicas: usize = workgroups.iter().map(|wg| wg.agents.len()).sum();
+    let total_coordinator: usize = workgroups
+        .iter()
+        .flat_map(|wg| wg.agents.iter())
+        .filter(|a| a.is_coordinator)
+        .count();
+    log::debug!(
+        "[ac-discovery] call={} discover_project: summary — path='{}' workgroups={} teams={} replicas={} coordinator={}",
+        call_id,
+        path,
+        workgroups.len(),
+        teams.len(),
+        total_replicas,
+        total_coordinator
+    );
 
     Ok(AcDiscoveryResult {
         agents,

@@ -403,6 +403,10 @@ pub fn is_in_team(agent_name: &str, team: &DiscoveredTeam) -> bool {
 fn is_coordinator(agent_name: &str, team: &DiscoveredTeam) -> bool {
     if let Some(ref coord_name) = team.coordinator_name {
         if agent_matches_member(agent_name, coord_name, team.coordinator_path.as_ref()) {
+            log::trace!(
+                "[teams] is_coordinator: direct-match → true — agent='{}' team='{}/{}' coord='{}'",
+                agent_name, team.project, team.name, coord_name
+            );
             return true;
         }
         // WG-aware: if agent is a WG replica of this team's coordinator, match by suffix.
@@ -413,13 +417,52 @@ fn is_coordinator(agent_name: &str, team: &DiscoveredTeam) -> bool {
             let (agent_project, _) = split_project_prefix(agent_name);
             let Some(agent_project) = agent_project else {
                 // Strict: unqualified `agent_name` cannot hold coordinator authority.
+                if wg_team == team.name && agent_suffix(agent_name) == agent_suffix(coord_name) {
+                    log::trace!(
+                        "[teams] is_coordinator: reject-unqualified → false — agent='{}' team='{}/{}' coord='{}' (suffix would match)",
+                        agent_name, team.project, team.name, coord_name
+                    );
+                }
                 return false;
             };
             if wg_team == team.name
                 && agent_project == team.project
                 && agent_suffix(agent_name) == agent_suffix(coord_name)
             {
+                log::trace!(
+                    "[teams] is_coordinator: wg-aware-match → true — agent='{}' team='{}/{}' coord='{}' agent_project='{}'",
+                    agent_name, team.project, team.name, coord_name, agent_project
+                );
                 return true;
+            }
+            if wg_team == team.name
+                && agent_project != team.project
+                && agent_suffix(agent_name) == agent_suffix(coord_name)
+            {
+                log::trace!(
+                    "[teams] is_coordinator: reject-project-mismatch → false — agent='{}' agent_project='{}' team_project='{}' team='{}' coord='{}'",
+                    agent_name, agent_project, team.project, team.name, coord_name
+                );
+            }
+            if wg_team == team.name
+                && agent_project == team.project
+                && agent_suffix(agent_name) != agent_suffix(coord_name)
+            {
+                log::trace!(
+                    "[teams] is_coordinator: reject-suffix-mismatch → false — agent='{}' team='{}/{}' coord='{}' agent_suffix='{}' coord_suffix='{}'",
+                    agent_name, team.project, team.name, coord_name,
+                    agent_suffix(agent_name), agent_suffix(coord_name)
+                );
+            }
+            if wg_team == team.name
+                && agent_project != team.project
+                && agent_suffix(agent_name) != agent_suffix(coord_name)
+            {
+                log::trace!(
+                    "[teams] is_coordinator: reject-both-mismatch → false — agent='{}' agent_project='{}' team_project='{}' team='{}' coord='{}' agent_suffix='{}' coord_suffix='{}'",
+                    agent_name, agent_project, team.project, team.name, coord_name,
+                    agent_suffix(agent_name), agent_suffix(coord_name)
+                );
             }
         }
     }
@@ -499,8 +542,13 @@ pub fn discover_teams() -> Vec<DiscoveredTeam> {
     let mut teams = Vec::new();
 
     for repo_path in &settings.project_paths {
+        log::trace!("[teams] discover_teams: scanning project_path='{}'", repo_path);
         let base = Path::new(repo_path);
         if !base.is_dir() {
+            log::trace!(
+                "[teams] discover_teams: project_path skipped (not a directory) — path='{}'",
+                repo_path
+            );
             continue;
         }
 
@@ -519,7 +567,17 @@ pub fn discover_teams() -> Vec<DiscoveredTeam> {
         }
 
         for project_dir in dirs_to_check {
+            let teams_before = teams.len();
+            log::trace!(
+                "[teams] discover_teams: entering project_dir='{}'",
+                project_dir.display()
+            );
             discover_teams_in_project(&project_dir, &mut teams);
+            log::trace!(
+                "[teams] discover_teams: project_dir='{}' produced {} team(s)",
+                project_dir.display(),
+                teams.len() - teams_before
+            );
         }
     }
 
@@ -550,6 +608,11 @@ fn discover_teams_in_project(project_dir: &Path, teams: &mut Vec<DiscoveredTeam>
     };
 
     for entry in entries.flatten() {
+        log::trace!(
+            "[teams] discover_teams_in_project: inspecting entry — project='{}' entry='{}'",
+            project_folder,
+            entry.file_name().to_string_lossy()
+        );
         let team_dir = entry.path();
         if !team_dir.is_dir() {
             continue;
@@ -566,12 +629,31 @@ fn discover_teams_in_project(project_dir: &Path, teams: &mut Vec<DiscoveredTeam>
             .to_string();
 
         let config_path = team_dir.join("config.json");
-        let parsed: serde_json::Value = match std::fs::read_to_string(&config_path)
-            .ok()
-            .and_then(|c| serde_json::from_str(&c).ok())
-        {
-            Some(v) => v,
-            None => continue,
+        let raw = match std::fs::read_to_string(&config_path) {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!(
+                    "[teams] dropped team — project='{}' team_dir='{}' reason='read_failed' err='{}' path='{}'",
+                    project_folder,
+                    dir_name,
+                    e,
+                    config_path.display()
+                );
+                continue;
+            }
+        };
+        let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!(
+                    "[teams] dropped team — project='{}' team_dir='{}' reason='parse_failed' err='{}' path='{}'",
+                    project_folder,
+                    dir_name,
+                    e,
+                    config_path.display()
+                );
+                continue;
+            }
         };
 
         // Resolve agents — build names and paths in a single pass to keep indices aligned
@@ -616,6 +698,15 @@ fn discover_teams_in_project(project_dir: &Path, teams: &mut Vec<DiscoveredTeam>
             coordinator_name,
             coordinator_path,
         });
+        let pushed = teams.last().expect("just pushed");
+        log::debug!(
+            "[teams] discovered team — project='{}' team='{}' coord_name={:?} coord_path={:?} agent_count={}",
+            pushed.project,
+            pushed.name,
+            pushed.coordinator_name,
+            pushed.coordinator_path.as_ref().map(|p| p.display().to_string()),
+            pushed.agent_names.len()
+        );
     }
 }
 
