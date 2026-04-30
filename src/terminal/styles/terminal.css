@@ -160,7 +160,8 @@ html, body, #root {
   color: white;
 }
 
-/* Last Prompt Panel */
+/* Terminal Context Panels */
+.workgroup-brief-panel,
 .last-prompt-panel {
   padding: var(--spacing-sm) var(--spacing-md);
   background: rgba(255, 255, 255, 0.02);
@@ -171,15 +172,18 @@ html, body, #root {
   overflow-y: auto;
 }
 
+.workgroup-brief-panel::-webkit-scrollbar,
 .last-prompt-panel::-webkit-scrollbar {
   width: 3px;
 }
 
+.workgroup-brief-panel::-webkit-scrollbar-thumb,
 .last-prompt-panel::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.08);
   border-radius: 2px;
 }
 
+.workgroup-brief-label,
 .last-prompt-label {
   font-size: 9px;
   font-weight: 600;
@@ -189,6 +193,7 @@ html, body, #root {
   text-transform: uppercase;
 }
 
+.workgroup-brief-text,
 .last-prompt-text {
   font-size: var(--font-size-sm);
   color: var(--terminal-fg);
@@ -199,12 +204,14 @@ html, body, #root {
   opacity: 0.85;
 }
 
-/* Light-theme overrides for last-prompt */
+/* Light-theme overrides for context panels */
+html.light-theme .workgroup-brief-panel,
 html.light-theme .last-prompt-panel {
   background: rgba(0, 0, 0, 0.03);
   border-bottom-color: rgba(0, 0, 0, 0.08);
 }
 
+html.light-theme .workgroup-brief-panel::-webkit-scrollbar-thumb,
 html.light-theme .last-prompt-panel::-webkit-scrollbar-thumb {
   background: rgba(0, 0, 0, 0.12);
 }

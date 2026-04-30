@@ -19,6 +19,7 @@ export interface Session {
   agentId: string | null;
   agentLabel: string | null;
   gitRepos: SessionRepo[];
+  workgroupBrief: string | null;
   isCoordinator: boolean;
   token: string;
 }

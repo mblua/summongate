@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use uuid::Uuid;
 
 use crate::config::settings::WindowGeometry;
@@ -118,6 +119,28 @@ pub enum SessionStatus {
     Exited(i32),
 }
 
+pub(crate) fn read_workgroup_brief_for_cwd(cwd: &str) -> Option<String> {
+    let mut current = Some(Path::new(cwd));
+
+    while let Some(path) = current {
+        let is_workgroup_dir = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| name.starts_with("wg-"));
+
+        if is_workgroup_dir {
+            return std::fs::read_to_string(path.join("BRIEF.md"))
+                .ok()
+                .map(|content| content.trim().to_string())
+                .filter(|content| !content.is_empty());
+        }
+
+        current = path.parent();
+    }
+
+    None
+}
+
 /// Info sent to the frontend via IPC
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -143,6 +166,8 @@ pub struct SessionInfo {
     pub agent_label: Option<String>,
     #[serde(default)]
     pub git_repos: Vec<SessionRepo>,
+    #[serde(default)]
+    pub workgroup_brief: Option<String>,
     #[serde(default)]
     pub is_coordinator: bool,
     pub token: String,
@@ -174,6 +199,7 @@ impl From<&Session> for SessionInfo {
             agent_id: s.agent_id.clone(),
             agent_label: s.agent_label.clone(),
             git_repos: s.git_repos.clone(),
+            workgroup_brief: read_workgroup_brief_for_cwd(&s.working_directory),
             is_coordinator: s.is_coordinator,
             token: s.token.to_string(),
             is_claude: s.is_claude,

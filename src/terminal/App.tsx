@@ -16,6 +16,7 @@ import { initWindowGeometry, initDetachedWindowGeometry } from "../shared/window
 import { settingsStore } from "../shared/stores/settings";
 import { terminalStore } from "./stores/terminal";
 import Titlebar from "./components/Titlebar";
+import WorkgroupBrief from "./components/WorkgroupBrief";
 import LastPrompt from "./components/LastPrompt";
 import TerminalView from "./components/TerminalView";
 import StatusBar from "./components/StatusBar";
@@ -44,10 +45,10 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       const sessions = await SessionAPI.list();
       const session = sessions.find((s) => s.id === props.lockedSessionId);
       if (session) {
-        terminalStore.setActiveSession(session.id, session.name, session.shell, session.effectiveShellArgs, session.workingDirectory);
+        terminalStore.setActiveSession(session.id, session.name, session.shell, session.effectiveShellArgs, session.workingDirectory, session.workgroupBrief ?? null);
       } else {
         // Session no longer exists, close this window
-        terminalStore.setActiveSession(null, "", "", null, "");
+        terminalStore.setActiveSession(null, "", "", null, "", null);
       }
       return;
     }
@@ -58,10 +59,10 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       const sessions = await SessionAPI.list();
       const active = sessions.find((s) => s.id === activeId);
       if (active) {
-        terminalStore.setActiveSession(active.id, active.name, active.shell, active.effectiveShellArgs, active.workingDirectory);
+        terminalStore.setActiveSession(active.id, active.name, active.shell, active.effectiveShellArgs, active.workingDirectory, active.workgroupBrief ?? null);
       }
     } else {
-      terminalStore.setActiveSession(null, "", "", null, "");
+      terminalStore.setActiveSession(null, "", "", null, "", null);
     }
   };
 
@@ -129,7 +130,7 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       unlisteners.push(
         await onSessionSwitched(async ({ id }) => {
           if (!id) {
-            terminalStore.setActiveSession(null, "", "", null, "");
+            terminalStore.setActiveSession(null, "", "", null, "", null);
             return;
           }
           const sessions = await SessionAPI.list();
@@ -140,7 +141,8 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
               session.name,
               session.shell,
               session.effectiveShellArgs,
-              session.workingDirectory
+              session.workingDirectory,
+              session.workgroupBrief ?? null
             );
           }
         })
@@ -154,7 +156,8 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
               session.name,
               session.shell,
               session.effectiveShellArgs,
-              session.workingDirectory
+              session.workingDirectory,
+              session.workgroupBrief ?? null
             );
           }
         })
@@ -196,6 +199,7 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       <Show when={!props.embedded}>
         <Titlebar detached={props.detached} lockedSessionId={props.lockedSessionId} />
       </Show>
+      <WorkgroupBrief />
       <LastPrompt sessionId={props.lockedSessionId} />
       <Show
         when={terminalStore.activeSessionId}

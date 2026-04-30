@@ -176,6 +176,25 @@ fn parse_role_frontmatter(content: &str) -> (Option<String>, Option<String>) {
     (name, description)
 }
 
+fn default_brief_content(wg_name: &str) -> String {
+    format!(
+        "# {}\n\n## Objective\n\n_Describe the goal of this workgroup._\n\n## Scope\n\n_What is in and out of scope._\n\n## Deliverables\n\n- [ ] _List deliverables here_\n",
+        wg_name
+    )
+}
+
+fn build_brief_content(wg_name: &str, brief: Option<String>) -> String {
+    let trimmed = brief
+        .as_deref()
+        .map(str::trim)
+        .filter(|content| !content.is_empty());
+
+    match trimmed {
+        Some(content) => format!("{}\n", content),
+        None => default_brief_content(wg_name),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -460,6 +479,7 @@ pub async fn create_workgroup(
     settings: State<'_, SettingsState>,
     project_path: String,
     team_name: String,
+    brief: Option<String>,
 ) -> Result<WorkgroupCloneResult, String> {
     let safe_team = sanitize_name(&team_name)?;
     let base = Path::new(&project_path).join(".ac-new");
@@ -498,11 +518,8 @@ pub async fn create_workgroup(
     std::fs::create_dir_all(&wg_dir)
         .map_err(|e| format!("Failed to create workgroup directory: {}", e))?;
 
-    // BRIEF.md template
-    let brief_content = format!(
-        "# {}\n\n## Objective\n\n_Describe the goal of this workgroup._\n\n## Scope\n\n_What is in and out of scope._\n\n## Deliverables\n\n- [ ] _List deliverables here_\n",
-        wg_name
-    );
+    // BRIEF.md: use the user-provided brief when present, otherwise seed a template.
+    let brief_content = build_brief_content(&wg_name, brief);
     std::fs::write(wg_dir.join("BRIEF.md"), &brief_content)
         .map_err(|e| format!("Failed to write BRIEF.md: {}", e))?;
 
