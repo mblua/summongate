@@ -409,10 +409,12 @@ The plan does NOT block on this upgrade; sanitization is sufficient. But the tra
 
 ```ts
 if (activeSessionId !== sessionId) return;
-if (terminal.element === null) return;
+if (terminal.element?.isConnected !== true) return;
 ```
 
-The `terminal.element === null` check is xterm's de-facto "is disposed" sentinel — `Terminal.dispose()` sets `element` to null. This is not part of the public API contract but is stable across v6.x and used in xterm's own examples. **Caveat (per grinch F15):** if a future xterm minor version stops nulling `element` on dispose, this check breaks open. Mitigation if it happens: switch to a closure-captured `let disposed = false;` flag toggled by an `onDispose` handler (`terminal.onDispose(() => { disposed = true; })`). Not implemented here because it costs more state and the current check is sufficient for v6.0.x.
+The `terminal.element?.isConnected !== true` check covers both "terminal not yet attached to DOM" (pre-open: `element === undefined`) and "terminal removed from DOM" (post-dispose: `Terminal.dispose()` calls `removeChild(this.element)` which detaches the element while leaving the field set, so `isConnected` flips to `false`). `isConnected` is a standard `Node` property; no xterm-private API used. **Caveat:** if a future xterm minor version changes the dispose semantics (e.g. nulls the field, re-attaches the element to a different parent), the failure modes shift but the check still degrades safely — `?.isConnected` returns `undefined` for nulled elements and the `!== true` comparison still bails. A more defensive alternative would be a closure-captured `let disposed = false;` flag toggled by `terminal.onDispose(() => { disposed = true; })`. Not implemented here because the `isConnected` check is sufficient for v6.0.x and the closure adds state without addressing a real failure mode.
+
+*Round-3 correction (Nit 1 from grinch QA):* the original §6.9 cited `terminal.element === null` and claimed `Terminal.dispose()` nulls the field. That was dead code — xterm v6.0.0's dispose only calls `removeChild`. Switched to `isConnected` to cover the actual states (pre-open undefined and post-dispose detached).
 
 ### 6.10 Risk: IME composition collision (NEW round-2, F8)
 
