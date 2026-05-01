@@ -327,6 +327,11 @@ fn remove_rtk_hook(obj: &mut serde_json::Value, settings_path: &Path) -> bool {
         }
     };
 
+    // Track WHICH entries we actually emptied via marker removal. Without this,
+    // the cascade-retain below would also drop user-authored matcher entries
+    // that pre-existed with empty `hooks` arrays — destroying their data even
+    // though we never touched them.
+    let mut touched_indices: Vec<usize> = Vec::new();
     let mut any_removed = false;
     for (idx, entry) in pretool_arr.iter_mut().enumerate() {
         if let Some(existing) = entry.get("hooks") {
@@ -351,6 +356,7 @@ fn remove_rtk_hook(obj: &mut serde_json::Value, settings_path: &Path) -> bool {
         });
         if inner.len() != before {
             any_removed = true;
+            touched_indices.push(idx);
         }
     }
 
@@ -358,13 +364,21 @@ fn remove_rtk_hook(obj: &mut serde_json::Value, settings_path: &Path) -> bool {
         return false;
     }
 
-    // Drop matcher entries whose inner `hooks` is now empty.
+    // Drop matcher entries we just emptied via marker removal. User-authored
+    // entries with pre-existing empty `hooks` arrays are preserved (they are
+    // NOT in `touched_indices`).
+    let mut current = 0usize;
     pretool_arr.retain(|entry| {
+        let touched = touched_indices.contains(&current);
+        current += 1;
+        if !touched {
+            return true; // user's entry — never our concern
+        }
         entry
             .get("hooks")
             .and_then(|v| v.as_array())
             .map(|a| !a.is_empty())
-            .unwrap_or(true) // keep entries with no `hooks` key (we didn't touch them)
+            .unwrap_or(true) // keep entries with no `hooks` key
     });
 
     // Cascade: empty PreToolUse → drop key. Empty hooks → drop key.
@@ -390,13 +404,22 @@ fn discriminant_label(v: &serde_json::Value) -> &'static str {
     }
 }
 
-/// Walks every `<project>/.ac-new/` and returns absolute paths to every
+/// Walks every `<project_root>/.ac-new/` and returns absolute paths to every
 /// `_agent_*` matrix and every `__agent_*` replica (inside `wg-*` dirs).
+///
+/// **`project_paths` semantics.** Each entry may be either (a) a project root
+/// that directly contains `.ac-new/`, or (b) a parent dir holding many such
+/// project roots as immediate children. We probe both shapes — base + non-
+/// hidden children — mirroring the existing pattern in
+/// `commands/ac_discovery.rs::discover_ac_agents` (~line 596) and
+/// `commands/repos.rs::search_repos`. Without descending one level, sweeps
+/// silently no-op for users whose `project_paths` lists a parent dir.
 ///
 /// Filters applied (grinch M7):
 ///   - `symlink_metadata` — Unix symlinks-to-dir are NOT followed.
 ///   - Windows NTFS junctions (`FILE_ATTRIBUTE_REPARSE_POINT`) are filtered.
-///   - Canonical-path dedupe — duplicates resolved.
+///   - Canonical-path dedupe — duplicates resolved (same dir reachable via
+///     two `project_paths` entries, or via base + child overlap, lands once).
 ///
 /// Skips silently: missing project paths, non-directory entries, unreadable
 /// directories, paths that fail to canonicalize.
@@ -441,12 +464,10 @@ pub fn enumerate_managed_agent_dirs(project_paths: &[String]) -> Vec<std::path::
         }
     };
 
-    for project in project_paths {
-        let ac_new = std::path::Path::new(project).join(".ac-new");
-        if !ac_new.is_dir() {
-            continue;
-        }
-        let entries = match std::fs::read_dir(&ac_new) {
+    let scan_ac_new = |ac_new: &std::path::Path,
+                       out: &mut Vec<PathBuf>,
+                       seen: &mut HashSet<PathBuf>| {
+        let entries = match std::fs::read_dir(ac_new) {
             Ok(e) => e,
             Err(e) => {
                 log::warn!(
@@ -454,7 +475,7 @@ pub fn enumerate_managed_agent_dirs(project_paths: &[String]) -> Vec<std::path::
                     ac_new.display(),
                     e
                 );
-                continue;
+                return;
             }
         };
         for entry in entries.flatten() {
@@ -465,7 +486,7 @@ pub fn enumerate_managed_agent_dirs(project_paths: &[String]) -> Vec<std::path::
             };
 
             if name.starts_with("_agent_") {
-                push_if_new(p, &mut out, &mut seen);
+                push_if_new(p, out, seen);
                 continue;
             }
 
@@ -508,10 +529,47 @@ pub fn enumerate_managed_agent_dirs(project_paths: &[String]) -> Vec<std::path::
                         None => continue,
                     };
                     if rname.starts_with("__agent_") {
-                        push_if_new(rp, &mut out, &mut seen);
+                        push_if_new(rp, out, seen);
                     }
                 }
             }
+        }
+    };
+
+    for project in project_paths {
+        let base = std::path::Path::new(project);
+        if !base.is_dir() {
+            continue;
+        }
+
+        // Build the candidate list: the base itself, plus its non-hidden
+        // immediate children. Each candidate is probed for `.ac-new/`. This
+        // matches the convention used by `commands/ac_discovery.rs` and
+        // `commands/repos.rs`, where `project_paths` may be a parent dir.
+        let mut candidates: Vec<PathBuf> = vec![base.to_path_buf()];
+        if let Ok(entries) = std::fs::read_dir(base) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if !p.is_dir() {
+                    continue;
+                }
+                let name = match p.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n,
+                    None => continue,
+                };
+                if name.starts_with('.') {
+                    continue;
+                }
+                candidates.push(p);
+            }
+        }
+
+        for repo_dir in candidates {
+            let ac_new = repo_dir.join(".ac-new");
+            if !ac_new.is_dir() {
+                continue;
+            }
+            scan_ac_new(&ac_new, &mut out, &mut seen);
         }
     }
     out
@@ -952,6 +1010,88 @@ mod tests {
         let raw = read_settings_raw(&dir).unwrap();
         assert!(!raw.starts_with('\u{feff}'), "BOM must be stripped on write");
         cleanup(&dir);
+    }
+
+    #[test]
+    fn t23_enumerate_descends_one_level_for_parent_project_paths() {
+        // project_paths may be either a project root (containing .ac-new/)
+        // or a parent dir holding many such roots. Mirrors the convention in
+        // commands/ac_discovery.rs::discover_ac_agents — without descending
+        // one level, sweeps silently no-op for the parent-dir shape.
+        let dir = tempdir("t23");
+        let parent = dir.join("parent");
+        let proj_a = parent.join("AppA");
+        let proj_b = parent.join("AppB");
+        std::fs::create_dir_all(proj_a.join(".ac-new").join("_agent_alpha")).unwrap();
+        std::fs::create_dir_all(
+            proj_b
+                .join(".ac-new")
+                .join("wg-1-team")
+                .join("__agent_beta"),
+        )
+        .unwrap();
+        // A hidden child should be skipped (matching ac_discovery convention).
+        std::fs::create_dir_all(parent.join(".hidden")).unwrap();
+
+        let project_paths = vec![parent.to_string_lossy().to_string()];
+        let result = enumerate_managed_agent_dirs(&project_paths);
+        let names: Vec<String> = result
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert!(
+            names.contains(&"_agent_alpha".to_string()),
+            "matrix in child project must be returned: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"__agent_beta".to_string()),
+            "replica in child project must be returned: {:?}",
+            names
+        );
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t24_off_preserves_user_authored_empty_matchers() {
+        // A user may pre-author a matcher entry with an empty hooks array
+        // (legal-ish JSON; some hand-craft these). The OFF cascade-retain
+        // must NOT confuse "we just emptied this" with "this was already
+        // empty" and must preserve user-authored entries we never touched.
+        let dir = tempdir("t24");
+        let initial = json!({
+            "hooks": {
+                "PreToolUse": [
+                    {"matcher": "Read", "hooks": []},
+                    {"matcher": "Bash", "hooks": [{"type":"command","command":RTK_REWRITER_COMMAND}]},
+                ],
+            },
+        });
+        seed_settings(&dir, &serde_json::to_string(&initial).unwrap());
+        ensure_rtk_pretool_hook(&dir, false).expect("ok");
+        let v = read_settings(&dir).expect("file present");
+        let arr = v["hooks"]["PreToolUse"].as_array().expect("array");
+        // The Bash entry was emptied by our removal → should be dropped.
+        // The Read entry was never touched → should be preserved.
+        assert_eq!(
+            arr.len(),
+            1,
+            "exactly one entry remains (the user's untouched Read entry); got {:?}",
+            arr
+        );
+        assert_eq!(arr[0]["matcher"], "Read");
+        let inner = arr[0]["hooks"].as_array().expect("inner array");
+        assert!(inner.is_empty(), "user's empty hooks array preserved");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn rtk_hook_marker_literal_is_locked() {
+        // The marker substring is the public contract for cross-version
+        // ON-idempotency and OFF-cleanup. A future "let me clean up this
+        // magic string" refactor that changes the literal silently breaks
+        // every replica injected by an older AC build.
+        assert_eq!(RTK_HOOK_MARKER, "@ac-rtk-marker-v1");
     }
 
     #[test]

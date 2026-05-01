@@ -7,7 +7,7 @@ use crate::pty::manager::PtyManager;
 use crate::session::manager::SessionManager;
 use crate::web::auth::WebAccessToken;
 use crate::web::broadcast::WsBroadcaster;
-use crate::{RtkSweepLockState, WebServerHandle};
+use crate::{RtkStartupModeState, RtkSweepLockState, WebServerHandle};
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -157,10 +157,21 @@ pub fn get_instance_label() -> String {
 }
 
 /// Narrow setter — flips ONLY `inject_rtk_hook`. Holds the SettingsState
-/// write lock through `save_settings` so a concurrent `update_settings`
-/// from the SettingsModal cannot overwrite the change at the IPC boundary
+/// write lock through `save_settings` so the in-memory mutation, the cloned
+/// snapshot, and the disk write happen atomically with respect to each other
 /// (issue #120, grinch H3 + N1). The explicit `drop(s)` after `save_settings`
 /// makes the guard scope visually unambiguous: lock-then-write-then-release.
+///
+/// **Caveat (out of scope per plan §7.5).** The pre-existing `update_settings`
+/// command writes to disk OUTSIDE the SettingsState write lock (it does
+/// `save_settings` then acquires the lock to assign in-memory). A concurrent
+/// `update_settings` whose draft has the OLD `inject_rtk_hook` value can
+/// therefore still produce on-disk / in-memory divergence interleaved with
+/// this setter. Closing that race requires re-shaping `update_settings`
+/// itself; flagged in the plan as a follow-up. For the banner flow which
+/// drove this setter, the divergence window is small and idempotently
+/// repaired by the next user toggle.
+///
 /// Caller is responsible for triggering `sweep_rtk_hook` if disk side-effects
 /// on replicas are desired.
 #[tauri::command]
@@ -177,7 +188,9 @@ pub async fn set_inject_rtk_hook(
 }
 
 /// Narrow setter — flips ONLY `rtk_prompt_dismissed`. Same lock-held-through-save
-/// pattern as `set_inject_rtk_hook` (issue #120, grinch H3 + N1).
+/// pattern as `set_inject_rtk_hook` (issue #120, grinch H3 + N1). The same
+/// `update_settings` caveat applies — see `set_inject_rtk_hook` doc for
+/// details.
 #[tauri::command]
 pub async fn set_rtk_prompt_dismissed(
     settings: State<'_, SettingsState>,
@@ -255,21 +268,61 @@ pub async fn sweep_rtk_hook(
     })
 }
 
-/// Snapshot of the RTK startup decision, computed lazily so the frontend can
-/// query it after mounting (avoids the event race with `lib.rs::setup`'s
-/// emit). Pure read — does NOT auto-disable, does NOT sweep. Auto-disable
-/// runs once per boot in the setup task.
+/// Returns the BOOT-TIME RTK startup decision computed by the setup task in
+/// `lib.rs::run` and cached in `RtkStartupModeState`. This is the SAME value
+/// the setup task emitted via `rtk_startup_status` — so the listener and the
+/// getter always agree, even after the auto-disable side-effect mutates
+/// settings (issue #120 §18 amendment).
+///
+/// If called before the setup task has finished (extremely narrow boot
+/// window — `which::which` resolve + a state read), returns "silent". The
+/// listener will fire shortly after with the actual mode; combined with
+/// idempotent `setMode` on the frontend, the banner self-corrects.
+///
+/// Pure read — does NOT auto-disable, does NOT sweep, does NOT probe PATH.
 #[tauri::command]
 pub async fn get_rtk_startup_status(
-    settings: State<'_, SettingsState>,
+    mode_cache: State<'_, RtkStartupModeState>,
 ) -> Result<String, String> {
-    let rtk_present = which::which("rtk").is_ok();
-    let s = settings.read().await;
-    let mode = match (rtk_present, s.inject_rtk_hook, s.rtk_prompt_dismissed) {
-        (true, false, false) => "prompt-enable",
-        (true, true, _) => "active",
-        (false, true, _) => "auto-disabled",
-        _ => "silent",
-    };
-    Ok(mode.to_string())
+    Ok(mode_cache
+        .get()
+        .cloned()
+        .unwrap_or_else(|| "silent".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RtkSweepError, RtkSweepResult};
+
+    /// `RtkSweepResult` and `RtkSweepError` cross the Tauri IPC boundary, so
+    /// the `#[serde(rename_all = "camelCase")]` rename is part of the public
+    /// contract with the SolidJS frontend types in `src/shared/ipc.ts`.
+    /// Removing the rename would still compile and the sweep would still
+    /// run, but the banner would render `undefined` for every error.
+    #[test]
+    fn rtk_sweep_result_serializes_camel_case() {
+        let value = RtkSweepResult {
+            total: 5,
+            succeeded: 4,
+            errors: vec![RtkSweepError {
+                path: "/some/dir".to_string(),
+                error: "boom".to_string(),
+            }],
+        };
+        let json = serde_json::to_string(&value).expect("serialize");
+        assert!(json.contains("\"total\":5"), "missing total: {}", json);
+        assert!(
+            json.contains("\"succeeded\":4"),
+            "missing succeeded: {}",
+            json
+        );
+        assert!(
+            json.contains("\"errors\":[{\"path\":\"/some/dir\",\"error\":\"boom\"}]"),
+            "missing errors with camelCase fields: {}",
+            json
+        );
+        // Negative checks: snake_case / PascalCase variants must not appear.
+        assert!(!json.contains("\"Total\""));
+        assert!(!json.contains("\"Path\""));
+    }
 }

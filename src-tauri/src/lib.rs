@@ -42,6 +42,15 @@ pub type WebServerHandle = Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>
 /// out of scope for #120.
 pub type RtkSweepLockState = Arc<tokio::sync::Mutex<()>>;
 
+/// Issue #120 §18 — cached boot-time RTK startup mode.
+///
+/// Set ONCE by the setup task in `run()` after computing the mode and
+/// BEFORE running any side effects. Read by
+/// `commands::config::get_rtk_startup_status` so the getter returns the
+/// boot decision instead of recomputing from post-side-effect state
+/// (which would mismatch the listener for the `auto-disabled` mode).
+pub type RtkStartupModeState = Arc<std::sync::OnceLock<String>>;
+
 /// Master token generated at app startup. Allows bypassing team validation (can_reach).
 /// Persisted to `master-token.txt` in config_dir for CLI use. Regenerated on each app startup. See #34.
 /// Field is private — use `matches()` for constant-time comparison.
@@ -270,6 +279,13 @@ pub fn run() {
     let rtk_sweep_lock: RtkSweepLockState = Arc::new(tokio::sync::Mutex::new(()));
     let rtk_sweep_lock_for_setup = Arc::clone(&rtk_sweep_lock);
 
+    // Issue #120 §18 — cached boot-time RTK startup mode. Set ONCE by the
+    // setup task before running side effects; read by
+    // `get_rtk_startup_status` so the late-mounting banner sees the SAME
+    // mode the listener received.
+    let rtk_startup_mode: RtkStartupModeState = Arc::new(std::sync::OnceLock::new());
+    let rtk_startup_mode_for_setup = Arc::clone(&rtk_startup_mode);
+
     let shutdown_for_setup = shutdown_signal.clone();
     let shutdown_for_exit = shutdown_signal.clone();
     let tg_mgr_for_exit = tg_mgr.clone();
@@ -287,6 +303,7 @@ pub fn run() {
         .manage(broadcaster.clone())
         .manage(WebServerHandle::default())
         .manage(rtk_sweep_lock)
+        .manage(rtk_startup_mode)
         .manage(shutdown_signal)
         .setup(move |app| {
             use tauri::WebviewWindowBuilder;
@@ -359,6 +376,7 @@ pub fn run() {
             {
                 let app_handle_for_rtk = app.handle().clone();
                 let sweep_lock = Arc::clone(&rtk_sweep_lock_for_setup);
+                let mode_cache = Arc::clone(&rtk_startup_mode_for_setup);
                 tauri::async_runtime::spawn(async move {
                     use crate::config::claude_settings::{
                         enumerate_managed_agent_dirs, ensure_rtk_pretool_hook,
@@ -380,6 +398,13 @@ pub fn run() {
                         (false, true, _) => "auto-disabled",
                         _ => "silent",
                     };
+
+                    // §18 — cache the boot decision BEFORE running side effects
+                    // so a late-mounting banner sees the SAME mode the listener
+                    // receives (auto-disabled side-effects mutate inject_rtk_hook,
+                    // breaking any naïve recompute path). `set` returns Err if
+                    // already set; ignore (idempotent for repeated boots).
+                    let _ = mode_cache.set(mode.to_string());
 
                     if mode == "auto-disabled" {
                         // H4 + N1 fix: hold the SettingsState write lock through
