@@ -392,6 +392,31 @@ fn remove_rtk_hook(obj: &mut serde_json::Value, settings_path: &Path) -> bool {
     true
 }
 
+/// True iff `path` stat-checks as a real directory — NOT a Unix symlink,
+/// NOT a Windows NTFS junction (`FILE_ATTRIBUTE_REPARSE_POINT`), and a
+/// directory according to `symlink_metadata`. Consolidates the M7 gate
+/// shared by `push_if_new`, the `wg-*` parent re-check, and the parent-dir
+/// descend step in `enumerate_managed_agent_dirs` so the filter cannot be
+/// regressed by a future caller that forgets one of the three checks.
+fn is_real_directory(path: &Path) -> bool {
+    let md = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    if md.file_type().is_symlink() {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        if md.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return false;
+        }
+    }
+    md.is_dir()
+}
+
 /// Maps a `serde_json::Value` to a short discriminant label for log messages.
 fn discriminant_label(v: &serde_json::Value) -> &'static str {
     match v {
@@ -434,23 +459,8 @@ pub fn enumerate_managed_agent_dirs(project_paths: &[String]) -> Vec<std::path::
     let mut out: Vec<PathBuf> = Vec::new();
 
     let push_if_new = |raw: PathBuf, out: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>| {
-        // Reject if the path is a symlink or junction.
-        let md = match std::fs::symlink_metadata(&raw) {
-            Ok(m) => m,
-            Err(_) => return,
-        };
-        if md.file_type().is_symlink() {
-            return;
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::MetadataExt;
-            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
-            if md.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-                return;
-            }
-        }
-        if !md.is_dir() {
+        // M7 gate — reject symlinks/junctions/non-dirs in one place.
+        if !is_real_directory(&raw) {
             return;
         }
 
@@ -491,23 +501,8 @@ pub fn enumerate_managed_agent_dirs(project_paths: &[String]) -> Vec<std::path::
             }
 
             if name.starts_with("wg-") {
-                // Re-check wg-* itself isn't a symlink/junction.
-                let md = match std::fs::symlink_metadata(&p) {
-                    Ok(m) => m,
-                    Err(_) => continue,
-                };
-                if md.file_type().is_symlink() {
-                    continue;
-                }
-                #[cfg(windows)]
-                {
-                    use std::os::windows::fs::MetadataExt;
-                    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
-                    if md.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-                        continue;
-                    }
-                }
-                if !md.is_dir() {
+                // M7 gate — re-check wg-* parent isn't a symlink/junction.
+                if !is_real_directory(&p) {
                     continue;
                 }
 
@@ -546,11 +541,17 @@ pub fn enumerate_managed_agent_dirs(project_paths: &[String]) -> Vec<std::path::
         // immediate children. Each candidate is probed for `.ac-new/`. This
         // matches the convention used by `commands/ac_discovery.rs` and
         // `commands/repos.rs`, where `project_paths` may be a parent dir.
+        //
+        // H1' regression fix: the descend step uses the same M7 gate as
+        // `push_if_new` and the `wg-*` parent re-check. Without this, a
+        // symlink/junction child (e.g. `parent/Linked -> /elsewhere`) would
+        // pass `p.is_dir()` (which follows links) and the sweep would write
+        // into `/elsewhere/.ac-new/_agent_*` outside the declared workspace.
         let mut candidates: Vec<PathBuf> = vec![base.to_path_buf()];
         if let Ok(entries) = std::fs::read_dir(base) {
             for entry in entries.flatten() {
                 let p = entry.path();
-                if !p.is_dir() {
+                if !is_real_directory(&p) {
                     continue;
                 }
                 let name = match p.file_name().and_then(|n| n.to_str()) {
@@ -1082,6 +1083,66 @@ mod tests {
         assert_eq!(arr[0]["matcher"], "Read");
         let inner = arr[0]["hooks"].as_array().expect("inner array");
         assert!(inner.is_empty(), "user's empty hooks array preserved");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t25_enumerate_descend_skips_symlinked_child() {
+        // project_paths = parent dir; one of parent's non-hidden children is a
+        // symlink/junction pointing OUTSIDE the parent tree to a dir that has
+        // its own .ac-new/. The descend must NOT cross that boundary.
+        // (Grinch H1' regression test — without the M7 gate at the descend
+        // step, the sweep escapes the declared workspace.)
+        let dir = tempdir("t25");
+        let parent = dir.join("parent");
+        let real_proj = parent.join("AppA");
+        std::fs::create_dir_all(real_proj.join(".ac-new").join("_agent_real")).unwrap();
+
+        // Create the would-be-leaked target outside `parent`, with its own .ac-new.
+        let outside = dir.join("outside");
+        std::fs::create_dir_all(outside.join(".ac-new").join("_agent_outside")).unwrap();
+
+        // Symlink/junction parent/Linked -> outside.
+        let link = parent.join("Linked");
+        let link_created;
+        #[cfg(unix)]
+        {
+            link_created = std::os::unix::fs::symlink(&outside, &link).is_ok();
+        }
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("cmd")
+                .args([
+                    "/C",
+                    "mklink",
+                    "/J",
+                    link.to_str().unwrap(),
+                    outside.to_str().unwrap(),
+                ])
+                .status();
+            link_created = matches!(status, Ok(s) if s.success());
+        }
+        if !link_created {
+            cleanup(&dir);
+            return; // skip when env can't create links
+        }
+
+        let project_paths = vec![parent.to_string_lossy().to_string()];
+        let result = enumerate_managed_agent_dirs(&project_paths);
+        let names: Vec<String> = result
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert!(
+            names.contains(&"_agent_real".to_string()),
+            "real project's matrix must be enumerated: {:?}",
+            names
+        );
+        assert!(
+            !names.contains(&"_agent_outside".to_string()),
+            "symlinked-target matrix must NOT be enumerated — sweep escape: {:?}",
+            names
+        );
         cleanup(&dir);
     }
 

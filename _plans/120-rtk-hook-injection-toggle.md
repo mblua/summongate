@@ -1734,6 +1734,7 @@ Dev runs the app with a populated `project_paths`:
 - The frontend banner component (`RtkBanner.tsx`) has no SolidJS unit tests in this plan — the codebase does not currently host frontend unit infrastructure for components. Manual passes #5–#8 + #15 cover banner behavior.
 - The CSS rules in `main.css` are visual-only; no regression test.
 - The cross-process race (§7.4) is not exercised in tests; closing it is out of scope for #120.
+- The `log::warn!` half of the non-destructive contract (tests #10/#13/#15-#18) is not asserted in unit tests — log-emission is observed in manual passes #10–#16. A regression that flipped the helper from "bail+warn" to "destructive overwrite" would still fail the file-content assertions in those tests, so the user-visible contract is covered; only the triage-affordance log line is unverified. Adding a `testing_logger` crate dep + 6 assertions was deferred per grinch round-3 (defensive-only finding, plan §19.4).
 
 ---
 
@@ -2876,4 +2877,245 @@ Phase A and Phase B can land in parallel; the plan §3 phase split is unchanged.
 
 — Architect (round 3)
 
+---
+
+## 19. Grinch round 3 verdict (Step 7 — implementation review)
+
+### 19.1 Verdict
+
+**APPROVED-WITH-NITS.** I read the actual code on `feature/120-rtk-hook-injection-toggle` (commits `630ea17`, `d64095d`, `1957679`), not the plan. The N1 patch is correctly applied at every site, the §18 boot-mode cache fires before side effects, the M8 lock is acquired at all 5 in-process sites with correct granularity, and the marker filtering is correct end-to-end.
+
+I found **one HIGH** that is a regression of M7 introduced by the feature-dev review's H1 fix (descend-one-level), **one LOW** in the SettingsModal checkbox gate, and I'm calling the feature-dev DEFERRED HIGH (log emission test) **non-blocking**.
+
+### 19.2 HIGH — H1' regression: descend-one-level bypasses M7 symlink/junction filter
+
+**Where.** `src-tauri/src/config/claude_settings.rs::enumerate_managed_agent_dirs` at lines 549–565:
+
+```rust
+let mut candidates: Vec<PathBuf> = vec![base.to_path_buf()];
+if let Ok(entries) = std::fs::read_dir(base) {
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if !p.is_dir() {            // <-- follows symlinks
+            continue;
+        }
+        let name = match p.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        candidates.push(p);
+    }
+}
+```
+
+The descend step uses `p.is_dir()`, which **follows symlinks and Windows NTFS junctions**. The `push_if_new` closure (lines 436–465) and the `wg-*` parent re-check (lines 493–512) are both rigorous about M7 — `symlink_metadata` plus `FILE_ATTRIBUTE_REPARSE_POINT` plus canonicalize+dedupe. The descend-one-level code added by feature-dev's H1 fix does NOT replicate that protection.
+
+**Why it matters (concrete failure scenario).**
+
+1. User configures `project_paths = ["/Users/me/projects"]` — a parent dir holding multiple AC projects.
+2. Inside `/Users/me/projects` they have a symlink (or NTFS junction): `linked-stuff -> /elsewhere/`.
+3. `/elsewhere/.ac-new/` exists (a project they manage from elsewhere — perhaps another AC instance, perhaps a backup, perhaps a colleague's repo they occasionally browse).
+4. Toggle ON: `enumerate_managed_agent_dirs(["/Users/me/projects"])` builds candidates = `[/Users/me/projects, /Users/me/projects/repo-A, /Users/me/projects/repo-B, /Users/me/projects/linked-stuff]` (the symlink passed `is_dir()` → true).
+5. For `/Users/me/projects/linked-stuff`: `ac_new = /Users/me/projects/linked-stuff/.ac-new`. `is_dir()` follows the symlink → resolves to `/elsewhere/.ac-new`, returns true.
+6. `scan_ac_new(/elsewhere/.ac-new, ...)` walks the symlinked-into project's `.ac-new` and pushes its matrices/replicas to `out`.
+7. Sweep applies the rtk hook to `/elsewhere/.ac-new/_agent_*/.claude/settings.local.json` — directories the user did NOT list in `project_paths`.
+
+**Consequences:**
+- Writes outside the user's declared workspace.
+- If `/elsewhere` is managed by a second AC instance with `injectRtkHook=false`, the two instances ping-pong on every boot/toggle.
+- If `/elsewhere` is on a removable drive or network share, the sweep can hang the toggle action when the share is unreachable.
+- M7 was a HIGH-tier finding that round 2 closed cleanly via the closure + canonicalize/dedupe. The H1 fix opened a parallel path that bypasses the entire M7 toolchain.
+
+**Fix — concrete patch.** Apply the same `symlink_metadata` + `FILE_ATTRIBUTE_REPARSE_POINT` check at the descend step. The candidates loop at lines 549–565 becomes:
+
+```rust
+let mut candidates: Vec<PathBuf> = vec![base.to_path_buf()];
+if let Ok(entries) = std::fs::read_dir(base) {
+    for entry in entries.flatten() {
+        let p = entry.path();
+        // M7: reject symlinks/junctions BEFORE the is_dir/.ac-new probe.
+        let md = match std::fs::symlink_metadata(&p) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if md.file_type().is_symlink() {
+            continue;
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+            if md.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                continue;
+            }
+        }
+        if !md.is_dir() {
+            continue;
+        }
+        let name = match p.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        candidates.push(p);
+    }
+}
+```
+
+The triple symlink-metadata + reparse-point + is_dir check now matches what `push_if_new` and the `wg-*` parent loop already do. Refactor candidate: extract `is_real_directory(&p) -> bool` so all three sites use one helper — but that is style, not correctness.
+
+**Test addition.** New unit test `t25_enumerate_descend_skips_symlinked_child`:
+
+```rust
+#[test]
+fn t25_enumerate_descend_skips_symlinked_child() {
+    // project_paths = parent dir; one of parent's non-hidden children is a
+    // symlink/junction pointing OUTSIDE the parent tree to a dir that has
+    // its own .ac-new/. The descend must NOT cross that boundary.
+    let dir = tempdir("t25");
+    let parent = dir.join("parent");
+    let real_proj = parent.join("AppA");
+    std::fs::create_dir_all(real_proj.join(".ac-new").join("_agent_real")).unwrap();
+
+    // Create the would-be-leaked target outside `parent`, with its own .ac-new.
+    let outside = dir.join("outside");
+    std::fs::create_dir_all(outside.join(".ac-new").join("_agent_outside")).unwrap();
+
+    // Symlink/junction parent/Linked -> outside.
+    let link = parent.join("Linked");
+    let link_created;
+    #[cfg(unix)]
+    {
+        link_created = std::os::unix::fs::symlink(&outside, &link).is_ok();
+    }
+    #[cfg(windows)]
+    {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J", link.to_str().unwrap(), outside.to_str().unwrap()])
+            .status();
+        link_created = matches!(status, Ok(s) if s.success());
+    }
+    if !link_created {
+        cleanup(&dir);
+        return; // skip when env can't create links
+    }
+
+    let project_paths = vec![parent.to_string_lossy().to_string()];
+    let result = enumerate_managed_agent_dirs(&project_paths);
+    let names: Vec<String> = result
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+        .collect();
+    assert!(
+        names.contains(&"_agent_real".to_string()),
+        "real project's matrix must be enumerated: {:?}",
+        names
+    );
+    assert!(
+        !names.contains(&"_agent_outside".to_string()),
+        "symlinked-target matrix must NOT be enumerated — sweep escape: {:?}",
+        names
+    );
+    cleanup(&dir);
+}
+```
+
+This is the test that should have been added when feature-dev's H1 fix landed; without it, the M7 regression slipped through.
+
+**Severity rationale.** HIGH because:
+- Regresses a HIGH-priority M7 finding that round 2 explicitly closed.
+- The `push_if_new` closure carefully implements the protection — feature-dev's fix opened a parallel path that BYPASSES that closure.
+- Concrete user scenarios (a project_paths parent dir with one symlink to elsewhere) reach the leak.
+- Trivial fix (15 LOC) and trivial test (above).
+
+### 19.3 LOW — L1' SettingsModal checkbox enable-window during `await SettingsAPI.update`
+
+**Where.** `src/sidebar/components/SettingsModal.tsx`:
+- Line 371: `disabled={rtkSweepInFlight()}` on the rtk checkbox.
+- Line 792: `disabled={saving() || rtkSweepInFlight()}` on the Save button.
+
+The Save button is correctly gated by both signals, but the checkbox is gated only by `rtkSweepInFlight()`. Between `setSaving(true)` (line 233) and `setRtkSweepInFlight(true)` (line 246) — inside the `await SettingsAPI.update(settings.data)` window — the checkbox is enabled while the save is in flight.
+
+**Why it matters.** A user who clicks Save and then immediately toggles the rtk checkbox during the in-flight save:
+- update_settings persists the OLD checkbox value (the one that was true when handleSave started).
+- Between the await resolving and line 244 `const next = settings.data.injectRtkHook`, the user toggled — `next` reads the new (post-toggle) value.
+- Line 245's compare: `initial !== next` may be either true or false depending on the user's exact toggle direction.
+- Worst case: user toggles back to the initial value during the await. `next === initial`, no sweep fires, disk holds the value persisted at line 234 (which differs from the user's last action).
+
+Race window: ~50–200ms (one IPC roundtrip plus a couple of awaits). Requires unrealistically fast user behavior to trigger. End-state self-corrects on next modal open (settings re-fetched from disk).
+
+**Fix — one-line patch.** Change line 371:
+
+```tsx
+disabled={saving() || rtkSweepInFlight()}
+```
+
+Same expression as the Save button. Eliminates the race window entirely.
+
+**Severity rationale.** LOW because the window is short, requires a deliberately fast user, and self-corrects on next modal open. Not a data-loss issue.
+
+### 19.4 DEFERRED HIGH from feature-dev (Agent 3 H1) — log emission test gap
+
+**My call: NON-BLOCKING.** Recommend documenting and shipping.
+
+**Rationale.**
+- The user-data-protection invariant is **file preservation**. Tests t10, t13, t15, t16, t17, t18 all assert `read_settings_raw(&dir) == original` — i.e. the malformed/wrong-shape file is not modified on disk. This is the load-bearing assertion.
+- A regression of "bail+warn → destructive overwrite" would FAIL one of those file-content assertions, NOT pass silently. The test pyramid catches the regression even without log capture.
+- Log emission is a debugging convenience. Its absence in tests means a developer who replaces `log::warn!(...)` with a silent `()` would not be caught — but the bail behavior (the actual semantic) is still covered.
+- Adding `testing_logger` (+30 LOC + new dev dep) trades real cost for marginal coverage.
+- Manual passes #10–#16 in §8.3 explicitly walk the log-emission half of the contract by visual inspection of AC's log output during the failure cases.
+
+**Document as accepted limitation:** add a one-line note in §8.4 ("What is NOT covered by tests") stating "Log-emission half of bail-on-malformed contract is observed in manual passes #10–#16; not asserted in unit tests. A regression to destructive overwrite would still fail tests t10/t13/t15/t16/t17/t18 via file-content assertions."
+
+If a future contributor gets a similar bug report ("the bail path isn't logging"), they can add the log capture infra in a follow-up PR. The tradeoff of carrying the dev dep now isn't worth the marginal coverage.
+
+### 19.5 Verification details — what I actually checked
+
+| Item | Site | Finding |
+|---|---|---|
+| N1 lock-held-through-save: `set_inject_rtk_hook` | `commands/config.rs:178–188` | ✓ `let mut s = settings.write().await;` lives in fn scope through `save_settings(&snapshot)?;` (the `?` early-return drops `s` on unwind, lock still held during the save attempt). Explicit `drop(s)` runs on Ok. |
+| N1: `set_rtk_prompt_dismissed` | `commands/config.rs:194–205` | ✓ Same pattern. |
+| N1: startup auto-disable | `lib.rs:415–422` | ✓ `let mut s = settings_state.write().await;` lives through the `if let Err(e) = save_settings(...)` (which doesn't propagate, so save runs; lock holds). `let project_paths = snapshot.project_paths.clone()` runs while lock still held. Explicit `drop(s)` after save. |
+| §18 cache placement | `lib.rs:407` | ✓ `mode_cache.set(mode.to_string())` runs at line 407, **before** the `if mode == "auto-disabled"` block at line 409 and the `else if mode == "active"` block at line 435. Side effects can never overwrite the cache because OnceLock rejects subsequent `set` calls. |
+| §18 cache plumbing | `lib.rs:286, 287, 306, 379` | ✓ `rtk_startup_mode = Arc::new(OnceLock::new())`, `_for_setup` clone built, `.manage(rtk_startup_mode)` registers the same Arc, setup task captures `_for_setup` clone. Both refer to the same OnceLock. ✓ |
+| `get_rtk_startup_status` reads cache | `commands/config.rs:283–291` | ✓ Reads `mode_cache.get()`, defaults to `"silent"` if unset. No PATH probe, no recompute. Matches §18 contract. |
+| Lock ordering | All sites | ✓ Verified. `sweep_rtk_hook` co-holds (sweep_lock → settings.read briefly). Startup auto-disable (settings.write released → sweep_lock). All §4.6 callers (settings.read released → sweep_lock). No cycle. |
+| M8 lock: `sweep_rtk_hook` | `commands/config.rs:224` | ✓ Whole loop. |
+| M8 lock: startup auto-disable | `lib.rs:425` | ✓ Whole OFF-sweep loop, after settings write lock released. |
+| M8 lock: startup active recovery | `lib.rs:441` | ✓ Whole ON-sweep loop. |
+| M8 lock: `agent_creator::write_claude_settings_local` | `agent_creator.rs:71` | ✓ Wraps both `ensure_claude_md_excludes` AND `ensure_rtk_pretool_hook`. Lock guard lives until function end. |
+| M8 lock: `entity_creation::create_agent_matrix` | `entity_creation.rs:262–282` | ✓ Block-scoped guard wraps both helpers. |
+| M8 lock: `entity_creation::create_workgroup` | `entity_creation.rs:633–654` | ✓ Per-replica scope inside the loop. Released between replicas (correct per plan). |
+| CLI exclusion | `cli/create_agent.rs:141–150` | ✓ No lock acquired. Inline comment cites §7.4 cross-process scope. |
+| Marker idempotency: ON | `claude_settings.rs:226–239` | ✓ `cmd.contains(RTK_HOOK_MARKER)` over every existing inner hook → returns false (no-op) if any marker-bearing entry found. Preserves user customizations. |
+| Marker filtering: OFF | `claude_settings.rs:351–355` | ✓ `inner.retain(|h| ... !s.contains(RTK_HOOK_MARKER))` — keeps non-marker entries. |
+| Source-of-truth: marker prefix | `.claude/settings.json:9` | ✓ `\"'@ac-rtk-marker-v1';const s=JSON.parse...\"` (JSON-encoded, decodes to `'@ac-rtk-marker-v1';const s=...`). Test t14 asserts byte-equality with the Rust constant. |
+| RTK_HOOK_MARKER literal lock | `claude_settings.rs:1089–1095` (`rtk_hook_marker_literal_is_locked`) | ✓ Asserts `RTK_HOOK_MARKER == "@ac-rtk-marker-v1"`. |
+| Phase B → Phase A type contract: `RtkSweepResult` | `ipc.ts:30–34` ↔ `commands/config.rs:14–18` | ✓ Tested by `rtk_sweep_result_serializes_camel_case` (line 303). |
+| Phase B → Phase A type contract: `RtkStartupMode` | `ipc.ts:24–28` ↔ Rust returns `String` literal of one of 4 values | ✓ TS narrows to union; Rust has only 4 possible values from the match. No serialization test (it's just a string), but the literal set is locked by the match arms. |
+| Banner subscribe-then-snapshot | `RtkBanner.tsx:21–28` | ✓ `onRtkStartupStatus` listener registered first, then `getRtkStartupStatus` snapshot. Idempotent `setMode` handles the worst case. |
+| Banner busy gate | `RtkBanner.tsx:11, 86, 93` | ✓ `disabled={busy()}` on Enable + Don't ask again. |
+| Banner per-error log | `RtkBanner.tsx:44–48` | ✓ Inspects `result.errors[]`. |
+| SettingsModal handleSave sweep | `SettingsModal.tsx:243–261` | ✓ Snapshotted at `onMount`, fired only on changed value, error path logs. |
+
+### 19.6 Phase A vs Phase B — both ship
+
+Independence reaffirmed at the code level. Phase A (`630ea17`, `d64095d`) compiles and tests green without Phase B. Phase B (`1957679`) layers on top with no coupling-back. The four IPC commands and the two events are the only shared surface.
+
+### 19.7 Recommendation
+
+**APPROVED-WITH-NITS.** Two patches before Step 8:
+1. **MUST** — H1' patch in §19.2 (descend-one-level symlink/junction filter + new test t25). ~15 LOC code + ~30 LOC test.
+2. **NICE** — L1' patch in §19.3 (`disabled={saving() || rtkSweepInFlight()}` on the rtk checkbox). One line.
+
+Agent 3 DEFERRED HIGH (log emission test): document in §8.4 and ship. NOT blocking.
+
+If only #1 lands before Step 8, that's enough to clear the regression. #2 can ride along or fall to a follow-up. After #1: ready for shipper build (Step 8).
+
+— grinch (round 3, Step 7 implementation review)
 
