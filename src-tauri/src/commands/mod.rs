@@ -8,4 +8,5 @@ pub mod repos;
 pub mod session;
 pub mod telegram;
 pub mod voice;
+pub mod wg_delete_diagnostic;
 pub mod window;

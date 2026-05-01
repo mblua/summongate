@@ -113,7 +113,11 @@ fn sanitize_name(raw: &str) -> Result<String, String> {
 /// Validate that an existing entity name is safe for path operations.
 /// Unlike `sanitize_name`, this does NOT transform the name — it just rejects
 /// names that contain path traversal or separator characters.
-fn validate_existing_name(name: &str, entity_label: &str) -> Result<(), String> {
+///
+/// `pub(crate)` so the sentinel-collision invariant test in
+/// `wg_delete_diagnostic::tests` can prove that no valid WG name can collide
+/// with the `BLOCKERS:` / `DIRTY_REPOS:` sentinel prefixes.
+pub(crate) fn validate_existing_name(name: &str, entity_label: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err(format!("{} name cannot be empty", entity_label));
     }
@@ -796,8 +800,29 @@ pub async fn delete_workgroup(
         }
     }
 
-    std::fs::remove_dir_all(&wg_dir)
-        .map_err(|e| format!("Failed to delete workgroup directory: {}", e))?;
+    if let Err(e) = std::fs::remove_dir_all(&wg_dir) {
+        // Detect Windows os error 32 (file in use). On other OSes / other error kinds,
+        // fall through to the legacy raw-error string so existing UX is unchanged.
+        let raw = e.to_string();
+        if is_file_in_use_error(&e) {
+            log::info!(
+                "[entity_creation] delete_workgroup: file-in-use detected for '{}', running blocker diagnostic",
+                workgroup_name
+            );
+            let report = crate::commands::wg_delete_diagnostic::diagnose_blockers(
+                &wg_dir,
+                &workgroup_name,
+                &raw, // raw OS error verbatim — see plan §C.1
+                session_mgr.inner(),
+            )
+            .await;
+            let json = serde_json::to_string(&report).map_err(|se| {
+                format!("Failed to serialize blocker report: {}; original error: {}", se, raw)
+            })?;
+            return Err(format!("BLOCKERS:{}", json));
+        }
+        return Err(format!("Failed to delete workgroup directory: {}", raw));
+    }
     log::info!(
         "[entity_creation] Deleted workgroup: {} (force={})",
         workgroup_name,
@@ -1341,6 +1366,25 @@ fn check_workgroup_repos_dirty(wg_dirs: &[PathBuf]) -> Vec<(String, String)> {
     }
 
     dirty
+}
+
+/// True iff `e` represents the Windows "file in use" error
+/// (os error 32 / `ERROR_SHARING_VIOLATION`). On non-Windows always returns false —
+/// Linux / macOS produce different error codes for "directory not empty due to
+/// open file" and we don't run the Restart-Manager diagnostic there.
+///
+/// `pub(crate)` so the unit test in `wg_delete_diagnostic::tests` can exercise it
+/// without moving the test into this module.
+pub(crate) fn is_file_in_use_error(e: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        e.raw_os_error() == Some(32)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = e;
+        false
+    }
 }
 
 /// Scan .ac-new/ for existing wg-*-{team_name}/ dirs and return the next N.

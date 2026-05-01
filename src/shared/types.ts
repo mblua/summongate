@@ -281,3 +281,29 @@ export interface TeamConfigResult {
   repos: { url: string; agents: string[] }[];
 }
 
+// ---------------------------------------------------------------------------
+// Workgroup-delete blocker report (BLOCKERS: sentinel payload)
+// Mirrors src-tauri/src/commands/wg_delete_diagnostic.rs structs.
+// ---------------------------------------------------------------------------
+
+export interface BlockerSession {
+  sessionId: string;
+  agentName: string;
+  cwd: string;
+}
+
+export interface BlockerProcess {
+  pid: number;
+  name: string;
+  files: string[];
+}
+
+export interface BlockerReport {
+  workgroup: string;
+  platform: "windows" | "linux" | "macos" | "other";
+  diagnosticAvailable: boolean;
+  rawOsError: string;
+  sessions: BlockerSession[];
+  processes: BlockerProcess[];
+}
+
