@@ -52,7 +52,13 @@ const SidebarApp: Component<SidebarAppProps> = (props) => {
   let cleanupGeometry: (() => void) | null = null;
   let raiseTerminalEnabled = true;
   let lastRaiseTime = 0;
-  const blockContextMenu = (e: Event) => e.preventDefault();
+  const blockContextMenu = (e: Event) => {
+    // Allow the WebView2 native menu over the embedded terminal so users get
+    // Copy/Paste. Custom menus elsewhere (SessionItem, ProjectPanel, etc.)
+    // remain blocked.
+    if (e.target instanceof Element && e.target.closest(".terminal-host")) return;
+    e.preventDefault();
+  };
 
   const handleRaiseTerminal = async (e: MouseEvent) => {
     if (!isTauri || props.embedded || !raiseTerminalEnabled) return;
