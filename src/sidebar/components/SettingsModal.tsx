@@ -428,6 +428,21 @@ const SettingsModal: Component<{ onClose: () => void; section?: string }> = (pro
         </Show>
       </div>
 
+      <div class="settings-section">
+        <div class="settings-section-title">Notifications</div>
+        <label class="settings-checkbox-field">
+          <input
+            type="checkbox"
+            class="settings-checkbox"
+            checked={settings.data!.teamIdleBeepEnabled}
+            onChange={(e) =>
+              updateField("teamIdleBeepEnabled", e.currentTarget.checked)
+            }
+          />
+          <span>Beep when a team finishes working (all agents idle)</span>
+        </label>
+      </div>
+
     </>
   );
 
