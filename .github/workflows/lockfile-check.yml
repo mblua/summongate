@@ -1,0 +1,45 @@
+name: Lockfile drift check
+
+on:
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+  push:
+    branches-ignore:
+      - main
+      - 'release/**'
+      - 'hotfix/**'
+      - 'dependabot/**'
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lockfile-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lockfile-drift:
+    name: lockfile-drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Regenerate lockfile in-place
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Fail if lockfile is out of sync
+        run: |
+          if ! git diff --exit-code -- package-lock.json; then
+            echo "::error::package-lock.json is out of sync with package.json. Run 'npm install --package-lock-only' locally and commit the result."
+            exit 1
+          fi
