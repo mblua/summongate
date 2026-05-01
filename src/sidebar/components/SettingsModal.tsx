@@ -368,7 +368,7 @@ const SettingsModal: Component<{ onClose: () => void; section?: string }> = (pro
             type="checkbox"
             class="settings-checkbox"
             checked={settings.data!.injectRtkHook}
-            disabled={rtkSweepInFlight()}
+            disabled={saving() || rtkSweepInFlight()}
             onChange={(e) => updateField("injectRtkHook", e.currentTarget.checked)}
           />
           <span>Inject RTK hook into agent replicas</span>
