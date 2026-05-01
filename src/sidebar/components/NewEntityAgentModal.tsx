@@ -25,17 +25,18 @@ const NewEntityAgentModal: Component<{
       await EntityAPI.createAgentMatrix(props.projectPath, name().trim(), description().trim());
       await projectStore.reloadProject(props.projectPath);
       props.onClose();
+      // intentionally do NOT clear creating() — modal unmounts; any in-flight
+      // keydown event in the close transition stays guarded.
     } catch (e: any) {
       console.error("create_agent_matrix failed:", e);
       setError(typeof e === "string" ? e : e.message || "Failed to create agent");
-    } finally {
       setCreating(false);
     }
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Escape") props.onClose();
-    if (e.key === "Enter" && !e.shiftKey && !(e.target instanceof HTMLTextAreaElement)) {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       handleCreate();
     }
@@ -74,10 +75,14 @@ const NewEntityAgentModal: Component<{
               placeholder="What does this agent do? (optional, max 250 chars)"
               maxLength={250}
               rows={3}
+              aria-describedby="description-keyhint"
             />
-            <Show when={description().length > 0}>
-              <span class="entity-char-count">{description().length}/250</span>
-            </Show>
+            <div class="entity-textarea-meta">
+              <span id="description-keyhint" class="entity-textarea-hint">Enter to create · Shift+Enter for newline</span>
+              <Show when={description().length > 0}>
+                <span class="entity-char-count">{description().length}/250</span>
+              </Show>
+            </div>
           </div>
 
           <Show when={error()}>
@@ -86,7 +91,7 @@ const NewEntityAgentModal: Component<{
         </div>
 
         <div class="new-agent-footer">
-          <button class="new-agent-cancel-btn" onClick={() => props.onClose()}>Cancel</button>
+          <button type="button" class="new-agent-cancel-btn" onClick={() => props.onClose()}>Cancel</button>
           <button
             class="new-agent-create-btn"
             disabled={!canCreate() || creating()}

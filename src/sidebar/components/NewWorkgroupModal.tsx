@@ -29,17 +29,18 @@ const NewWorkgroupModal: Component<{
       );
       await projectStore.reloadProject(props.projectPath);
       props.onClose();
+      // intentionally do NOT clear creating() — modal unmounts; any in-flight
+      // keydown event in the close transition stays guarded.
     } catch (e: any) {
       console.error("create_workgroup failed:", e);
       setError(typeof e === "string" ? e : e.message || "Failed to create workgroup");
-    } finally {
       setCreating(false);
     }
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Escape") props.onClose();
-    if (e.key === "Enter" && !e.shiftKey && !(e.target instanceof HTMLTextAreaElement)) {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       handleCreate();
     }
@@ -81,7 +82,12 @@ const NewWorkgroupModal: Component<{
               onInput={(e) => setBrief(e.currentTarget.value)}
               placeholder="Describe the task for this workgroup..."
               rows={4}
+              autofocus
+              aria-describedby="brief-keyhint"
             />
+            <div class="entity-textarea-meta">
+              <span id="brief-keyhint" class="entity-textarea-hint">Enter to create · Shift+Enter for newline</span>
+            </div>
           </div>
 
           <Show when={creating()}>
@@ -94,7 +100,7 @@ const NewWorkgroupModal: Component<{
         </div>
 
         <div class="new-agent-footer">
-          <button class="new-agent-cancel-btn" onClick={() => props.onClose()} disabled={creating()}>Cancel</button>
+          <button type="button" class="new-agent-cancel-btn" onClick={() => props.onClose()} disabled={creating()}>Cancel</button>
           <button
             class="new-agent-create-btn"
             disabled={!canCreate() || creating()}
