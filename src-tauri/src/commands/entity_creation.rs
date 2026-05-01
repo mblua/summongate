@@ -180,14 +180,141 @@ fn parse_role_frontmatter(content: &str) -> (Option<String>, Option<String>) {
     (name, description)
 }
 
-fn default_brief_content(wg_name: &str) -> String {
-    format!(
-        "# {}\n\n## Objective\n\n_Describe the goal of this workgroup._\n\n## Scope\n\n_What is in and out of scope._\n\n## Deliverables\n\n- [ ] _List deliverables here_\n",
-        wg_name
-    )
+/// Extract a `title:` field from the YAML frontmatter at the start of `content`.
+///
+/// Best-effort frontmatter detection — NOT a YAML implementation. Suitable
+/// only for the narrow case of one optional scalar field at the top of
+/// BRIEF.md.
+///
+/// Returns `Some(title)` when:
+///   - `content` starts with `---`,
+///   - a closing `---` exists,
+///   - a line of the form `<key>: <value>` exists between the delimiters
+///     where `<key>` matches `title` case-insensitively (`title:`, `Title:`,
+///     `TITLE:`, mixed casing all accepted).
+///
+/// The value half is preserved verbatim (case-sensitive), then stripped of
+/// surrounding `"` or `'` quote pairs.
+///
+/// Returns `None` otherwise (no frontmatter, no title key, or empty value).
+///
+/// Mirrors `parse_role_frontmatter`'s shape — both speak the same on-disk
+/// format. See plan `_plans/107-auto-brief-title.md` §6 for why we do not
+/// pull in `serde_yaml`.
+pub(crate) fn parse_brief_title(content: &str) -> Option<String> {
+    if !content.starts_with("---") {
+        return None;
+    }
+    let rest = &content[3..];
+    let end = rest.find("---")?;
+    let frontmatter = &rest[..end];
+
+    for line in frontmatter.lines() {
+        let trimmed = line.trim();
+        // Case-insensitive key match on `title:`. Round 2 fold (F3 / G3):
+        // agents stochastically capitalize keys (`Title:`, `TITLE:`); a
+        // case-sensitive match would let duplicate `title:` lines accumulate
+        // across restarts. Split on the first `:` so we compare just the key.
+        let Some((key, value_raw)) = trimmed.split_once(':') else {
+            continue;
+        };
+        if !key.trim().eq_ignore_ascii_case("title") {
+            continue;
+        }
+        let value = value_raw
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string();
+        if value.is_empty() {
+            return None;
+        }
+        return Some(value);
+    }
+    None
 }
 
-fn build_brief_content(wg_name: &str, brief: Option<String>) -> String {
+/// Snapshot a BRIEF.md file to a sibling timestamped `.bak` before an
+/// agent-driven edit. The caller is expected to invoke this immediately
+/// before injecting any prompt that asks an agent to modify the file.
+///
+/// Filename pattern: `BRIEF.md.<YYYYMMDD-HHMMSS>.bak`, UTC timestamp.
+/// Backups accumulate in the workgroup directory and are NOT auto-deleted —
+/// they are removed alongside the workgroup when the `wg-*` directory is
+/// destroyed.
+///
+/// Returns the path of the created backup on success.
+///
+/// Atomicity: the destination is opened with
+/// `OpenOptions::new().write(true).create_new(true).open(...)` (R3 fold F9 /
+/// G18). On collision the call returns `ErrorKind::AlreadyExists` —
+/// `create_new` maps to `O_CREAT | O_EXCL` on POSIX and `CREATE_NEW` on
+/// Windows, both atomic against same-name races. Reading-then-overwriting
+/// via `std::fs::copy` would silently clobber an existing `.bak` from a
+/// same-second collision, breaking F6's reversibility contract.
+///
+/// Failure modes (all surfaced as `io::Error`):
+///   - Source `BRIEF.md` is missing/unreadable → `NotFound`.
+///   - Destination directory is read-only or full → `PermissionDenied` /
+///     `Other` / `StorageFull`.
+///   - Same-second collision (two restarts of the same Coordinator on the
+///     same workgroup within the same UTC second) → `AlreadyExists`. Caller
+///     treats this as a transient `Err` and skips the title prompt for this
+///     restart; idempotent retry next restart.
+///
+/// Pure I/O helper: no settings access, no PTY, no logging. Caller logs.
+///
+/// Round 2 fold F6 — see plan `_plans/107-auto-brief-title.md` §16. Designed
+/// for reuse by future flows that ask an agent to edit BRIEF.md (the user
+/// has said this is coming). Round 3 fold F9 hardened the implementation
+/// from `std::fs::copy` (silent overwrite) to atomic `create_new`.
+pub(crate) fn snapshot_brief_before_edit(
+    brief_path: &std::path::Path,
+) -> std::io::Result<std::path::PathBuf> {
+    use std::io::Write;
+
+    let parent = brief_path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "brief_path has no parent directory",
+        )
+    })?;
+    let stem = brief_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "brief_path has no filename",
+            )
+        })?;
+    let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+    let bak_name = format!("{}.{}.bak", stem, timestamp);
+    let bak_path = parent.join(bak_name);
+
+    // R3 fold F9 / G18 — atomic create-new. Drop std::fs::copy because it
+    // silently overwrites, which breaks F6's reversibility contract on
+    // same-second restart collisions.
+    let mut source = std::fs::File::open(brief_path)?;
+    let mut dest = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&bak_path)?;
+    std::io::copy(&mut source, &mut dest)?;
+    dest.flush()?;
+
+    Ok(bak_path)
+}
+
+/// BRIEF.md content for a brand-new workgroup.
+///
+/// - User-supplied brief → written verbatim with a single trailing newline.
+/// - Nothing supplied → empty file.
+///
+/// Issue #107: do not auto-template the brief. Empty briefs are a valid state
+/// and signal "no title-gen yet" to the Coordinator-spawn flow in
+/// `commands/session.rs` (which skips title-gen on empty briefs).
+fn build_brief_content(_wg_name: &str, brief: Option<String>) -> String {
     let trimmed = brief
         .as_deref()
         .map(str::trim)
@@ -195,7 +322,7 @@ fn build_brief_content(wg_name: &str, brief: Option<String>) -> String {
 
     match trimmed {
         Some(content) => format!("{}\n", content),
-        None => default_brief_content(wg_name),
+        None => String::new(),
     }
 }
 
@@ -1729,7 +1856,8 @@ async fn git_clone_async(url: &str, target: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     //! Tests for the preflight-rename `delete_workgroup` helper added in
-    //! the #113 follow-up dispatch.
+    //! the #113 follow-up dispatch, plus the #107 helpers
+    //! (`parse_brief_title`, `snapshot_brief_before_edit`).
 
     use super::*;
 
@@ -1907,5 +2035,182 @@ mod tests {
             !is_rename_blocked_by_handle(&e),
             "non-Windows must always return false"
         );
+    }
+
+    // ── parse_brief_title — dev-rust R7 cases ──
+
+    #[test]
+    fn parse_brief_title_returns_some_for_canonical_frontmatter() {
+        assert_eq!(
+            parse_brief_title("---\ntitle: Hello world\n---\n\nbody\n"),
+            Some("Hello world".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_strips_double_quotes() {
+        assert_eq!(
+            parse_brief_title("---\ntitle: \"Quoted\"\n---\n"),
+            Some("Quoted".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_strips_single_quotes() {
+        assert_eq!(
+            parse_brief_title("---\ntitle: 'Quoted'\n---\n"),
+            Some("Quoted".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_returns_none_when_no_frontmatter() {
+        assert_eq!(parse_brief_title("# Heading\n\nbody\n"), None);
+    }
+
+    #[test]
+    fn parse_brief_title_returns_none_for_empty_value() {
+        assert_eq!(parse_brief_title("---\ntitle:\n---\n"), None);
+    }
+
+    #[test]
+    fn parse_brief_title_returns_none_when_closing_delimiter_missing() {
+        assert_eq!(parse_brief_title("---\ntitle: foo\nbody only\n"), None);
+    }
+
+    #[test]
+    fn parse_brief_title_returns_none_when_title_field_absent() {
+        assert_eq!(parse_brief_title("---\nname: foo\n---\n"), None);
+    }
+
+    #[test]
+    fn parse_brief_title_preserves_inner_colon() {
+        assert_eq!(
+            parse_brief_title("---\ntitle: a: b\n---\n"),
+            Some("a: b".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_handles_indented_key() {
+        assert_eq!(
+            parse_brief_title("---\n  title: foo\n---\n"),
+            Some("foo".to_string())
+        );
+    }
+
+    // ── parse_brief_title — dev-rust-grinch G3 / G13 case-insensitivity ──
+
+    #[test]
+    fn parse_brief_title_handles_capital_t() {
+        assert_eq!(
+            parse_brief_title("---\nTitle: Foo\n---\n"),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_handles_all_caps_key() {
+        assert_eq!(
+            parse_brief_title("---\nTITLE: Foo\n---\n"),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_handles_mixed_case_key() {
+        assert_eq!(
+            parse_brief_title("---\ntItLe: Foo\n---\n"),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_value_remains_case_sensitive() {
+        // The key match is case-insensitive; the value MUST round-trip
+        // verbatim (it is user-visible content, not a structural marker).
+        assert_eq!(
+            parse_brief_title("---\nTitle: MixedCASE Value\n---\n"),
+            Some("MixedCASE Value".to_string())
+        );
+    }
+
+    // ── snapshot_brief_before_edit — F6 / F9 ──
+
+    #[test]
+    fn snapshot_brief_before_edit_creates_byte_identical_copy() {
+        let dir = std::env::temp_dir().join(format!(
+            "ac-snapshot-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let brief = dir.join("BRIEF.md");
+        let body = b"# A brief\n\nWith some body content.\n";
+        std::fs::write(&brief, body).unwrap();
+
+        let bak = snapshot_brief_before_edit(&brief).unwrap();
+
+        assert!(bak.exists());
+        let bak_name = bak.file_name().unwrap().to_string_lossy().to_string();
+        assert!(bak_name.starts_with("BRIEF.md."));
+        assert!(bak_name.ends_with(".bak"));
+        // The infix is a YYYYMMDD-HHMMSS UTC timestamp — 15 chars.
+        let infix = &bak_name["BRIEF.md.".len()..bak_name.len() - ".bak".len()];
+        assert_eq!(infix.len(), 15);
+        assert_eq!(infix.chars().nth(8), Some('-'));
+
+        let copied = std::fs::read(&bak).unwrap();
+        assert_eq!(copied, body);
+
+        // Cleanup.
+        let _ = std::fs::remove_file(&brief);
+        let _ = std::fs::remove_file(&bak);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn snapshot_brief_before_edit_errors_when_source_missing() {
+        let phantom = std::env::temp_dir().join(format!(
+            "ac-snapshot-missing-{}-BRIEF.md",
+            std::process::id()
+        ));
+        let result = snapshot_brief_before_edit(&phantom);
+        assert!(result.is_err());
+    }
+
+    // R3 fold F9 / G18 — exercise the atomic-create-new collision path.
+    // Calling the helper twice within the same UTC second on the same
+    // source must yield Err(ErrorKind::AlreadyExists) on the second call;
+    // the original .bak from the first call is preserved untouched.
+    #[test]
+    fn snapshot_brief_before_edit_returns_already_exists_on_collision() {
+        let dir = std::env::temp_dir().join(format!(
+            "ac-snapshot-collision-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let brief = dir.join("BRIEF.md");
+        std::fs::write(&brief, b"first body\n").unwrap();
+
+        let bak1 = snapshot_brief_before_edit(&brief).unwrap();
+        let bak1_bytes = std::fs::read(&bak1).unwrap();
+
+        // Mutate source between calls so we can prove the collision did NOT
+        // overwrite bak1 with the new body.
+        std::fs::write(&brief, b"second body - must not land in bak1\n").unwrap();
+
+        let err = snapshot_brief_before_edit(&brief)
+            .expect_err("second call within same UTC second must collide");
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+
+        // bak1 untouched.
+        let bak1_after = std::fs::read(&bak1).unwrap();
+        assert_eq!(bak1_after, bak1_bytes);
+        assert_eq!(bak1_after, b"first body\n");
+
+        // Cleanup.
+        let _ = std::fs::remove_file(&brief);
+        let _ = std::fs::remove_file(&bak1);
+        let _ = std::fs::remove_dir(&dir);
     }
 }

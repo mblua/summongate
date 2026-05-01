@@ -158,6 +158,12 @@ pub struct AppSettings {
     /// ask again]` button on the banner. See issue #120.
     #[serde(default)]
     pub rtk_prompt_dismissed: bool,
+    /// When true, on Coordinator session spawn AC injects a prompt asking the
+    /// agent to add a YAML frontmatter `title:` line to its workgroup
+    /// `BRIEF.md` (only if the brief is non-empty and has no `title:` yet).
+    /// See plan `_plans/107-auto-brief-title.md`.
+    #[serde(default = "default_true")]
+    pub auto_generate_brief_title: bool,
 }
 
 fn default_true() -> bool {
@@ -237,6 +243,7 @@ impl Default for AppSettings {
             log_level: None,
             inject_rtk_hook: false,
             rtk_prompt_dismissed: false,
+            auto_generate_brief_title: true,
         }
     }
 }
