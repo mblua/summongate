@@ -210,6 +210,7 @@ const ProjectPanel: Component = () => {
         const [wgConfirmText, setWgConfirmText] = createSignal("");
         const [agentCtxMenu, setAgentCtxMenu] = createSignal<{ agent: { name: string; path: string; preferredAgentId?: string }; x: number; y: number } | null>(null);
         const [agentsHeaderCtxMenu, setAgentsHeaderCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
+        const [workgroupsHeaderCtxMenu, setWorkgroupsHeaderCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
         const [deletingAgent, setDeletingAgent] = createSignal<{ name: string; path: string } | null>(null);
         const [agentDeleteError, setAgentDeleteError] = createSignal("");
         const [agentDeleteInProgress, setAgentDeleteInProgress] = createSignal(false);
@@ -300,6 +301,7 @@ const ProjectPanel: Component = () => {
           setWgCtxMenu(null);
           setAgentCtxMenu(null);
           setAgentsHeaderCtxMenu(null);
+          setWorkgroupsHeaderCtxMenu(null);
           setReplicaCtxMenu(null);
           setCtxMenuPos({ x: e.clientX, y: e.clientY });
           setShowCtxMenu(true);
@@ -331,6 +333,7 @@ const ProjectPanel: Component = () => {
           setWgCtxMenu(null);
           setAgentCtxMenu(null);
           setAgentsHeaderCtxMenu(null);
+          setWorkgroupsHeaderCtxMenu(null);
           setReplicaCtxMenu(null);
           setTeamCtxMenu({ team, x: e.clientX, y: e.clientY });
           const dismiss = (ev?: Event) => {
@@ -354,6 +357,7 @@ const ProjectPanel: Component = () => {
           setTeamCtxMenu(null);
           setAgentCtxMenu(null);
           setAgentsHeaderCtxMenu(null);
+          setWorkgroupsHeaderCtxMenu(null);
           setReplicaCtxMenu(null);
           setWgCtxMenu({ wg, x: e.clientX, y: e.clientY });
           const dismiss = (ev?: Event) => {
@@ -378,6 +382,7 @@ const ProjectPanel: Component = () => {
           setWgCtxMenu(null);
           setAgentCtxMenu(null);
           setAgentsHeaderCtxMenu(null);
+          setWorkgroupsHeaderCtxMenu(null);
           setReplicaCtxMenu({
             sessionId: session.id,
             sessionName: session.name,
@@ -717,12 +722,39 @@ const ProjectPanel: Component = () => {
                 {/* Workgroups */}
                 {(() => {
                   const [wgsCollapsed, setWgsCollapsed] = createSignal(false);
+
+                  const handleWorkgroupsHeaderContextMenu = (e: MouseEvent) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cleanupCtx();
+                    setShowCtxMenu(false);
+                    setTeamCtxMenu(null);
+                    setWgCtxMenu(null);
+                    setAgentCtxMenu(null);
+                    setAgentsHeaderCtxMenu(null);
+                    setReplicaCtxMenu(null);
+                    setWorkgroupsHeaderCtxMenu({ x: e.clientX, y: e.clientY });
+                    const dismiss = (ev?: Event) => {
+                      if (ev instanceof KeyboardEvent && ev.key !== "Escape") return;
+                      setWorkgroupsHeaderCtxMenu(null);
+                      cleanupCtx();
+                    };
+                    dismissCtx = dismiss;
+                    setTimeout(() => {
+                      window.addEventListener("click", dismiss);
+                      window.addEventListener("contextmenu", dismiss);
+                      window.addEventListener("keydown", dismiss as any);
+                    });
+                  };
+
                   return (
+                    <>
                     <Show when={sessionsStore.showCategories}>
                     <div class="ac-wg-group">
                       <div
                         class="ac-wg-header ac-wg-header--collapsible"
                         onClick={() => setWgsCollapsed((c) => !c)}
+                        onContextMenu={handleWorkgroupsHeaderContextMenu}
                       >
                         <span class="ac-discovery-chevron" classList={{ collapsed: wgsCollapsed() }}>
                           &#x25BE;
@@ -771,6 +803,31 @@ const ProjectPanel: Component = () => {
                       </Show>
                     </div>
                     </Show>
+
+                    {/* Workgroups header context menu */}
+                    {workgroupsHeaderCtxMenu() && (
+                      <Portal>
+                        <div
+                          class="session-context-menu"
+                          style={{ left: `${workgroupsHeaderCtxMenu()!.x}px`, top: `${workgroupsHeaderCtxMenu()!.y}px` }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            class="session-context-option"
+                            classList={{ "context-option-disabled": !hasTeams() }}
+                            disabled={!hasTeams()}
+                            onClick={() => {
+                              if (!hasTeams()) return;
+                              setWorkgroupsHeaderCtxMenu(null);
+                              setShowNewWorkgroup(true);
+                            }}
+                          >
+                            New Workgroup
+                          </button>
+                        </div>
+                      </Portal>
+                    )}
+                    </>
                   );
                 })()}
                 {/* Agents */}
@@ -785,6 +842,7 @@ const ProjectPanel: Component = () => {
                     setTeamCtxMenu(null);
                     setWgCtxMenu(null);
                     setAgentsHeaderCtxMenu(null);
+                    setWorkgroupsHeaderCtxMenu(null);
                     setReplicaCtxMenu(null);
                     setAgentCtxMenu({ agent, x: e.clientX, y: e.clientY });
                     const dismiss = (ev?: Event) => {
@@ -808,6 +866,7 @@ const ProjectPanel: Component = () => {
                     setTeamCtxMenu(null);
                     setWgCtxMenu(null);
                     setAgentCtxMenu(null);
+                    setWorkgroupsHeaderCtxMenu(null);
                     setReplicaCtxMenu(null);
                     setAgentsHeaderCtxMenu({ x: e.clientX, y: e.clientY });
                     const dismiss = (ev?: Event) => {
