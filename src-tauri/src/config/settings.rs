@@ -149,6 +149,16 @@ pub struct AppSettings {
     /// Phase 2 (UI dropdown) and Phase 3 (live reload) are deferred per the issue.
     #[serde(default)]
     pub log_level: Option<String>,
+    /// When true, AC writes the RTK PreToolUse rewriter hook into every managed
+    /// agent dir's `.claude/settings.local.json` (matrices + workgroup replicas).
+    /// Toggled from Settings/General. See issue #120.
+    #[serde(default)]
+    pub inject_rtk_hook: bool,
+    /// When true, the startup banner offering to enable `inject_rtk_hook` is
+    /// suppressed for the lifetime of this settings file. Set by the `[Don't
+    /// ask again]` button on the banner. See issue #120.
+    #[serde(default)]
+    pub rtk_prompt_dismissed: bool,
 }
 
 fn default_true() -> bool {
@@ -225,6 +235,8 @@ impl Default for AppSettings {
             onboarding_dismissed: false,
             coord_sort_by_activity: false,
             log_level: None,
+            inject_rtk_hook: false,
+            rtk_prompt_dismissed: false,
         }
     }
 }
@@ -725,6 +737,28 @@ mod tests {
         }"#;
         let s: AppSettings = serde_json::from_str(json).expect("deserialize old json");
         assert_eq!(s.main_sidebar_side, MainSidebarSide::Right);
+    }
+
+    #[test]
+    fn inject_rtk_hook_round_trips_through_serde() {
+        let mut s = AppSettings::default();
+        assert!(!s.inject_rtk_hook);
+        s.inject_rtk_hook = true;
+        let json = serde_json::to_string(&s).expect("serialize");
+        assert!(json.contains("\"injectRtkHook\":true"));
+        let back: AppSettings = serde_json::from_str(&json).expect("deserialize");
+        assert!(back.inject_rtk_hook);
+    }
+
+    #[test]
+    fn rtk_prompt_dismissed_round_trips_through_serde() {
+        let mut s = AppSettings::default();
+        assert!(!s.rtk_prompt_dismissed);
+        s.rtk_prompt_dismissed = true;
+        let json = serde_json::to_string(&s).expect("serialize");
+        assert!(json.contains("\"rtkPromptDismissed\":true"));
+        let back: AppSettings = serde_json::from_str(&json).expect("deserialize");
+        assert!(back.rtk_prompt_dismissed);
     }
 
     #[test]

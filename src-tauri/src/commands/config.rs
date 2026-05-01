@@ -1,12 +1,28 @@
 use std::sync::Arc;
 use tauri::State;
 
+use crate::config::claude_settings::{enumerate_managed_agent_dirs, ensure_rtk_pretool_hook};
 use crate::config::settings::{load_settings, save_settings, AppSettings, SettingsState};
 use crate::pty::manager::PtyManager;
 use crate::session::manager::SessionManager;
 use crate::web::auth::WebAccessToken;
 use crate::web::broadcast::WsBroadcaster;
-use crate::WebServerHandle;
+use crate::{RtkSweepLockState, WebServerHandle};
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RtkSweepResult {
+    pub total: u32,
+    pub succeeded: u32,
+    pub errors: Vec<RtkSweepError>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RtkSweepError {
+    pub path: String,
+    pub error: String,
+}
 
 #[tauri::command]
 pub async fn save_debug_logs(content: String) -> Result<(), String> {
@@ -138,4 +154,122 @@ pub async fn get_web_server_status(settings: State<'_, SettingsState>) -> Result
 #[tauri::command]
 pub fn get_instance_label() -> String {
     crate::config::profile::instance_label().to_string()
+}
+
+/// Narrow setter — flips ONLY `inject_rtk_hook`. Holds the SettingsState
+/// write lock through `save_settings` so a concurrent `update_settings`
+/// from the SettingsModal cannot overwrite the change at the IPC boundary
+/// (issue #120, grinch H3 + N1). The explicit `drop(s)` after `save_settings`
+/// makes the guard scope visually unambiguous: lock-then-write-then-release.
+/// Caller is responsible for triggering `sweep_rtk_hook` if disk side-effects
+/// on replicas are desired.
+#[tauri::command]
+pub async fn set_inject_rtk_hook(
+    settings: State<'_, SettingsState>,
+    value: bool,
+) -> Result<(), String> {
+    let mut s = settings.write().await;
+    s.inject_rtk_hook = value;
+    let snapshot = s.clone();
+    save_settings(&snapshot)?;
+    drop(s); // explicit; lock released AFTER the disk write completes
+    Ok(())
+}
+
+/// Narrow setter — flips ONLY `rtk_prompt_dismissed`. Same lock-held-through-save
+/// pattern as `set_inject_rtk_hook` (issue #120, grinch H3 + N1).
+#[tauri::command]
+pub async fn set_rtk_prompt_dismissed(
+    settings: State<'_, SettingsState>,
+    value: bool,
+) -> Result<(), String> {
+    let mut s = settings.write().await;
+    s.rtk_prompt_dismissed = value;
+    let snapshot = s.clone();
+    save_settings(&snapshot)?;
+    drop(s); // explicit; lock released AFTER the disk write completes
+    Ok(())
+}
+
+/// Sweep every AC-managed agent directory and apply
+/// `ensure_rtk_pretool_hook(dir, enabled)`. Best-effort per directory:
+/// per-dir failures are logged + appended to `errors` and the sweep
+/// continues. Reads `project_paths` from the live `SettingsState` (avoids a
+/// disk-read race against `save_settings`).
+///
+/// Acquires `RtkSweepLockState` for the entire loop — eliminates the
+/// in-process race vs. concurrent `ensure_claude_md_excludes` /
+/// `ensure_rtk_pretool_hook` calls from `entity_creation` /
+/// `agent_creator` (issue #120, grinch M8). Cross-process races (two AC
+/// instances) remain documented in the plan §7.4.
+#[tauri::command]
+pub async fn sweep_rtk_hook(
+    settings: State<'_, SettingsState>,
+    sweep_lock: State<'_, RtkSweepLockState>,
+    enabled: bool,
+) -> Result<RtkSweepResult, String> {
+    let _guard = sweep_lock.lock().await;
+
+    let project_paths: Vec<String> = {
+        let s = settings.read().await;
+        s.project_paths.clone()
+    };
+
+    let dirs = enumerate_managed_agent_dirs(&project_paths);
+    let total = dirs.len() as u32;
+    let mut succeeded: u32 = 0;
+    let mut errors: Vec<RtkSweepError> = Vec::new();
+
+    for dir in dirs {
+        match ensure_rtk_pretool_hook(&dir, enabled) {
+            Ok(()) => {
+                succeeded += 1;
+            }
+            Err(e) => {
+                log::warn!(
+                    "[rtk-sweep] Failed to apply (enabled={}) to {}: {}",
+                    enabled,
+                    dir.display(),
+                    e
+                );
+                errors.push(RtkSweepError {
+                    path: dir.to_string_lossy().to_string(),
+                    error: e,
+                });
+            }
+        }
+    }
+
+    log::info!(
+        "[rtk-sweep] enabled={} total={} succeeded={} errors={}",
+        enabled,
+        total,
+        succeeded,
+        errors.len()
+    );
+
+    Ok(RtkSweepResult {
+        total,
+        succeeded,
+        errors,
+    })
+}
+
+/// Snapshot of the RTK startup decision, computed lazily so the frontend can
+/// query it after mounting (avoids the event race with `lib.rs::setup`'s
+/// emit). Pure read — does NOT auto-disable, does NOT sweep. Auto-disable
+/// runs once per boot in the setup task.
+#[tauri::command]
+pub async fn get_rtk_startup_status(
+    settings: State<'_, SettingsState>,
+) -> Result<String, String> {
+    let rtk_present = which::which("rtk").is_ok();
+    let s = settings.read().await;
+    let mode = match (rtk_present, s.inject_rtk_hook, s.rtk_prompt_dismissed) {
+        (true, false, false) => "prompt-enable",
+        (true, true, _) => "active",
+        (false, true, _) => "auto-disabled",
+        _ => "silent",
+    };
+    Ok(mode.to_string())
 }

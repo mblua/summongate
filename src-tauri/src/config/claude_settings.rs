@@ -1,9 +1,39 @@
-// Callers of `ensure_claude_md_excludes` (must be kept in sync with any new
-// agent-creation flow — see issue #84 for the original miss):
+// Callers of `ensure_claude_md_excludes` and `ensure_rtk_pretool_hook` (must be
+// kept in sync with any new agent-creation flow — see issue #84 for the original
+// `ensure_claude_md_excludes` miss and issue #120 for the rtk extension):
 //   - commands/agent_creator.rs::write_claude_settings_local (Tauri cmd; frontend: NewAgentModal.tsx + SessionItem.tsx ctx-menu)
 //   - cli/create_agent.rs (CLI `create-agent --launch <id>`)
 //   - commands/entity_creation.rs::create_agent_matrix
 //   - commands/entity_creation.rs::create_workgroup (per-replica)
+//
+// The retroactive sweep (issue #120) is `commands/config.rs::sweep_rtk_hook`,
+// which reuses `enumerate_managed_agent_dirs` below.
+
+/// Immutable substring embedded in every AC-injected rewriter command.
+/// OFF-sweep removes any PreToolUse hook whose `command` contains this
+/// string, regardless of whether the rest of the command matches the
+/// current `RTK_REWRITER_COMMAND` byte-for-byte. ON-sweep also uses the
+/// substring to skip insertion if any marker-bearing entry already
+/// exists (preserves user customizations of the rewriter body across
+/// AC upgrades).
+///
+/// MUST NEVER CHANGE. If the marker space ever needs to be retired,
+/// bump to `@ac-rtk-marker-v2` AND keep `v1` in a new `RTK_LEGACY_MARKERS`
+/// constant for OFF-sweep cleanup. See issue #120 §10 (migration).
+pub const RTK_HOOK_MARKER: &str = "@ac-rtk-marker-v1";
+
+/// Canonical RTK PreToolUse rewriter command. The leading
+/// `'@ac-rtk-marker-v1';` is a JS string-literal expression statement —
+/// node treats it as a no-op (string in statement position). The marker
+/// is never executed and never affects rewriter behavior; it exists
+/// solely to identify "this hook is AC-injected" across AC upgrades
+/// (see `RTK_HOOK_MARKER`).
+///
+/// Mirrors `repo-AgentsCommander/.claude/settings.json` (project-level
+/// hook). Must stay byte-identical to that file; the source-of-truth
+/// test in this module loads the source `.claude/settings.json` at test
+/// time and asserts equality.
+pub const RTK_REWRITER_COMMAND: &str = r#"node -e "'@ac-rtk-marker-v1';const s=JSON.parse(require('fs').readFileSync(0,'utf8'));const c=s?.tool_input?.command;if(!c){process.exit(0)}if(/^rtk\s/.test(c)||/&&\s*rtk\s/.test(c)){process.exit(0)}const skip=/^(cd |mkdir |echo |cat <<|source |export |\.|set )/.test(c);if(skip){process.exit(0)}const parts=c.split(/\s*(&&|\|\||;)\s*/);const out=parts.map((p,i)=>{if(i%2===1)return p;if(/^rtk\s/.test(p))return p;return 'rtk '+p}).join(' ');if(out!==c){console.log(JSON.stringify({decision:'modify',tool_input:{...s.tool_input,command:out}}))}else{process.exit(0)}""#;
 
 use std::path::Path;
 
@@ -66,4 +96,875 @@ pub fn ensure_claude_md_excludes(dir: &Path) -> Result<(), String> {
         .map_err(|e| format!("Failed to write settings.local.json: {}", e))?;
 
     Ok(())
+}
+
+/// Merges (`enabled=true`) or removes (`enabled=false`) the RTK PreToolUse
+/// rewriter hook in `<dir>/.claude/settings.local.json`. Issue #120.
+///
+/// Non-destructive on every malformed input: bails with `log::warn!` and
+/// returns `Ok(())` without modifying the file. UTF-8 BOM is stripped on
+/// the read path. Idempotency and removal both filter by marker substring
+/// (`RTK_HOOK_MARKER`), not byte-equality of the full command — this
+/// preserves user customizations of the rewriter body across AC upgrades.
+pub fn ensure_rtk_pretool_hook(dir: &Path, enabled: bool) -> Result<(), String> {
+    if !dir.exists() {
+        return Err(format!("Directory does not exist: {}", dir.display()));
+    }
+
+    let claude_dir = dir.join(".claude");
+    let settings_path = claude_dir.join("settings.local.json");
+
+    // OFF-path early exit: nothing to remove if file is missing.
+    if !enabled && !settings_path.exists() {
+        return Ok(());
+    }
+
+    // Read + BOM-strip + parse. On any parse failure or non-object root,
+    // log + bail without modifying the file (grinch H1, M11).
+    let mut obj: serde_json::Value = if settings_path.exists() {
+        let raw = std::fs::read_to_string(&settings_path)
+            .map_err(|e| format!("Failed to read existing settings.local.json: {}", e))?;
+        let cleaned = raw.strip_prefix('\u{feff}').unwrap_or(raw.as_str());
+        match serde_json::from_str::<serde_json::Value>(cleaned) {
+            Ok(v) if v.is_object() => v,
+            _ => {
+                log::warn!(
+                    "[rtk] Skipping {} for {}: file is not a JSON object (preserved as-is)",
+                    if enabled { "ON-sweep" } else { "OFF-sweep" },
+                    settings_path.display()
+                );
+                return Ok(());
+            }
+        }
+    } else {
+        // ON-path with missing file — start with an empty doc.
+        serde_json::json!({})
+    };
+
+    // For ON-path, ensure .claude/ exists before we eventually write back.
+    if enabled && !claude_dir.exists() {
+        std::fs::create_dir_all(&claude_dir)
+            .map_err(|e| format!("Failed to create .claude directory: {}", e))?;
+    }
+
+    // Mutate. Both helpers return `true` if `obj` was changed (caller should
+    // write back) and `false` if the call was a structural no-op or a
+    // wrong-shape bail (caller must NOT write — keep user's file untouched).
+    let mutated = if enabled {
+        merge_rtk_hook(&mut obj, &settings_path)
+    } else {
+        remove_rtk_hook(&mut obj, &settings_path)
+    };
+
+    if !mutated {
+        return Ok(());
+    }
+
+    let content = serde_json::to_string_pretty(&obj)
+        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+    std::fs::write(&settings_path, format!("{}\n", content))
+        .map_err(|e| format!("Failed to write settings.local.json: {}", e))?;
+
+    Ok(())
+}
+
+/// Idempotent merge by marker (preserves user customizations of the
+/// rewriter body across AC upgrades — see grinch M10). Returns `true` iff
+/// `obj` was modified (caller should write).
+///
+/// Bails with `log::warn!` and returns `false` on any wrong-shape value
+/// (grinch H2). The user's file is preserved verbatim by the outer caller.
+fn merge_rtk_hook(obj: &mut serde_json::Value, settings_path: &Path) -> bool {
+    use serde_json::Value;
+
+    let map = match obj.as_object_mut() {
+        Some(m) => m,
+        None => {
+            // Outer guard already enforced object-ness; defensive only.
+            log::warn!(
+                "[rtk] ON-sweep: top-level value in {} is not an object; bailing",
+                settings_path.display()
+            );
+            return false;
+        }
+    };
+
+    // 'hooks' (if present) must be an object.
+    if let Some(existing) = map.get("hooks") {
+        if !existing.is_object() {
+            log::warn!(
+                "[rtk] ON-sweep: 'hooks' in {} is {} (expected object); bailing — preserving user data",
+                settings_path.display(),
+                discriminant_label(existing),
+            );
+            return false;
+        }
+    }
+    let hooks_obj = map
+        .entry("hooks".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()))
+        .as_object_mut()
+        .expect("just inserted or pre-checked object");
+
+    // 'PreToolUse' (if present) must be an array.
+    if let Some(existing) = hooks_obj.get("PreToolUse") {
+        if !existing.is_array() {
+            log::warn!(
+                "[rtk] ON-sweep: 'hooks.PreToolUse' in {} is {} (expected array); bailing",
+                settings_path.display(),
+                discriminant_label(existing),
+            );
+            return false;
+        }
+    }
+    let pretool_arr = hooks_obj
+        .entry("PreToolUse".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()))
+        .as_array_mut()
+        .expect("just inserted or pre-checked array");
+
+    // Idempotency: ANY existing inner hook whose command contains the marker
+    // means "already applied". This includes user-customized variants — we
+    // do NOT overwrite their tweaks.
+    for entry in pretool_arr.iter() {
+        if let Some(inner) = entry.get("hooks").and_then(|v| v.as_array()) {
+            for h in inner {
+                if let Some(cmd) = h.get("command").and_then(|c| c.as_str()) {
+                    if cmd.contains(RTK_HOOK_MARKER) {
+                        return false; // already-applied no-op
+                    }
+                }
+            }
+        }
+    }
+
+    // Find a Bash matcher entry. If multiple exist (rare; user-created),
+    // use the FIRST and leave the rest untouched.
+    let bash_idx = pretool_arr.iter().position(|entry| {
+        entry
+            .get("matcher")
+            .and_then(|m| m.as_str())
+            .map(|s| s == "Bash")
+            .unwrap_or(false)
+    });
+
+    let our_hook = serde_json::json!({
+        "type": "command",
+        "command": RTK_REWRITER_COMMAND,
+    });
+
+    match bash_idx {
+        Some(idx) => {
+            // Inner 'hooks' (if present) must be an array.
+            if let Some(existing) = pretool_arr[idx].get("hooks") {
+                if !existing.is_array() {
+                    log::warn!(
+                        "[rtk] ON-sweep: 'hooks.PreToolUse[{}].hooks' in {} is {} (expected array); bailing",
+                        idx,
+                        settings_path.display(),
+                        discriminant_label(existing),
+                    );
+                    return false;
+                }
+            }
+            let entry_obj = pretool_arr[idx]
+                .as_object_mut()
+                .expect("matcher entry is object (validated by the matcher::as_str above)");
+            let inner = entry_obj
+                .entry("hooks".to_string())
+                .or_insert_with(|| Value::Array(Vec::new()))
+                .as_array_mut()
+                .expect("just inserted or pre-checked array");
+            inner.push(our_hook);
+        }
+        None => {
+            pretool_arr.push(serde_json::json!({
+                "matcher": "Bash",
+                "hooks": [our_hook],
+            }));
+        }
+    }
+    true
+}
+
+/// Removes every PreToolUse hook whose `command` contains `RTK_HOOK_MARKER`.
+/// Returns `true` iff `obj` was modified (caller should write).
+///
+/// Wrong-shape branches inside the tree are SKIPPED with a log warn — never
+/// destroyed. Other shapes (e.g. a non-Bash matcher entry, an entry with
+/// no `hooks` key) are left untouched.
+fn remove_rtk_hook(obj: &mut serde_json::Value, settings_path: &Path) -> bool {
+    let map = match obj.as_object_mut() {
+        Some(m) => m,
+        None => return false,
+    };
+
+    if !map.contains_key("hooks") {
+        return false;
+    }
+    let hooks_obj = match map.get_mut("hooks").and_then(|v| v.as_object_mut()) {
+        Some(o) => o,
+        None => {
+            log::warn!(
+                "[rtk] OFF-sweep: 'hooks' in {} is non-object (preserved as-is)",
+                settings_path.display()
+            );
+            return false;
+        }
+    };
+
+    if !hooks_obj.contains_key("PreToolUse") {
+        return false;
+    }
+    let pretool_arr = match hooks_obj.get_mut("PreToolUse").and_then(|v| v.as_array_mut()) {
+        Some(a) => a,
+        None => {
+            log::warn!(
+                "[rtk] OFF-sweep: 'hooks.PreToolUse' in {} is non-array (preserved as-is)",
+                settings_path.display()
+            );
+            return false;
+        }
+    };
+
+    let mut any_removed = false;
+    for (idx, entry) in pretool_arr.iter_mut().enumerate() {
+        if let Some(existing) = entry.get("hooks") {
+            if !existing.is_array() {
+                log::warn!(
+                    "[rtk] OFF-sweep: 'hooks.PreToolUse[{}].hooks' in {} is non-array (preserved as-is for this entry)",
+                    idx,
+                    settings_path.display(),
+                );
+                continue;
+            }
+        } else {
+            continue;
+        }
+        let inner = entry.get_mut("hooks").and_then(|v| v.as_array_mut()).unwrap();
+        let before = inner.len();
+        inner.retain(|h| {
+            h.get("command")
+                .and_then(|c| c.as_str())
+                .map(|s| !s.contains(RTK_HOOK_MARKER))
+                .unwrap_or(true) // keep entries that don't expose a string command
+        });
+        if inner.len() != before {
+            any_removed = true;
+        }
+    }
+
+    if !any_removed {
+        return false;
+    }
+
+    // Drop matcher entries whose inner `hooks` is now empty.
+    pretool_arr.retain(|entry| {
+        entry
+            .get("hooks")
+            .and_then(|v| v.as_array())
+            .map(|a| !a.is_empty())
+            .unwrap_or(true) // keep entries with no `hooks` key (we didn't touch them)
+    });
+
+    // Cascade: empty PreToolUse → drop key. Empty hooks → drop key.
+    if pretool_arr.is_empty() {
+        hooks_obj.remove("PreToolUse");
+    }
+    if hooks_obj.is_empty() {
+        map.remove("hooks");
+    }
+
+    true
+}
+
+/// Maps a `serde_json::Value` to a short discriminant label for log messages.
+fn discriminant_label(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
+
+/// Walks every `<project>/.ac-new/` and returns absolute paths to every
+/// `_agent_*` matrix and every `__agent_*` replica (inside `wg-*` dirs).
+///
+/// Filters applied (grinch M7):
+///   - `symlink_metadata` — Unix symlinks-to-dir are NOT followed.
+///   - Windows NTFS junctions (`FILE_ATTRIBUTE_REPARSE_POINT`) are filtered.
+///   - Canonical-path dedupe — duplicates resolved.
+///
+/// Skips silently: missing project paths, non-directory entries, unreadable
+/// directories, paths that fail to canonicalize.
+///
+/// Order is filesystem-iteration order minus duplicates; not sorted. Callers
+/// should not rely on stable ordering — sweep is idempotent per dir.
+pub fn enumerate_managed_agent_dirs(project_paths: &[String]) -> Vec<std::path::PathBuf> {
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut out: Vec<PathBuf> = Vec::new();
+
+    let push_if_new = |raw: PathBuf, out: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>| {
+        // Reject if the path is a symlink or junction.
+        let md = match std::fs::symlink_metadata(&raw) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+        if md.file_type().is_symlink() {
+            return;
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+            if md.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                return;
+            }
+        }
+        if !md.is_dir() {
+            return;
+        }
+
+        // Canonicalize; if it fails (race, permissions), skip.
+        let canonical = match std::fs::canonicalize(&raw) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        if seen.insert(canonical) {
+            out.push(raw);
+        }
+    };
+
+    for project in project_paths {
+        let ac_new = std::path::Path::new(project).join(".ac-new");
+        if !ac_new.is_dir() {
+            continue;
+        }
+        let entries = match std::fs::read_dir(&ac_new) {
+            Ok(e) => e,
+            Err(e) => {
+                log::warn!(
+                    "[rtk-sweep] Cannot read {} for replica enumeration: {}",
+                    ac_new.display(),
+                    e
+                );
+                continue;
+            }
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let name = match p.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+
+            if name.starts_with("_agent_") {
+                push_if_new(p, &mut out, &mut seen);
+                continue;
+            }
+
+            if name.starts_with("wg-") {
+                // Re-check wg-* itself isn't a symlink/junction.
+                let md = match std::fs::symlink_metadata(&p) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+                if md.file_type().is_symlink() {
+                    continue;
+                }
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::MetadataExt;
+                    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+                    if md.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                        continue;
+                    }
+                }
+                if !md.is_dir() {
+                    continue;
+                }
+
+                let wg_entries = match std::fs::read_dir(&p) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        log::warn!(
+                            "[rtk-sweep] Cannot read workgroup {} for replica enumeration: {}",
+                            p.display(),
+                            e
+                        );
+                        continue;
+                    }
+                };
+                for wg_entry in wg_entries.flatten() {
+                    let rp = wg_entry.path();
+                    let rname = match rp.file_name().and_then(|n| n.to_str()) {
+                        Some(n) => n.to_string(),
+                        None => continue,
+                    };
+                    if rname.starts_with("__agent_") {
+                        push_if_new(rp, &mut out, &mut seen);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+    use std::path::PathBuf;
+
+    /// Build a unique tempdir for one test.
+    fn tempdir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "ac-rtk-{}-{}-{}",
+            name,
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&path).expect("create tempdir");
+        path
+    }
+
+    fn cleanup(p: &Path) {
+        let _ = std::fs::remove_dir_all(p);
+    }
+
+    /// Write a `settings.local.json` with the given content. Creates `.claude/`.
+    fn seed_settings(dir: &Path, content: &str) {
+        let claude_dir = dir.join(".claude");
+        std::fs::create_dir_all(&claude_dir).expect("create .claude");
+        std::fs::write(claude_dir.join("settings.local.json"), content).expect("write seed");
+    }
+
+    fn read_settings(dir: &Path) -> Option<Value> {
+        let p = dir.join(".claude").join("settings.local.json");
+        if !p.exists() {
+            return None;
+        }
+        let raw = std::fs::read_to_string(&p).expect("read");
+        let cleaned = raw.strip_prefix('\u{feff}').unwrap_or(raw.as_str());
+        serde_json::from_str(cleaned).ok()
+    }
+
+    fn read_settings_raw(dir: &Path) -> Option<String> {
+        let p = dir.join(".claude").join("settings.local.json");
+        if !p.exists() {
+            return None;
+        }
+        std::fs::read_to_string(&p).ok()
+    }
+
+    fn canonical_tree() -> Value {
+        json!({
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{
+                        "type": "command",
+                        "command": RTK_REWRITER_COMMAND,
+                    }],
+                }],
+            },
+        })
+    }
+
+    #[test]
+    fn t01_on_no_file_creates_canonical_tree() {
+        let dir = tempdir("t01");
+        ensure_rtk_pretool_hook(&dir, true).expect("ok");
+        let v = read_settings(&dir).expect("file present");
+        assert_eq!(v, canonical_tree());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t02_off_no_file_is_noop() {
+        let dir = tempdir("t02");
+        ensure_rtk_pretool_hook(&dir, false).expect("ok");
+        assert!(read_settings(&dir).is_none(), "file must NOT be created");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t03_on_empty_object_adds_full_tree() {
+        let dir = tempdir("t03");
+        seed_settings(&dir, "{}");
+        ensure_rtk_pretool_hook(&dir, true).expect("ok");
+        let v = read_settings(&dir).expect("file present");
+        assert_eq!(v, canonical_tree());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t04_on_preserves_claude_md_excludes() {
+        let dir = tempdir("t04");
+        seed_settings(&dir, r#"{"claudeMdExcludes":["x"]}"#);
+        ensure_rtk_pretool_hook(&dir, true).expect("ok");
+        let v = read_settings(&dir).expect("file present");
+        assert_eq!(v["claudeMdExcludes"], json!(["x"]));
+        assert_eq!(v["hooks"]["PreToolUse"][0]["matcher"], "Bash");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t05_on_pushes_bash_alongside_read_matcher() {
+        let dir = tempdir("t05");
+        seed_settings(
+            &dir,
+            r#"{"hooks":{"PreToolUse":[{"matcher":"Read","hooks":[{"type":"command","command":"echo read"}]}]}}"#,
+        );
+        ensure_rtk_pretool_hook(&dir, true).expect("ok");
+        let v = read_settings(&dir).expect("file present");
+        let arr = v["hooks"]["PreToolUse"].as_array().expect("array");
+        assert_eq!(arr.len(), 2, "Read entry preserved + new Bash entry pushed");
+        let matchers: Vec<&str> = arr.iter().filter_map(|e| e["matcher"].as_str()).collect();
+        assert!(matchers.contains(&"Read"));
+        assert!(matchers.contains(&"Bash"));
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t06_on_appends_to_bash_with_other_hooks() {
+        let dir = tempdir("t06");
+        seed_settings(
+            &dir,
+            r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo other"}]}]}}"#,
+        );
+        ensure_rtk_pretool_hook(&dir, true).expect("ok");
+        let v = read_settings(&dir).expect("file present");
+        let inner = v["hooks"]["PreToolUse"][0]["hooks"]
+            .as_array()
+            .expect("inner array");
+        assert_eq!(inner.len(), 2);
+        assert_eq!(inner[0]["command"], "echo other");
+        assert_eq!(inner[1]["command"], RTK_REWRITER_COMMAND);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t07_on_with_marker_bearing_is_idempotent_noop() {
+        let dir = tempdir("t07");
+        let initial = canonical_tree();
+        seed_settings(&dir, &serde_json::to_string(&initial).unwrap());
+        let raw_before = read_settings_raw(&dir).unwrap();
+        ensure_rtk_pretool_hook(&dir, true).expect("ok");
+        // No write happened — raw bytes preserved.
+        let raw_after = read_settings_raw(&dir).unwrap();
+        assert_eq!(raw_before, raw_after);
+        // Structural equality holds too.
+        let v = read_settings(&dir).expect("file present");
+        assert_eq!(v, initial);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t08_off_removes_ours_keeps_unrelated_bash() {
+        let dir = tempdir("t08");
+        let initial = json!({
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [
+                        {"type":"command","command":"echo unrelated"},
+                        {"type":"command","command":RTK_REWRITER_COMMAND},
+                    ],
+                }],
+            },
+        });
+        seed_settings(&dir, &serde_json::to_string(&initial).unwrap());
+        ensure_rtk_pretool_hook(&dir, false).expect("ok");
+        let v = read_settings(&dir).expect("file present");
+        let inner = v["hooks"]["PreToolUse"][0]["hooks"]
+            .as_array()
+            .expect("inner array");
+        assert_eq!(inner.len(), 1);
+        assert_eq!(inner[0]["command"], "echo unrelated");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t09_off_only_ours_drops_cascading_keys() {
+        let dir = tempdir("t09");
+        let initial = json!({
+            "claudeMdExcludes": ["x"],
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{"type":"command","command":RTK_REWRITER_COMMAND}],
+                }],
+            },
+        });
+        seed_settings(&dir, &serde_json::to_string(&initial).unwrap());
+        ensure_rtk_pretool_hook(&dir, false).expect("ok");
+        let v = read_settings(&dir).expect("file present");
+        assert_eq!(v, json!({"claudeMdExcludes":["x"]}));
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t10_on_malformed_preserves_file() {
+        let dir = tempdir("t10");
+        let original = "{ invalid json no closing brace";
+        seed_settings(&dir, original);
+        ensure_rtk_pretool_hook(&dir, true).expect("ok");
+        let raw = read_settings_raw(&dir).expect("file present");
+        assert_eq!(raw, original, "malformed file must NOT be overwritten on ON");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t11_constant_payload_round_trips() {
+        let dir = tempdir("t11");
+        ensure_rtk_pretool_hook(&dir, true).expect("ok");
+        let v = read_settings(&dir).expect("file present");
+        let cmd = v["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .expect("command string");
+        assert_eq!(cmd, RTK_REWRITER_COMMAND);
+        assert!(cmd.contains(RTK_HOOK_MARKER), "marker must survive round-trip");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t12_enumerate_filters_team_repo_nondir() {
+        let dir = tempdir("t12");
+        let project = dir.join("proj");
+        let ac_new = project.join(".ac-new");
+        std::fs::create_dir_all(ac_new.join("_agent_one")).unwrap();
+        std::fs::create_dir_all(ac_new.join("wg-1-team").join("__agent_two")).unwrap();
+        std::fs::create_dir_all(ac_new.join("wg-1-team").join("__agent_three")).unwrap();
+        std::fs::create_dir_all(ac_new.join("wg-1-team").join("repo-x")).unwrap();
+        std::fs::create_dir_all(ac_new.join("_team_team")).unwrap();
+        std::fs::write(ac_new.join("readme.txt"), "hello").unwrap();
+
+        let project_paths = vec![project.to_string_lossy().to_string()];
+        let result = enumerate_managed_agent_dirs(&project_paths);
+        let names: Vec<String> = result
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(result.len(), 3, "exactly 3 dirs, got {:?}", names);
+        assert!(names.contains(&"_agent_one".to_string()));
+        assert!(names.contains(&"__agent_two".to_string()));
+        assert!(names.contains(&"__agent_three".to_string()));
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t13_off_malformed_preserves_file() {
+        let dir = tempdir("t13");
+        let original = "{ invalid json";
+        seed_settings(&dir, original);
+        ensure_rtk_pretool_hook(&dir, false).expect("ok");
+        let raw = read_settings_raw(&dir).expect("file present");
+        assert_eq!(raw, original, "malformed file must NOT be overwritten on OFF");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t14_constant_matches_source_of_truth() {
+        // Reads `repo-AgentsCommander/.claude/settings.json` at test time.
+        // From `src-tauri/`, the source `.claude/settings.json` lives one level up.
+        let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+        let source = std::path::Path::new(&manifest)
+            .parent()
+            .expect("repo root")
+            .join(".claude/settings.json");
+        let contents = std::fs::read_to_string(&source).expect("read .claude/settings.json");
+        let v: serde_json::Value = serde_json::from_str(&contents).expect("parse");
+        let cmd = v["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .expect("command path in source-of-truth file");
+        assert_eq!(
+            cmd, RTK_REWRITER_COMMAND,
+            "RTK_REWRITER_COMMAND drifted from {}",
+            source.display()
+        );
+    }
+
+    #[test]
+    fn t15_on_wrong_shape_hooks_preserves() {
+        for body in &[
+            r#"{"hooks":null}"#,
+            r#"{"hooks":"string"}"#,
+            r#"{"hooks":42}"#,
+        ] {
+            let dir = tempdir("t15");
+            seed_settings(&dir, body);
+            ensure_rtk_pretool_hook(&dir, true).expect("ok");
+            let raw = read_settings_raw(&dir).expect("file present");
+            assert_eq!(raw, *body, "wrong-shape hooks must be preserved");
+            cleanup(&dir);
+        }
+    }
+
+    #[test]
+    fn t16_on_wrong_shape_pretool_preserves() {
+        for body in &[
+            r#"{"hooks":{"PreToolUse":"string"}}"#,
+            r#"{"hooks":{"PreToolUse":{}}}"#,
+        ] {
+            let dir = tempdir("t16");
+            seed_settings(&dir, body);
+            ensure_rtk_pretool_hook(&dir, true).expect("ok");
+            let raw = read_settings_raw(&dir).expect("file present");
+            assert_eq!(raw, *body, "wrong-shape PreToolUse must be preserved");
+            cleanup(&dir);
+        }
+    }
+
+    #[test]
+    fn t17_on_wrong_shape_inner_hooks_preserves() {
+        let body = r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":"string"}]}}"#;
+        let dir = tempdir("t17");
+        seed_settings(&dir, body);
+        ensure_rtk_pretool_hook(&dir, true).expect("ok");
+        let raw = read_settings_raw(&dir).expect("file present");
+        assert_eq!(raw, body, "wrong-shape inner hooks must be preserved");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t18_off_wrong_shape_pretool_preserves() {
+        let body = r#"{"hooks":{"PreToolUse":"string"}}"#;
+        let dir = tempdir("t18");
+        seed_settings(&dir, body);
+        ensure_rtk_pretool_hook(&dir, false).expect("ok");
+        let raw = read_settings_raw(&dir).expect("file present");
+        assert_eq!(raw, body, "wrong-shape PreToolUse must be preserved on OFF");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t19_enumerate_skips_symlinks_and_junctions() {
+        let dir = tempdir("t19");
+        let project = dir.join("proj");
+        let ac_new = project.join(".ac-new");
+        let wg = ac_new.join("wg-1-team");
+        std::fs::create_dir_all(&wg).unwrap();
+        let real_target = dir.join("outside-target");
+        std::fs::create_dir_all(&real_target).unwrap();
+
+        let link_path = wg.join("__agent_linked");
+        let link_created;
+        #[cfg(unix)]
+        {
+            link_created = std::os::unix::fs::symlink(&real_target, &link_path).is_ok();
+        }
+        #[cfg(windows)]
+        {
+            // mklink /J creates a junction (no admin required).
+            let status = std::process::Command::new("cmd")
+                .args([
+                    "/C",
+                    "mklink",
+                    "/J",
+                    link_path.to_str().unwrap(),
+                    real_target.to_str().unwrap(),
+                ])
+                .status();
+            link_created = matches!(status, Ok(s) if s.success());
+        }
+
+        if !link_created {
+            // Test cannot create the link in this environment — skip gracefully.
+            cleanup(&dir);
+            return;
+        }
+
+        // Add a real replica too so we know enumeration ran.
+        std::fs::create_dir_all(wg.join("__agent_real")).unwrap();
+
+        let project_paths = vec![project.to_string_lossy().to_string()];
+        let result = enumerate_managed_agent_dirs(&project_paths);
+        let names: Vec<String> = result
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert!(
+            names.contains(&"__agent_real".to_string()),
+            "real replica must be returned: {:?}",
+            names
+        );
+        assert!(
+            !names.contains(&"__agent_linked".to_string()),
+            "linked replica must be filtered: {:?}",
+            names
+        );
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t20_enumerate_dedupes_by_canonical_path() {
+        let dir = tempdir("t20");
+        let project = dir.join("proj");
+        std::fs::create_dir_all(project.join(".ac-new").join("_agent_one")).unwrap();
+        let s = project.to_string_lossy().to_string();
+        let project_paths = vec![s.clone(), s];
+        let result = enumerate_managed_agent_dirs(&project_paths);
+        assert_eq!(result.len(), 1, "duplicates must collapse to 1");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t21_marker_idempotency_with_different_body() {
+        let dir = tempdir("t21");
+        // Hook with the marker prefix but a different body.
+        let older = r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"node -e \"'@ac-rtk-marker-v1'; /* OLDER REWRITER BODY */\""}]}]}}"#;
+        seed_settings(&dir, older);
+        // ON: idempotent (no-op).
+        ensure_rtk_pretool_hook(&dir, true).expect("ok");
+        let raw_after_on = read_settings_raw(&dir).expect("file present");
+        assert_eq!(
+            raw_after_on, older,
+            "ON with marker-bearing entry must be a structural no-op"
+        );
+        // OFF: removes the marker-bearing entry → cascade to {}.
+        ensure_rtk_pretool_hook(&dir, false).expect("ok");
+        let v_after_off = read_settings(&dir).expect("file present after OFF");
+        assert_eq!(
+            v_after_off,
+            json!({}),
+            "OFF must filter by marker substring"
+        );
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t22_bom_handling_on() {
+        let dir = tempdir("t22-on");
+        let with_bom = "\u{feff}{\"claudeMdExcludes\":[]}";
+        seed_settings(&dir, with_bom);
+        ensure_rtk_pretool_hook(&dir, true).expect("ok");
+        let v = read_settings(&dir).expect("file present");
+        assert_eq!(v["claudeMdExcludes"], json!([]));
+        assert_eq!(v["hooks"]["PreToolUse"][0]["matcher"], "Bash");
+        let raw = read_settings_raw(&dir).unwrap();
+        assert!(!raw.starts_with('\u{feff}'), "BOM must be stripped on write");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t22_bom_handling_off() {
+        let dir = tempdir("t22-off");
+        let canonical_minified = serde_json::to_string(&canonical_tree()).unwrap();
+        let with_bom = format!("\u{feff}{}", canonical_minified);
+        seed_settings(&dir, &with_bom);
+        ensure_rtk_pretool_hook(&dir, false).expect("ok");
+        let v = read_settings(&dir).expect("file present");
+        assert_eq!(v, json!({}), "OFF removes our hook even with BOM");
+        let raw = read_settings_raw(&dir).unwrap();
+        assert!(!raw.starts_with('\u{feff}'), "BOM must be stripped on write");
+        cleanup(&dir);
+    }
 }
