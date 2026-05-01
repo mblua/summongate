@@ -12,7 +12,7 @@
 
 import { execFileSync } from 'node:child_process';
 
-const PATTERN          = /^(feature|fix|bug)\/([1-9][0-9]*)-([a-z0-9]+(?:-[a-z0-9]+)*)$/;
+const PATTERN          = /^(bug|chore|ci|docs|feat|feature|fix|refactor|style|test)\/([1-9][0-9]*)-([a-z0-9]+(?:-[a-z0-9]+)*)$/;
 const MAX_SLUG         = 50;
 const TARGET_REPO      = 'mblua/AgentsCommander';
 const CUTOFF_SHA_PATH  = '.github/branch-name-enforcement.cutoff.sha';
@@ -86,7 +86,7 @@ function validateFormat(branch) {
     die(
       `Branch "${branch}" does not match the naming convention.\n` +
       `  Expected: <type>/<issue-number>-<slug>\n` +
-      `    <type>   ∈ { feature | fix | bug }\n` +
+      `    <type>   ∈ { bug | chore | ci | docs | feat | feature | fix | refactor | style | test }\n` +
       `    <issue>  = open GitHub issue number (no leading zeros)\n` +
       `    <slug>   = lowercase-kebab-case, [a-z0-9]+(-[a-z0-9]+)*, ≤ ${MAX_SLUG} chars\n` +
       `  Example:  feature/63-branch-name-enforcement`
