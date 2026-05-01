@@ -11,29 +11,45 @@
 
 /// Immutable substring embedded in every AC-injected rewriter command.
 /// OFF-sweep removes any PreToolUse hook whose `command` contains this
-/// string, regardless of whether the rest of the command matches the
-/// current `RTK_REWRITER_COMMAND` byte-for-byte. ON-sweep also uses the
-/// substring to skip insertion if any marker-bearing entry already
-/// exists (preserves user customizations of the rewriter body across
-/// AC upgrades).
+/// string OR any marker in `RTK_LEGACY_MARKERS`. ON-sweep skips insertion
+/// if any current-marker-bearing entry already exists (preserves user
+/// customizations of the rewriter body across AC upgrades) AND cleans
+/// legacy-marker entries in a pre-pass.
 ///
-/// MUST NEVER CHANGE. If the marker space ever needs to be retired,
-/// bump to `@ac-rtk-marker-v2` AND keep `v1` in a new `RTK_LEGACY_MARKERS`
-/// constant for OFF-sweep cleanup. See issue #120 §10 (migration).
-pub const RTK_HOOK_MARKER: &str = "@ac-rtk-marker-v1";
+/// **Bumped from v1 to v2** because Claude Code's hook output schema
+/// changed: v1 emitted `{decision:'modify', tool_input:{...}}` which
+/// current Claude Code rejects with "Hook JSON output validation
+/// failed". v2 uses `hookSpecificOutput.updatedInput` (see
+/// `RTK_REWRITER_COMMAND`). The marker bump triggers automatic cleanup
+/// of any v1 entries left over from earlier AC builds — see
+/// `RTK_LEGACY_MARKERS` and `merge_rtk_hook`'s legacy pre-pass.
+pub const RTK_HOOK_MARKER: &str = "@ac-rtk-marker-v2";
+
+/// Legacy markers we still recognize for cleanup purposes. ON-sweep
+/// removes legacy-marker entries before its idempotency check; OFF-sweep
+/// removes both current AND legacy entries. Order does not matter; new
+/// retirements are appended.
+pub const RTK_LEGACY_MARKERS: &[&str] = &["@ac-rtk-marker-v1"];
 
 /// Canonical RTK PreToolUse rewriter command. The leading
-/// `'@ac-rtk-marker-v1';` is a JS string-literal expression statement —
+/// `'@ac-rtk-marker-v2';` is a JS string-literal expression statement —
 /// node treats it as a no-op (string in statement position). The marker
 /// is never executed and never affects rewriter behavior; it exists
 /// solely to identify "this hook is AC-injected" across AC upgrades
 /// (see `RTK_HOOK_MARKER`).
 ///
+/// **Output schema (v2).** Emits
+/// `{hookSpecificOutput:{hookEventName:'PreToolUse', updatedInput:{...}}}`
+/// — the format Claude Code current accepts. v1 emitted a
+/// `decision:'modify'` shape that the current validator rejects;
+/// entries with the v1 marker are auto-cleaned by ON-sweep / OFF-sweep
+/// (see `RTK_LEGACY_MARKERS`).
+///
 /// Mirrors `repo-AgentsCommander/.claude/settings.json` (project-level
 /// hook). Must stay byte-identical to that file; the source-of-truth
 /// test in this module loads the source `.claude/settings.json` at test
 /// time and asserts equality.
-pub const RTK_REWRITER_COMMAND: &str = r#"node -e "'@ac-rtk-marker-v1';const s=JSON.parse(require('fs').readFileSync(0,'utf8'));const c=s?.tool_input?.command;if(!c){process.exit(0)}if(/^rtk\s/.test(c)||/&&\s*rtk\s/.test(c)){process.exit(0)}const skip=/^(cd |mkdir |echo |cat <<|source |export |\.|set )/.test(c);if(skip){process.exit(0)}const parts=c.split(/\s*(&&|\|\||;)\s*/);const out=parts.map((p,i)=>{if(i%2===1)return p;if(/^rtk\s/.test(p))return p;return 'rtk '+p}).join(' ');if(out!==c){console.log(JSON.stringify({decision:'modify',tool_input:{...s.tool_input,command:out}}))}else{process.exit(0)}""#;
+pub const RTK_REWRITER_COMMAND: &str = r#"node -e "'@ac-rtk-marker-v2';const s=JSON.parse(require('fs').readFileSync(0,'utf8'));const c=s?.tool_input?.command;if(!c){process.exit(0)}if(/^rtk\s/.test(c)||/&&\s*rtk\s/.test(c)){process.exit(0)}const skip=/^(cd |mkdir |echo |cat <<|source |export |\.|set )/.test(c);if(skip){process.exit(0)}const parts=c.split(/\s*(&&|\|\||;)\s*/);const out=parts.map((p,i)=>{if(i%2===1)return p;if(/^rtk\s/.test(p))return p;return 'rtk '+p}).join(' ');if(out!==c){console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'PreToolUse',updatedInput:{...s.tool_input,command:out}}}))}else{process.exit(0)}""#;
 
 use std::path::Path;
 
@@ -223,15 +239,63 @@ fn merge_rtk_hook(obj: &mut serde_json::Value, settings_path: &Path) -> bool {
         .as_array_mut()
         .expect("just inserted or pre-checked array");
 
-    // Idempotency: ANY existing inner hook whose command contains the marker
-    // means "already applied". This includes user-customized variants — we
-    // do NOT overwrite their tweaks.
+    // Legacy cleanup pre-pass — remove inner hooks whose command contains
+    // ANY marker in `RTK_LEGACY_MARKERS`. Runs every ON-sweep so v1
+    // entries left on disk by earlier AC builds are cleaned up before the
+    // idempotency check (without this, the v2 idempotency check would not
+    // find a match, we'd append a v2 entry, and the v1 entry would coexist
+    // — Claude Code would dispatch both hooks and the v1 one would still
+    // emit the rejected schema).
+    let mut legacy_touched_indices: Vec<usize> = Vec::new();
+    let mut cleaned_legacy = false;
+    for (idx, entry) in pretool_arr.iter_mut().enumerate() {
+        let inner = match entry.get_mut("hooks").and_then(|v| v.as_array_mut()) {
+            Some(arr) => arr,
+            None => continue, // missing or wrong-shape — skip per-entry, preserve user data
+        };
+        let before = inner.len();
+        inner.retain(|h| {
+            h.get("command")
+                .and_then(|c| c.as_str())
+                .map(|s| !RTK_LEGACY_MARKERS.iter().any(|m| s.contains(m)))
+                .unwrap_or(true) // keep entries that don't expose a string command
+        });
+        if inner.len() != before {
+            cleaned_legacy = true;
+            legacy_touched_indices.push(idx);
+        }
+    }
+    if cleaned_legacy {
+        // Cascade: drop matcher entries we just emptied via legacy cleanup.
+        // Mirrors the cascade logic in `remove_rtk_hook`. Only drops entries
+        // we touched — user-authored matchers with pre-existing empty hooks
+        // arrays are preserved.
+        let mut current = 0usize;
+        pretool_arr.retain(|entry| {
+            let touched = legacy_touched_indices.contains(&current);
+            current += 1;
+            if !touched {
+                return true;
+            }
+            entry
+                .get("hooks")
+                .and_then(|v| v.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(true)
+        });
+    }
+
+    // Idempotency: ANY existing inner hook whose command contains the
+    // CURRENT marker means "already applied". This includes user-customized
+    // variants — we do NOT overwrite their tweaks. Returns `cleaned_legacy`
+    // so the caller writes back if (and only if) the legacy pre-pass
+    // actually changed anything.
     for entry in pretool_arr.iter() {
         if let Some(inner) = entry.get("hooks").and_then(|v| v.as_array()) {
             for h in inner {
                 if let Some(cmd) = h.get("command").and_then(|c| c.as_str()) {
                     if cmd.contains(RTK_HOOK_MARKER) {
-                        return false; // already-applied no-op
+                        return cleaned_legacy;
                     }
                 }
             }
@@ -351,7 +415,11 @@ fn remove_rtk_hook(obj: &mut serde_json::Value, settings_path: &Path) -> bool {
         inner.retain(|h| {
             h.get("command")
                 .and_then(|c| c.as_str())
-                .map(|s| !s.contains(RTK_HOOK_MARKER))
+                .map(|s| {
+                    // Drop entries with the current OR any legacy marker.
+                    !s.contains(RTK_HOOK_MARKER)
+                        && !RTK_LEGACY_MARKERS.iter().any(|m| s.contains(m))
+                })
                 .unwrap_or(true) // keep entries that don't expose a string command
         });
         if inner.len() != before {
@@ -978,15 +1046,18 @@ mod tests {
     #[test]
     fn t21_marker_idempotency_with_different_body() {
         let dir = tempdir("t21");
-        // Hook with the marker prefix but a different body.
-        let older = r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"node -e \"'@ac-rtk-marker-v1'; /* OLDER REWRITER BODY */\""}]}]}}"#;
+        // Hook with the CURRENT marker prefix but a different body —
+        // exercises idempotency-by-marker (preserves user customizations of
+        // the rewriter body across AC upgrades). Legacy-marker auto-cleanup
+        // is exercised separately by t27.
+        let older = r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"node -e \"'@ac-rtk-marker-v2'; /* USER-CUSTOMIZED REWRITER BODY */\""}]}]}}"#;
         seed_settings(&dir, older);
         // ON: idempotent (no-op).
         ensure_rtk_pretool_hook(&dir, true).expect("ok");
         let raw_after_on = read_settings_raw(&dir).expect("file present");
         assert_eq!(
             raw_after_on, older,
-            "ON with marker-bearing entry must be a structural no-op"
+            "ON with current-marker-bearing entry must be a structural no-op"
         );
         // OFF: removes the marker-bearing entry → cascade to {}.
         ensure_rtk_pretool_hook(&dir, false).expect("ok");
@@ -1147,12 +1218,310 @@ mod tests {
     }
 
     #[test]
+    fn t26_hook_output_matches_claude_code_v2_schema() {
+        // Regression sentinel for the v1→v2 schema bump: actually run the
+        // injected JS via node and assert the output shape is the v2 form
+        // Claude Code current accepts (`hookSpecificOutput.updatedInput`).
+        // A regression to the v1 `decision:'modify'` shape would slip past
+        // every other test (which compares JSON structure, not runtime
+        // behavior of the JS body).
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        // Skip gracefully if node isn't in PATH (CI without node, etc.).
+        let node_check = Command::new("node").arg("--version").output();
+        if !matches!(&node_check, Ok(o) if o.status.success()) {
+            return;
+        }
+
+        let input = serde_json::json!({"tool_input": {"command": "git status"}});
+
+        // Extract the JS body from RTK_REWRITER_COMMAND. The const has shape
+        // `node -e "<JS>"` so we strip the leading `node -e "` and trailing `"`.
+        let js_body = RTK_REWRITER_COMMAND
+            .strip_prefix("node -e \"")
+            .and_then(|s| s.strip_suffix('"'))
+            .expect("RTK_REWRITER_COMMAND must have shape `node -e \"...\"`");
+
+        let mut child = Command::new("node")
+            .arg("-e")
+            .arg(js_body)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("node spawn");
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(input.to_string().as_bytes())
+            .expect("write stdin");
+        let output = child.wait_with_output().expect("hook ran");
+        assert!(
+            output.status.success(),
+            "hook exit non-zero: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let parsed: serde_json::Value = serde_json::from_str(stdout.trim())
+            .expect("hook stdout must be valid JSON");
+        let updated_cmd = parsed["hookSpecificOutput"]["updatedInput"]["command"]
+            .as_str()
+            .expect("v2 shape: hookSpecificOutput.updatedInput.command must be a string");
+        assert_eq!(
+            updated_cmd, "rtk git status",
+            "rewriter must prefix command with 'rtk '"
+        );
+        let event = parsed["hookSpecificOutput"]["hookEventName"]
+            .as_str()
+            .expect("hookEventName must be string");
+        assert_eq!(event, "PreToolUse");
+        // Negative check: v1 shape MUST NOT appear.
+        assert!(
+            parsed.get("decision").is_none(),
+            "v1 shape leaked: top-level `decision` field present"
+        );
+        assert!(
+            parsed.get("tool_input").is_none(),
+            "v1 shape leaked: top-level `tool_input` field present"
+        );
+    }
+
+    #[test]
+    fn t27_legacy_marker_cleanup_on_on_sweep() {
+        // Auto-migration: a replica with a v1-marker entry (broken pre-fix
+        // shape) must be cleaned by ON-sweep before the v2 entry is
+        // inserted. Without this the v2 idempotency check would not match,
+        // a v2 entry would be appended, and Claude Code would dispatch
+        // BOTH hooks — the v1 one would still emit the rejected schema.
+        let dir = tempdir("t27");
+        let initial = json!({
+            "claudeMdExcludes": ["x"],
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{
+                        "type": "command",
+                        "command": "node -e \"'@ac-rtk-marker-v1'; /* old broken v1 body */\"",
+                    }],
+                }],
+            },
+        });
+        seed_settings(&dir, &serde_json::to_string(&initial).unwrap());
+        ensure_rtk_pretool_hook(&dir, true).expect("ok");
+        let v = read_settings(&dir).expect("file present");
+        // Other keys preserved.
+        assert_eq!(v["claudeMdExcludes"], json!(["x"]));
+        // Bash matcher present, exactly one inner hook (the new v2), legacy gone.
+        let inner = v["hooks"]["PreToolUse"][0]["hooks"]
+            .as_array()
+            .expect("inner");
+        assert_eq!(
+            inner.len(),
+            1,
+            "v1 entry should be cleaned, only v2 remains: {:?}",
+            inner
+        );
+        let cmd = inner[0]["command"].as_str().expect("string");
+        assert!(cmd.contains(RTK_HOOK_MARKER), "v2 marker present: {}", cmd);
+        assert!(
+            !cmd.contains("@ac-rtk-marker-v1"),
+            "v1 marker gone: {}",
+            cmd
+        );
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t28_off_sweep_cleans_legacy_markers() {
+        // OFF-sweep removes both current AND legacy markers, leaving
+        // unrelated user hooks untouched.
+        let dir = tempdir("t28");
+        let initial = json!({
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [
+                        {"type": "command", "command": "node -e \"'@ac-rtk-marker-v1'; legacy\""},
+                        {"type": "command", "command": RTK_REWRITER_COMMAND},
+                        {"type": "command", "command": "echo unrelated"},
+                    ],
+                }],
+            },
+        });
+        seed_settings(&dir, &serde_json::to_string(&initial).unwrap());
+        ensure_rtk_pretool_hook(&dir, false).expect("ok");
+        let v = read_settings(&dir).expect("file present");
+        let inner = v["hooks"]["PreToolUse"][0]["hooks"]
+            .as_array()
+            .expect("inner");
+        assert_eq!(
+            inner.len(),
+            1,
+            "v1 + v2 both cleaned, only unrelated remains: {:?}",
+            inner
+        );
+        assert_eq!(inner[0]["command"], "echo unrelated");
+        cleanup(&dir);
+    }
+
+    #[test]
     fn rtk_hook_marker_literal_is_locked() {
         // The marker substring is the public contract for cross-version
         // ON-idempotency and OFF-cleanup. A future "let me clean up this
         // magic string" refactor that changes the literal silently breaks
-        // every replica injected by an older AC build.
-        assert_eq!(RTK_HOOK_MARKER, "@ac-rtk-marker-v1");
+        // every replica injected by an older AC build. Bumped to v2 when
+        // the hook output schema changed; v1 retained in
+        // `RTK_LEGACY_MARKERS` for cleanup.
+        assert_eq!(RTK_HOOK_MARKER, "@ac-rtk-marker-v2");
+        assert_eq!(RTK_LEGACY_MARKERS, &["@ac-rtk-marker-v1"]);
+
+        // Forward-compat guard: no current marker can be a substring of any
+        // legacy marker, and no legacy marker can be a substring of the
+        // current one. Today this holds (`v2` vs `v1`), but if a future
+        // bumper goes from v1 to v10 keeping v1 in RTK_LEGACY_MARKERS, the
+        // legacy filter `s.contains("@ac-rtk-marker-v1")` would match the
+        // current `@ac-rtk-marker-v10` substring and corrupt every sweep.
+        // This assertion forces the next bumper to confront the issue at
+        // edit time rather than at production-runtime.
+        for legacy in RTK_LEGACY_MARKERS {
+            assert!(
+                !RTK_HOOK_MARKER.contains(legacy),
+                "RTK_HOOK_MARKER {:?} must not contain legacy marker {:?}",
+                RTK_HOOK_MARKER,
+                legacy
+            );
+            assert!(
+                !legacy.contains(RTK_HOOK_MARKER),
+                "legacy marker {:?} must not contain RTK_HOOK_MARKER {:?}",
+                legacy,
+                RTK_HOOK_MARKER
+            );
+        }
+    }
+
+    #[test]
+    fn t29_v1_and_v2_coexist_legacy_cleaned_v2_preserved() {
+        // Regression for the exact race the v2 patch was written to handle.
+        // A user who manually migrated may have BOTH a v1 entry (broken
+        // shape, dispatched by Claude Code with rejected output) and a v2
+        // entry on disk simultaneously. ON-sweep must clean v1, preserve
+        // v2 unchanged, and write back (because legacy cleanup mutated).
+        let dir = tempdir("t29");
+        let initial = json!({
+            "hooks": {"PreToolUse": [{
+                "matcher": "Bash",
+                "hooks": [
+                    {"type": "command", "command": "node -e \"'@ac-rtk-marker-v1'; old\""},
+                    {"type": "command", "command": RTK_REWRITER_COMMAND},
+                ],
+            }]},
+        });
+        seed_settings(&dir, &serde_json::to_string(&initial).unwrap());
+        let raw_before = read_settings_raw(&dir).unwrap();
+        ensure_rtk_pretool_hook(&dir, true).expect("ok");
+        let raw_after = read_settings_raw(&dir).unwrap();
+        assert_ne!(
+            raw_before, raw_after,
+            "legacy cleanup must trigger a write back to disk"
+        );
+        let v = read_settings(&dir).expect("file present");
+        let inner = v["hooks"]["PreToolUse"][0]["hooks"]
+            .as_array()
+            .expect("inner");
+        assert_eq!(
+            inner.len(),
+            1,
+            "exactly the v2 entry remains: {:?}",
+            inner
+        );
+        assert_eq!(inner[0]["command"], RTK_REWRITER_COMMAND);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t30_v1_alongside_user_hook_preserves_user_appends_v2() {
+        // Cascade-drop must NOT remove a Bash matcher entry just because
+        // we touched it during legacy cleanup — only when its inner hooks
+        // are now empty. If the user has an unrelated hook in the same
+        // matcher, the cascade keeps the matcher and ON-sweep then appends
+        // a v2 hook next to the user's existing one.
+        let dir = tempdir("t30");
+        let initial = json!({
+            "hooks": {"PreToolUse": [{
+                "matcher": "Bash",
+                "hooks": [
+                    {"type": "command", "command": "echo other"},
+                    {"type": "command", "command": "node -e \"'@ac-rtk-marker-v1'; old\""},
+                ],
+            }]},
+        });
+        seed_settings(&dir, &serde_json::to_string(&initial).unwrap());
+        ensure_rtk_pretool_hook(&dir, true).expect("ok");
+        let v = read_settings(&dir).expect("file present");
+        let arr = v["hooks"]["PreToolUse"].as_array().expect("array");
+        assert_eq!(arr.len(), 1, "single Bash matcher preserved: {:?}", arr);
+        let inner = arr[0]["hooks"].as_array().expect("inner");
+        assert_eq!(
+            inner.len(),
+            2,
+            "user hook + new v2 (v1 cleaned): {:?}",
+            inner
+        );
+        assert_eq!(inner[0]["command"], "echo other", "user hook still first");
+        let v2 = inner[1]["command"].as_str().expect("string");
+        assert!(
+            v2.contains(RTK_HOOK_MARKER) && !v2.contains("@ac-rtk-marker-v1"),
+            "second entry is fresh v2: {}",
+            v2
+        );
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn t31_legacy_cleanup_skips_wrong_shape_entry_per_entry() {
+        // The legacy cleanup pre-pass uses per-entry `continue` on wrong-
+        // shape inner hooks (the `match get_mut.and_then.as_array_mut`
+        // pattern). A regression that swapped `continue` for `return false`
+        // would bail the whole sweep on encountering one user-authored
+        // wrong-shape entry — even though the next Bash entry has a real
+        // v1 marker that must still be cleaned.
+        let dir = tempdir("t31");
+        let initial = json!({
+            "hooks": {"PreToolUse": [
+                // First entry: wrong-shape inner.hooks (string, not array).
+                // Per-entry skip should preserve it untouched.
+                {"matcher": "Read", "hooks": "broken"},
+                // Second entry: real v1 marker that legacy cleanup must
+                // still process.
+                {"matcher": "Bash", "hooks": [
+                    {"type": "command", "command": "node -e \"'@ac-rtk-marker-v1'; old\""},
+                ]},
+            ]},
+        });
+        seed_settings(&dir, &serde_json::to_string(&initial).unwrap());
+        ensure_rtk_pretool_hook(&dir, true).expect("ok");
+        let v = read_settings(&dir).expect("file present");
+        let arr = v["hooks"]["PreToolUse"].as_array().expect("array");
+        // First entry preserved as-is (still has wrong-shape inner.hooks).
+        let read_entry = arr.iter().find(|e| e["matcher"] == "Read").expect("Read");
+        assert_eq!(
+            read_entry["hooks"], "broken",
+            "wrong-shape Read entry preserved: {:?}",
+            read_entry
+        );
+        // Second entry (Bash) had its v1 entry cleaned + a v2 appended.
+        let bash_entry = arr.iter().find(|e| e["matcher"] == "Bash").expect("Bash");
+        let inner = bash_entry["hooks"].as_array().expect("inner");
+        assert_eq!(inner.len(), 1, "v1 cleaned + v2 appended: {:?}", inner);
+        let cmd = inner[0]["command"].as_str().expect("string");
+        assert!(
+            cmd.contains(RTK_HOOK_MARKER) && !cmd.contains("@ac-rtk-marker-v1"),
+            "Bash entry holds the fresh v2: {}",
+            cmd
+        );
+        cleanup(&dir);
     }
 
     #[test]
