@@ -4,6 +4,14 @@
 
 let cachedContext: AudioContext | null = null;
 
+// Coalesce window for back-to-back beep calls. When several workgroups
+// transition to idle in the same effect tick, the watcher fires
+// playTeamIdleBeep() multiple times synchronously; without coalescing,
+// the oscillators stack at the same currentTime and sum to N× peak
+// gain (loud, harsh chord instead of one soft tone).
+const COALESCE_WINDOW_S = 0.03;
+let lastBeepStartedAt = Number.NEGATIVE_INFINITY;
+
 function getAudioContext(): AudioContext | null {
   if (cachedContext) return cachedContext;
   const Ctor =
@@ -54,6 +62,9 @@ export async function playTeamIdleBeep(): Promise<void> {
   }
 
   const now = ctx.currentTime;
+  if (now - lastBeepStartedAt < COALESCE_WINDOW_S) return;
+  lastBeepStartedAt = now;
+
   scheduleTone(ctx, 660, now, 0.12);
   scheduleTone(ctx, 880, now + 0.13, 0.14);
 }
