@@ -192,7 +192,7 @@ const TerminalView: Component<TerminalViewProps> = (props) => {
             .then((text) => {
               if (!text) return;
               if (activeSessionId !== sessionId) return; // session switched during await
-              if (terminal.element === null) return; // terminal disposed (xterm v6 sentinel)
+              if (terminal.element?.isConnected !== true) return; // terminal not in DOM (pre-open or post-dispose detached)
               // Strip both 7-bit ESC[200~/201~ and 8-bit C1 \x9b 200~/201~
               // forms — defense-in-depth against future shells that activate
               // 8-bit recognition. xterm@6.0.0 does NOT sanitize internally

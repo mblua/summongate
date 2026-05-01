@@ -68,13 +68,13 @@ Plan therefore MUST re-check before calling `paste`:
 navigator.clipboard.readText().then(text => {
   if (!text) return;
   if (activeSessionId !== sessionId) return;   // session switched during await
-  if (terminal.element === null) return;       // terminal disposed
+  if (terminal.element?.isConnected !== true) return;  // terminal not in DOM (pre-open or post-dispose detached)
   const sanitized = text.replace(/\x9b20[01]~|\x1b\[20[01]~/g, '');
   terminal.paste(sanitized);
 }).catch(err => console.warn("[paste] read failed:", err?.name ?? "Error"));
 ```
 
-`terminal.element === null` is xterm v6's de-facto "disposed" sentinel — `Terminal.dispose()` sets it null. This is per xterm's own examples; not part of the public API contract but stable across v6.x. See §6.8 for the upgrade caveat.
+*Round-3 fix (Nit 1 from grinch QA):* the original `terminal.element === null` check was DEAD CODE — xterm v6.0.0's `Terminal.dispose()` only removes the element from the DOM via `removeChild`; it does NOT null the field. The corrected guard `terminal.element?.isConnected !== true` covers both pre-open (`element === undefined`) and post-dispose detached (`isConnected === false`) states. `isConnected` is a standard `Node` property. See §6.8 for the upgrade caveat.
 
 `activeSessionId` is a TerminalView-scope variable (line 37); both the closure-captured `sessionId` and the live `activeSessionId` are visible inside the `.then`. No new state needed.
 
@@ -158,7 +158,7 @@ For each invocation of the handler, in order:
        navigator.clipboard.readText().then(text => {
          if (!text) return;
          if (activeSessionId !== sessionId) return;   // F2: session switched
-         if (terminal.element === null) return;       // F2/F6: terminal disposed
+         if (terminal.element?.isConnected !== true) return;  // F2/F6 + Nit 1: terminal not in DOM (pre-open or post-dispose detached)
          const sanitized = text.replace(/\x9b20[01]~|\x1b\[20[01]~/g, '');  // F1+O1: strip 7-bit and 8-bit C1 markers
          terminal.paste(sanitized);
        }).catch(err => console.warn("[paste] read failed:", err?.name ?? "Error"));  // O3: log only err.name
@@ -167,7 +167,7 @@ For each invocation of the handler, in order:
    - On `keyup`: return `false`.
    - **Critical (unchanged):** use `terminal.paste(sanitized)`, NOT `PtyAPI.write`. `terminal.paste` wraps the payload in bracketed-paste markers (`\x1b[200~ ... \x1b[201~`) so multi-line paste cannot be interpreted as command submission by the shell. xterm's existing `terminal.onData` listener (line 165) will forward the bracketed sequence to PTY.
    - **Critical (NEW, F1 + O1):** sanitize BEFORE calling `terminal.paste`. xterm.js@6.0.0's `bracketTextForPaste` does NOT strip embedded `\x1b[20[01]~` markers from the payload, allowing pastejacking-style command injection. The regex `/\x9b20[01]~|\x1b\[20[01]~/g` removes both 7-bit (`\x1b[200~` / `\x1b[201~`) and 8-bit C1 (`\x9b 200~` / `\x9b 201~`) forms — defense-in-depth against future shells that activate 8-bit recognition. See §6.8 for the dependency-pin tracker.
-   - **Critical (NEW, F2):** the two guards inside `.then` (`activeSessionId !== sessionId`, `terminal.element === null`) MUST be present. Without them, the paste either silently routes to the wrong session or throws on a disposed terminal. See §6.9.
+   - **Critical (NEW, F2 + Nit 1):** the two guards inside `.then` (`activeSessionId !== sessionId`, `terminal.element?.isConnected !== true`) MUST be present. Without them, the paste either silently routes to the wrong session or throws on a disposed terminal. See §6.9. *Round-3 fix:* the round-2 spec used `terminal.element === null`; that was dead code in xterm v6.0.0 (Terminal.dispose() does not null `element`). Switched to `isConnected` per Nit 1 from grinch QA.
 
 3. **Existing `Shift+Enter` branch** — unchanged.
 
