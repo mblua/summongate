@@ -203,6 +203,7 @@ fn build_brief_content(wg_name: &str, brief: Option<String>) -> String {
 #[tauri::command]
 pub async fn create_agent_matrix(
     settings: State<'_, SettingsState>,
+    sweep_lock: State<'_, crate::RtkSweepLockState>,
     project_path: String,
     name: String,
     description: String,
@@ -246,14 +247,34 @@ pub async fn create_agent_matrix(
     // Reads from in-memory SettingsState (kept in sync by `update_settings` in
     // commands/config.rs:32-44). Avoids the disk-read race that load_settings()
     // would have against a concurrent save_settings() (see plan §13.2).
-    let exclude_claude_md = {
+    //
+    // Issue #120 — also gate the rtk hook on `inject_rtk_hook` (read from the
+    // same snapshot). Acquires `RtkSweepLockState` around the helper sequence
+    // so concurrent sweeps cannot interleave a read-modify-write on the file.
+    let (exclude_claude_md, inject_rtk_hook) = {
         let s = settings.read().await;
-        s.agents.iter().any(|a| a.exclude_global_claude_md)
+        (
+            s.agents.iter().any(|a| a.exclude_global_claude_md),
+            s.inject_rtk_hook,
+        )
     };
-    if exclude_claude_md {
-        if let Err(e) = ensure_claude_md_excludes(&agent_dir) {
+    {
+        let _guard = sweep_lock.lock().await;
+        if exclude_claude_md {
+            if let Err(e) = ensure_claude_md_excludes(&agent_dir) {
+                log::warn!(
+                    "[entity_creation] Failed to write .claude/settings.local.json for {}: {}",
+                    agent_dir.display(),
+                    e
+                );
+            }
+        }
+        if let Err(e) = crate::config::claude_settings::ensure_rtk_pretool_hook(
+            &agent_dir,
+            inject_rtk_hook,
+        ) {
             log::warn!(
-                "[entity_creation] Failed to write .claude/settings.local.json for {}: {}",
+                "[entity_creation] Failed to apply rtk hook for matrix {}: {}",
                 agent_dir.display(),
                 e
             );
@@ -472,11 +493,14 @@ pub async fn create_team(
 
 /// Create a workgroup from an existing team.
 /// Clones repos async — partial failures are reported but don't rollback the WG.
+// Tauri command: State<> injections push us over clippy's 7-arg threshold.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn create_workgroup(
     app: AppHandle,
     session_mgr: State<'_, Arc<tokio::sync::RwLock<SessionManager>>>,
     settings: State<'_, SettingsState>,
+    sweep_lock: State<'_, crate::RtkSweepLockState>,
     project_path: String,
     team_name: String,
     brief: Option<String>,
@@ -570,9 +594,14 @@ pub async fn create_workgroup(
     // in this workgroup creation must use the same gate value. Mid-loop
     // toggles via update_settings are intentionally ignored — half-applied
     // workgroups would be worse than a stale snapshot.
-    let exclude_claude_md = {
+    //
+    // Issue #120 — also snapshot `inject_rtk_hook` here for the same reason.
+    let (exclude_claude_md, inject_rtk_hook) = {
         let s = settings.read().await;
-        s.agents.iter().any(|a| a.exclude_global_claude_md)
+        (
+            s.agents.iter().any(|a| a.exclude_global_claude_md),
+            s.inject_rtk_hook,
+        )
     };
 
     // Create __agent_*/ replica dirs
@@ -597,11 +626,27 @@ pub async fn create_workgroup(
                 .map_err(|e| format!("Failed to create {} for {}: {}", sub, agent_name, e))?;
         }
 
-        // Issue #84 — write .claude/settings.local.json if any agent has the flag.
-        if exclude_claude_md {
-            if let Err(e) = ensure_claude_md_excludes(&replica_dir) {
+        // Issue #84 / #120 — write .claude/settings.local.json if any agent has
+        // the flag, and apply the rtk hook based on the global toggle. Per-replica
+        // RtkSweepLock guard keeps the critical section short while still
+        // serializing per-file work against any concurrent sweep.
+        {
+            let _guard = sweep_lock.lock().await;
+            if exclude_claude_md {
+                if let Err(e) = ensure_claude_md_excludes(&replica_dir) {
+                    log::warn!(
+                        "[entity_creation] Failed to write .claude/settings.local.json for replica {}: {}",
+                        replica_dir.display(),
+                        e
+                    );
+                }
+            }
+            if let Err(e) = crate::config::claude_settings::ensure_rtk_pretool_hook(
+                &replica_dir,
+                inject_rtk_hook,
+            ) {
                 log::warn!(
-                    "[entity_creation] Failed to write .claude/settings.local.json for replica {}: {}",
+                    "[entity_creation] Failed to apply rtk hook for replica {}: {}",
                     replica_dir.display(),
                     e
                 );

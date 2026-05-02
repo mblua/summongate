@@ -54,6 +54,15 @@ const SettingsModal: Component<{ onClose: () => void; section?: string }> = (pro
 
   const [webServerRunning, setWebServerRunning] = createSignal(false);
   const [saveError, setSaveError] = createSignal("");
+  // Snapshot of injectRtkHook captured at modal open. handleSave compares it
+  // against the live form value to decide whether to fire sweepRtkHook.
+  // updateField is local-only (mutates the form draft), so the sweep only
+  // dispatches when the user actually clicks Save and the value changed.
+  const [initialInjectRtk, setInitialInjectRtk] = createSignal<boolean | null>(null);
+  // Disables the Save button and the rtk checkbox while the per-replica sweep
+  // is in flight, preventing a rapid double-Save from queuing two concurrent
+  // sweeps with opposite enabled values (silent partial state).
+  const [rtkSweepInFlight, setRtkSweepInFlight] = createSignal(false);
 
   const s = () => settings.data;
 
@@ -63,6 +72,7 @@ const SettingsModal: Component<{ onClose: () => void; section?: string }> = (pro
       SettingsAPI.getWebServerStatus().catch(() => false),
     ]);
     setSettings("data", loaded);
+    setInitialInjectRtk(loaded.injectRtkHook);
     setWebServerRunning(wsRunning);
   });
 
@@ -226,6 +236,29 @@ const SettingsModal: Component<{ onClose: () => void; section?: string }> = (pro
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       await getCurrentWindow().setAlwaysOnTop(settings.data.sidebarAlwaysOnTop);
     }
+    // RTK sweep — only when the toggle value changed during this modal session.
+    // Fired AFTER update_settings persists, so a sweep failure cannot leave
+    // the persisted setting in disagreement with the on-disk replica state
+    // worse than the pre-save baseline.
+    const initial = initialInjectRtk();
+    const next = settings.data.injectRtkHook;
+    if (initial !== null && initial !== next) {
+      setRtkSweepInFlight(true);
+      try {
+        const result = await SettingsAPI.sweepRtkHook(next);
+        if (result.errors.length > 0) {
+          console.error(
+            `[rtk] sweep partial failure: ${result.errors.length}/${result.total} dirs failed`,
+            result.errors,
+          );
+        }
+        setInitialInjectRtk(next);
+      } catch (err) {
+        console.error("[rtk] sweep failed:", err);
+      } finally {
+        setRtkSweepInFlight(false);
+      }
+    }
     // Refresh settings store so mic button visibility updates
     settingsStore.refresh();
     // Refresh repos (project_paths may have changed)
@@ -325,6 +358,20 @@ const SettingsModal: Component<{ onClose: () => void; section?: string }> = (pro
             }
           />
           <span>Raise terminal when clicking sidebar</span>
+        </label>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">RTK Token Compression</div>
+        <label class="settings-checkbox-field">
+          <input
+            type="checkbox"
+            class="settings-checkbox"
+            checked={settings.data!.injectRtkHook}
+            disabled={saving() || rtkSweepInFlight()}
+            onChange={(e) => updateField("injectRtkHook", e.currentTarget.checked)}
+          />
+          <span>Inject RTK hook into agent replicas</span>
         </label>
       </div>
 
@@ -742,9 +789,9 @@ const SettingsModal: Component<{ onClose: () => void; section?: string }> = (pro
           <button
             class="modal-btn modal-btn-save"
             onClick={handleSave}
-            disabled={saving()}
+            disabled={saving() || rtkSweepInFlight()}
           >
-            {saving() ? "Saving..." : "Save"}
+            {saving() ? "Saving..." : rtkSweepInFlight() ? "Sweeping..." : "Save"}
           </button>
         </div>
       </div>

@@ -154,6 +154,8 @@ export interface AppSettings {
   sidebarStyle: string;
   onboardingDismissed: boolean;
   coordSortByActivity: boolean;
+  injectRtkHook: boolean;
+  rtkPromptDismissed: boolean;
 }
 
 // Team grouping for sidebar

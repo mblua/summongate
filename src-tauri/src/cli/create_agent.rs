@@ -138,6 +138,16 @@ pub fn execute(args: CreateAgentArgs) -> i32 {
                         eprintln!("Warning: failed to write claude settings: {}", e);
                     }
                 }
+                // Issue #120 — apply the rtk hook based on the global toggle.
+                // CLI runs out-of-process; cannot share the in-process RtkSweepLock
+                // with a running AC instance. Cross-process race documented in §7.4
+                // of the issue #120 plan as a follow-up.
+                if let Err(e) = config::claude_settings::ensure_rtk_pretool_hook(
+                    &agent_dir,
+                    settings.inject_rtk_hook,
+                ) {
+                    eprintln!("Warning: failed to apply rtk hook: {}", e);
+                }
 
                 let parts: Vec<&str> = agent.command.split_whitespace().collect();
                 let (shell, shell_args) = if agent.git_pull_before {
