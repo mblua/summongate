@@ -56,7 +56,27 @@ pub async fn create_agent_folder(
 
 /// Creates or updates .claude/settings.local.json with claudeMdExcludes in the given directory.
 /// Works on any directory — both new agent folders and existing repos.
+///
+/// Issue #120 — also applies the rtk PreToolUse hook based on the global toggle.
+/// Acquires `RtkSweepLockState` around the helper sequence (M8) so concurrent
+/// sweeps cannot interleave a read-modify-write on the same file.
 #[tauri::command]
-pub async fn write_claude_settings_local(agent_path: String) -> Result<(), String> {
-    crate::config::claude_settings::ensure_claude_md_excludes(&PathBuf::from(&agent_path))
+pub async fn write_claude_settings_local(
+    settings: tauri::State<'_, crate::config::settings::SettingsState>,
+    sweep_lock: tauri::State<'_, crate::RtkSweepLockState>,
+    agent_path: String,
+) -> Result<(), String> {
+    let dir = PathBuf::from(&agent_path);
+    let inject = settings.read().await.inject_rtk_hook;
+    let _guard = sweep_lock.lock().await;
+    crate::config::claude_settings::ensure_claude_md_excludes(&dir)?;
+    if let Err(e) = crate::config::claude_settings::ensure_rtk_pretool_hook(&dir, inject) {
+        log::warn!(
+            "[agent_creator] Failed to apply rtk hook (enabled={}) to {}: {}",
+            inject,
+            dir.display(),
+            e
+        );
+    }
+    Ok(())
 }

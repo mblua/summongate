@@ -33,6 +33,24 @@ pub type DetachedSessionsState = Arc<Mutex<HashSet<uuid::Uuid>>>;
 /// Handle to the running web server task, allowing stop control.
 pub type WebServerHandle = Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>;
 
+/// Issue #120 — serializes in-process writers of `.claude/settings.local.json`.
+///
+/// Acquired by `commands::config::sweep_rtk_hook`, the startup auto-disable
+/// and active-recovery sweeps in `setup`, and every in-process call site that
+/// invokes `ensure_claude_md_excludes` + `ensure_rtk_pretool_hook` (see plan
+/// §7.5). Cross-process races (CLI / second AC instance) are documented and
+/// out of scope for #120.
+pub type RtkSweepLockState = Arc<tokio::sync::Mutex<()>>;
+
+/// Issue #120 §18 — cached boot-time RTK startup mode.
+///
+/// Set ONCE by the setup task in `run()` after computing the mode and
+/// BEFORE running any side effects. Read by
+/// `commands::config::get_rtk_startup_status` so the getter returns the
+/// boot decision instead of recomputing from post-side-effect state
+/// (which would mismatch the listener for the `auto-disabled` mode).
+pub type RtkStartupModeState = Arc<std::sync::OnceLock<String>>;
+
 /// Master token generated at app startup. Allows bypassing team validation (can_reach).
 /// Persisted to `master-token.txt` in config_dir for CLI use. Regenerated on each app startup. See #34.
 /// Field is private — use `matches()` for constant-time comparison.
@@ -256,6 +274,18 @@ pub fn run() {
     let detached_sessions: DetachedSessionsState = Arc::new(Mutex::new(HashSet::new()));
     let voice_tracking: VoiceTrackingState = Arc::new(Mutex::new(VoiceTracker::new()));
 
+    // Issue #120 — RTK sweep mutex. Acquired by every in-process writer of
+    // `.claude/settings.local.json`. See plan §7.5 for the design.
+    let rtk_sweep_lock: RtkSweepLockState = Arc::new(tokio::sync::Mutex::new(()));
+    let rtk_sweep_lock_for_setup = Arc::clone(&rtk_sweep_lock);
+
+    // Issue #120 §18 — cached boot-time RTK startup mode. Set ONCE by the
+    // setup task before running side effects; read by
+    // `get_rtk_startup_status` so the late-mounting banner sees the SAME
+    // mode the listener received.
+    let rtk_startup_mode: RtkStartupModeState = Arc::new(std::sync::OnceLock::new());
+    let rtk_startup_mode_for_setup = Arc::clone(&rtk_startup_mode);
+
     let shutdown_for_setup = shutdown_signal.clone();
     let shutdown_for_exit = shutdown_signal.clone();
     let tg_mgr_for_exit = tg_mgr.clone();
@@ -272,6 +302,8 @@ pub fn run() {
         .manage(web_access_token.clone())
         .manage(broadcaster.clone())
         .manage(WebServerHandle::default())
+        .manage(rtk_sweep_lock)
+        .manage(rtk_startup_mode)
         .manage(shutdown_signal)
         .setup(move |app| {
             use tauri::WebviewWindowBuilder;
@@ -328,6 +360,110 @@ pub fn run() {
                     let ws_handle = app.state::<WebServerHandle>();
                     *ws_handle.lock().unwrap() = Some(join_handle);
                 }
+            }
+
+            // Issue #120 — RTK startup detection. Probes PATH for `rtk`, then:
+            //   - rtk found AND inject_rtk_hook=false AND rtk_prompt_dismissed=false
+            //       → emit "rtk_startup_status" with mode="prompt-enable"
+            //   - rtk found AND inject_rtk_hook=true
+            //       → emit mode="active" + active-recovery ON-sweep (idempotent)
+            //   - rtk missing AND inject_rtk_hook=true
+            //       → persist inject_rtk_hook=false (write lock held through save —
+            //         grinch H4 + N1); sweep with enabled=false (RtkSweepLock held —
+            //         grinch M8); emit mode="auto-disabled".
+            //   - otherwise: emit mode="silent" (frontend treats as no-op).
+            // Detached so the rest of setup is not blocked by disk I/O.
+            {
+                let app_handle_for_rtk = app.handle().clone();
+                let sweep_lock = Arc::clone(&rtk_sweep_lock_for_setup);
+                let mode_cache = Arc::clone(&rtk_startup_mode_for_setup);
+                tauri::async_runtime::spawn(async move {
+                    use crate::config::claude_settings::{
+                        enumerate_managed_agent_dirs, ensure_rtk_pretool_hook,
+                    };
+
+                    let rtk_present = which::which("rtk").is_ok();
+
+                    let settings_state = app_handle_for_rtk
+                        .state::<crate::config::settings::SettingsState>();
+
+                    let (inject_enabled, prompt_dismissed) = {
+                        let s = settings_state.read().await;
+                        (s.inject_rtk_hook, s.rtk_prompt_dismissed)
+                    };
+
+                    let mode: &'static str = match (rtk_present, inject_enabled, prompt_dismissed) {
+                        (true, false, false) => "prompt-enable",
+                        (true, true, _) => "active",
+                        (false, true, _) => "auto-disabled",
+                        _ => "silent",
+                    };
+
+                    // §18 — cache the boot decision BEFORE running side effects
+                    // so a late-mounting banner sees the SAME mode the listener
+                    // receives (auto-disabled side-effects mutate inject_rtk_hook,
+                    // breaking any naïve recompute path). `set` returns Err if
+                    // already set; ignore (idempotent for repeated boots).
+                    let _ = mode_cache.set(mode.to_string());
+
+                    if mode == "auto-disabled" {
+                        // H4 + N1 fix: hold the SettingsState write lock through
+                        // save_settings so a concurrent update_settings cannot
+                        // land between our in-memory flip and the disk persist.
+                        // The lock is released explicitly via drop(s) AFTER the
+                        // save returns.
+                        let mut s = settings_state.write().await;
+                        s.inject_rtk_hook = false;
+                        let snapshot = s.clone();
+                        if let Err(e) = crate::config::settings::save_settings(&snapshot) {
+                            log::warn!("[rtk-startup] Failed to persist auto-disable: {}", e);
+                        }
+                        let project_paths = snapshot.project_paths.clone();
+                        drop(s); // explicit; lock released AFTER the disk write
+
+                        // M8 fix: hold RtkSweepLock through the OFF-sweep loop.
+                        let _guard = sweep_lock.lock().await;
+                        for dir in enumerate_managed_agent_dirs(&project_paths) {
+                            if let Err(e) = ensure_rtk_pretool_hook(&dir, false) {
+                                log::warn!(
+                                    "[rtk-startup] auto-disable sweep failed for {}: {}",
+                                    dir.display(),
+                                    e
+                                );
+                            }
+                        }
+                    } else if mode == "active" {
+                        // M8 fix: hold RtkSweepLock through the ON-sweep loop.
+                        let project_paths = {
+                            let s = settings_state.read().await;
+                            s.project_paths.clone()
+                        };
+                        let _guard = sweep_lock.lock().await;
+                        for dir in enumerate_managed_agent_dirs(&project_paths) {
+                            if let Err(e) = ensure_rtk_pretool_hook(&dir, true) {
+                                log::warn!(
+                                    "[rtk-startup] active recovery sweep failed for {}: {}",
+                                    dir.display(),
+                                    e
+                                );
+                            }
+                        }
+                    }
+
+                    let _ = tauri::Emitter::emit(
+                        &app_handle_for_rtk,
+                        "rtk_startup_status",
+                        serde_json::json!({ "mode": mode }),
+                    );
+
+                    log::info!(
+                        "[rtk-startup] mode={} rtkPresent={} injectEnabled={} promptDismissed={}",
+                        mode,
+                        rtk_present,
+                        inject_enabled,
+                        prompt_dismissed
+                    );
+                });
             }
 
             // Start the mailbox poller for inter-agent message delivery
@@ -712,6 +848,10 @@ pub fn run() {
             commands::pty::pty_resize,
             commands::config::get_settings,
             commands::config::update_settings,
+            commands::config::set_inject_rtk_hook,
+            commands::config::set_rtk_prompt_dismissed,
+            commands::config::sweep_rtk_hook,
+            commands::config::get_rtk_startup_status,
             commands::repos::search_repos,
             commands::telegram::telegram_attach,
             commands::telegram::telegram_detach,

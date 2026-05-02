@@ -28,6 +28,8 @@ import { applyWindowLayout } from "../shared/window-layout";
 import { sessionsStore } from "./stores/sessions";
 import { bridgesStore } from "./stores/bridges";
 import { projectStore } from "./stores/project";
+import { startTeamIdleWatcher } from "./stores/team-idle-watcher";
+import { primeAudio } from "../shared/sound";
 import { settingsStore } from "../shared/stores/settings";
 import Titlebar from "./components/Titlebar";
 import ActionBar from "./components/ActionBar";
@@ -50,6 +52,7 @@ const SidebarApp: Component<SidebarAppProps> = (props) => {
   let shortcutHandler: ((e: KeyboardEvent) => void) | null = null;
   let cleanupZoom: (() => void) | null = null;
   let cleanupGeometry: (() => void) | null = null;
+  let stopTeamIdleWatcher: (() => void) | null = null;
   let raiseTerminalEnabled = true;
   let lastRaiseTime = 0;
   const blockContextMenu = (e: Event) => {
@@ -110,6 +113,15 @@ const SidebarApp: Component<SidebarAppProps> = (props) => {
 
     // Load settings into reactive store (for voice-to-text visibility etc.)
     await settingsStore.load();
+
+    // Feature #110 — start watching for team busy→all-idle transitions.
+    // Mounted after settingsStore.load() so the very first effect run
+    // already sees the user's teamIdleBeepEnabled choice; the watcher's
+    // own initialization guard separately suppresses any startup beep.
+    // primeAudio() arms the AudioContext on first user gesture so the
+    // very first beep isn't swallowed by browser autoplay policy.
+    primeAudio();
+    stopTeamIdleWatcher = startTeamIdleWatcher();
 
     // First-run: show onboarding if no coding agents configured and not previously dismissed
     if (
@@ -248,6 +260,7 @@ const SidebarApp: Component<SidebarAppProps> = (props) => {
     if (shortcutHandler) unregisterShortcuts(shortcutHandler);
     if (cleanupZoom) cleanupZoom();
     if (cleanupGeometry) cleanupGeometry();
+    if (stopTeamIdleWatcher) stopTeamIdleWatcher();
     document.removeEventListener("mousedown", handleRaiseTerminal);
     document.removeEventListener("contextmenu", blockContextMenu);
   });
