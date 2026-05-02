@@ -28,6 +28,10 @@ All new branches **must** follow this pattern and reference an **open GitHub Iss
 | `ci/` | CI / workflow changes |
 | `style/` | Formatting-only tweaks |
 
+### Local dev requirements
+
+- `npm` ≥ 11.0.0 (enforced via `package.json` `engines`). Older versions may produce a stale lockfile that fails the `lockfile-drift` CI check.
+
 **Valid**:
 - `feature/63-branch-name-enforcement`
 - `fix/42-pty-resize-on-windows`
