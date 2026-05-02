@@ -1368,17 +1368,32 @@ fn check_workgroup_repos_dirty(wg_dirs: &[PathBuf]) -> Vec<(String, String)> {
     dirty
 }
 
-/// True iff `e` represents the Windows "file in use" error
-/// (os error 32 / `ERROR_SHARING_VIOLATION`). On non-Windows always returns false —
-/// Linux / macOS produce different error codes for "directory not empty due to
-/// open file" and we don't run the Restart-Manager diagnostic there.
+/// True iff `e` represents a Windows "file in use" error.
+///
+/// Matches the Win32 codes that surface when another process holds an open or
+/// memory-mapped handle to a file we tried to delete:
+/// - `ERROR_SHARING_VIOLATION` (32) — standard open with a deny-share mode.
+/// - `ERROR_LOCK_VIOLATION` (33) — byte-range lock collision.
+/// - `ERROR_USER_MAPPED_FILE` (1224) — file is mapped into another process's address
+///   space. This is the VSCode / IDE memory-mapped-I/O case and was the motivating
+///   real-world scenario for the blocker diagnostic. See plan §6.1.
+///
+/// On non-Windows always returns false: Linux / macOS produce different error codes
+/// for "directory not empty due to open file" and we don't run the Restart-Manager
+/// diagnostic there.
 ///
 /// `pub(crate)` so the unit test in `wg_delete_diagnostic::tests` can exercise it
 /// without moving the test into this module.
 pub(crate) fn is_file_in_use_error(e: &std::io::Error) -> bool {
     #[cfg(windows)]
     {
-        e.raw_os_error() == Some(32)
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        const ERROR_LOCK_VIOLATION: i32 = 33;
+        const ERROR_USER_MAPPED_FILE: i32 = 1224;
+        matches!(
+            e.raw_os_error(),
+            Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION | ERROR_USER_MAPPED_FILE)
+        )
     }
     #[cfg(not(windows))]
     {

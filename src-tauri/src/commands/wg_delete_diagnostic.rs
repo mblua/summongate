@@ -758,16 +758,53 @@ mod tests {
         }
     }
 
-    /// §7.1 (Windows variant): `is_file_in_use_error` matches os error 32 (ERROR_SHARING_VIOLATION).
+    /// §7.1 (Windows variant): `is_file_in_use_error` matches `ERROR_SHARING_VIOLATION` (32).
     #[cfg(windows)]
     #[test]
     fn is_file_in_use_error_matches_sharing_violation_on_windows() {
         use crate::commands::entity_creation::is_file_in_use_error;
         let e = std::io::Error::from_raw_os_error(32);
         assert!(is_file_in_use_error(&e), "os error 32 must match");
+    }
 
-        let other = std::io::Error::from_raw_os_error(2); // ERROR_FILE_NOT_FOUND
-        assert!(!is_file_in_use_error(&other), "non-32 must not match");
+    /// §7.1 (Windows variant): `is_file_in_use_error` matches `ERROR_LOCK_VIOLATION` (33).
+    #[cfg(windows)]
+    #[test]
+    fn is_file_in_use_error_matches_lock_violation_on_windows() {
+        use crate::commands::entity_creation::is_file_in_use_error;
+        let e = std::io::Error::from_raw_os_error(33);
+        assert!(is_file_in_use_error(&e), "os error 33 must match");
+    }
+
+    /// §7.1 (Windows variant): `is_file_in_use_error` matches `ERROR_USER_MAPPED_FILE` (1224).
+    /// This is the VSCode / IDE memory-mapped-I/O case — the motivating scenario for the
+    /// diagnostic. See plan §6.1.
+    #[cfg(windows)]
+    #[test]
+    fn is_file_in_use_error_matches_user_mapped_file_on_windows() {
+        use crate::commands::entity_creation::is_file_in_use_error;
+        let e = std::io::Error::from_raw_os_error(1224);
+        assert!(is_file_in_use_error(&e), "os error 1224 must match");
+    }
+
+    /// §7.1 (Windows variant, negative): `is_file_in_use_error` does NOT match unrelated
+    /// OS errors. Guards against accidental over-widening of the gate.
+    #[cfg(windows)]
+    #[test]
+    fn is_file_in_use_error_rejects_unrelated_errors_on_windows() {
+        use crate::commands::entity_creation::is_file_in_use_error;
+        // ERROR_ACCESS_DENIED — separate failure mode, not file-in-use.
+        let access_denied = std::io::Error::from_raw_os_error(5);
+        assert!(
+            !is_file_in_use_error(&access_denied),
+            "os error 5 (ERROR_ACCESS_DENIED) must NOT match"
+        );
+        // ERROR_FILE_NOT_FOUND — not a file-in-use case.
+        let not_found = std::io::Error::from_raw_os_error(2);
+        assert!(
+            !is_file_in_use_error(&not_found),
+            "os error 2 (ERROR_FILE_NOT_FOUND) must NOT match"
+        );
     }
 
     /// §7.1 (non-Windows variant): `is_file_in_use_error` always returns false off Windows.

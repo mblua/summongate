@@ -1246,9 +1246,20 @@ point is right after `closeWgDeleteModal()` in the success branch above.
 
 ### 6.1 OS-error gating
 
-`raw_os_error() == Some(32)` is the ONLY signal that triggers the diagnostic. Other I/O
-errors (permission denied, not found, dir not empty without sharing violation) keep the
-legacy raw-string path. Do not generalise.
+The diagnostic triggers on `raw_os_error()` matching any of:
+`ERROR_SHARING_VIOLATION (32)`, `ERROR_LOCK_VIOLATION (33)`, `ERROR_USER_MAPPED_FILE (1224)`.
+
+**Rationale for expansion (post-Step 6b /feature-dev):** VSCode and other IDEs hold files
+via memory-mapped I/O, which Windows surfaces as `ERROR_USER_MAPPED_FILE (1224)` — not
+`ERROR_SHARING_VIOLATION (32)`. The user's motivating real-world case is exactly that
+scenario; shipping with `error == 32` only would risk the diagnostic never firing in the
+most common case. `ERROR_LOCK_VIOLATION (33)` added for completeness — same blocker
+semantics (a sibling holds the file), different driver path.
+
+**Out of gate (intentional):** `ERROR_ACCESS_DENIED (5)`, `ERROR_FILE_NOT_FOUND (2)`,
+`ERROR_DIR_NOT_EMPTY (145)`. Those are separate failure modes — not file-in-use cases —
+and keep the legacy raw-string error path. A negative unit test in `wg_delete_diagnostic::tests`
+locks this in (`is_file_in_use_error_rejects_unrelated_errors_on_windows`).
 
 ### 6.2 Path comparison
 
