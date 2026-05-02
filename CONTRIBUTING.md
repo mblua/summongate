@@ -10,9 +10,23 @@ All new branches **must** follow this pattern and reference an **open GitHub Iss
 
 | Field | Rules |
 |---|---|
-| `<type>` | One of `feature`, `fix`, `bug` |
+| `<type>` | See **Branch type prefixes** table below |
 | `<issue-number>` | An open issue in this repo (no leading zeros, e.g. `63` not `063`) |
 | `<slug>` | Lowercase kebab-case, `[a-z0-9]+(-[a-z0-9]+)*`, at most 50 characters |
+
+### Branch type prefixes
+
+| Prefix | Use for |
+|---|---|
+| `feat/` (alias `feature/`) | New functionality |
+| `fix/` | Bug fixes |
+| `bug/` | Investigation / repro of a defect |
+| `chore/` | Tooling, deps, non-functional |
+| `docs/` | Documentation only |
+| `refactor/` | Internal restructuring, no behaviour change |
+| `test/` | Test-only changes |
+| `ci/` | CI / workflow changes |
+| `style/` | Formatting-only tweaks |
 
 **Valid**:
 - `feature/63-branch-name-enforcement`
@@ -20,7 +34,7 @@ All new branches **must** follow this pattern and reference an **open GitHub Iss
 - `bug/101-missing-idle-callback`
 
 **Invalid**:
-- `feat/63-foo` — `feat` is not a recognized type
+- `wip/63-foo` — `wip` is not a recognized type (see Branch type prefixes table)
 - `feature/63_branch_name` — underscores not allowed
 - `feature/63-Branch-Name` — uppercase not allowed
 - `feature/63--doubledash` — consecutive dashes not allowed
