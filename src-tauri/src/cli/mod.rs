@@ -1,3 +1,6 @@
+pub mod brief_append_body;
+pub mod brief_ops;
+pub mod brief_set_title;
 pub mod close_session;
 pub mod create_agent;
 pub mod list_peers;
@@ -35,6 +38,10 @@ pub enum Commands {
     CreateAgent(create_agent::CreateAgentArgs),
     /// Close all sessions for a target agent (coordinator authorization required)
     CloseSession(close_session::CloseSessionArgs),
+    /// Set the title field in the workgroup BRIEF.md frontmatter (coordinator-only)
+    BriefSetTitle(brief_set_title::BriefSetTitleArgs),
+    /// Append text to the body of the workgroup BRIEF.md (coordinator-only)
+    BriefAppendBody(brief_append_body::BriefAppendBodyArgs),
 }
 
 /// Attach to parent console on Windows release builds so CLI output is visible.
@@ -107,5 +114,7 @@ pub fn handle_cli(cmd: Commands) -> i32 {
         Commands::ListSessions(args) => list_sessions::execute(args),
         Commands::CreateAgent(args) => create_agent::execute(args),
         Commands::CloseSession(args) => close_session::execute(args),
+        Commands::BriefSetTitle(args) => brief_set_title::execute(args),
+        Commands::BriefAppendBody(args) => brief_append_body::execute(args),
     }
 }
