@@ -48,7 +48,23 @@ Send the plan file path to **dev-rust** or **dev-webpage-ui** (whichever is most
 Send the plan file path to **dev-rust-grinch**. Grinch must also add to the plan what they consider important and explain their reasoning.
 
 ### Step 5 — Iterate until consensus (FULL PATH ONLY)
-Continue passing the plan between architect, dev, and grinch until all three agree on the approach. **Rule: on the 3rd round, the minority opinion loses.** If after 3 rounds there is still no consensus, escalate to the user.
+
+After round 1 (dev-rust + grinch have enriched the plan), pass the plan back to the **architect** to incorporate findings and resolve open questions. **The architect is the design authority** and decides at the end of each of their own passes whether the plan is ready for implementation or another review round is needed.
+
+**Architect's verdict at the end of every architect-pass MUST be explicit**:
+- `READY_FOR_IMPLEMENTATION` → tech-lead moves to Step 6.
+- `NEEDS_ANOTHER_ROUND` → tech-lead dispatches dev-rust + grinch for the next review round.
+
+**When the architect can short-circuit**:
+- **After round 1** (architect's first response to dev/grinch enrichment): if all dev/grinch findings can be resolved with direct decisions in the architect's update, the architect may declare `READY_FOR_IMPLEMENTATION` and skip rounds 2 and 3.
+- **After round 2**: if dev/grinch round-2 reviews surfaced no new blocking issues, the architect may declare `READY_FOR_IMPLEMENTATION` and skip round 3.
+- **After round 3**: architect's resolution is final regardless. Dissent from dev/grinch is recorded in the plan as audit trail but does NOT block implementation.
+
+**Cap**: 3 rounds total. Escalate to the user only if the architect themselves cannot reach a decision (rare).
+
+**Tech-lead's role in this step**: orchestrate the dispatches, do not vote. Read each agent's reply, route it to the next step the architect calls for, and never override the architect's verdict.
+
+**Why**: the architect is the design authority. A fixed 3-round consensus burns tokens when round 1 or 2 already converged. Letting the architect call it earlier — on their judgment — optimizes for the common case (clean round-1 enrichment the architect can resolve directly) without removing the ceiling for genuinely contested designs.
 
 ### Step 6 — Dev implements
 Once there is consensus, send the plan to the appropriate dev to apply the solution.
