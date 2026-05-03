@@ -21,6 +21,18 @@ export interface SessionRepoInput {
   sourcePath: string;
 }
 
+export type RtkStartupMode =
+  | "prompt-enable"
+  | "active"
+  | "auto-disabled"
+  | "silent";
+
+export interface RtkSweepResult {
+  total: number;
+  succeeded: number;
+  errors: { path: string; error: string }[];
+}
+
 // Select transport based on runtime environment
 const transport: Transport = isTauri ? new TauriTransport() : new WsTransport();
 
@@ -116,6 +128,18 @@ export const SettingsAPI = {
   startWebServer: () => transport.invoke<boolean>("start_web_server"),
   stopWebServer: () => transport.invoke<boolean>("stop_web_server"),
   getWebServerStatus: () => transport.invoke<boolean>("get_web_server_status"),
+  // Narrow setters hold the SettingsState write lock through save_settings on
+  // the Rust side, eliminating the IPC-level read-modify-write race that a
+  // get+update round-trip would create against a concurrent update_settings
+  // from SettingsModal. Used by RtkBanner.
+  setInjectRtkHook: (value: boolean) =>
+    transport.invoke<void>("set_inject_rtk_hook", { value }),
+  setRtkPromptDismissed: (value: boolean) =>
+    transport.invoke<void>("set_rtk_prompt_dismissed", { value }),
+  sweepRtkHook: (enabled: boolean) =>
+    transport.invoke<RtkSweepResult>("sweep_rtk_hook", { enabled }),
+  getRtkStartupStatus: () =>
+    transport.invoke<RtkStartupMode>("get_rtk_startup_status"),
 };
 
 export const ReposAPI = {
@@ -452,6 +476,15 @@ export function onOpenSettings(
 ): Promise<UnlistenFn> {
   return transport.listen<{ section?: string }>("open_settings", (data) =>
     callback(data?.section)
+  );
+}
+
+export function onRtkStartupStatus(
+  callback: (mode: RtkStartupMode) => void
+): Promise<UnlistenFn> {
+  return transport.listen<{ mode: RtkStartupMode }>(
+    "rtk_startup_status",
+    (data) => callback(data.mode)
   );
 }
 

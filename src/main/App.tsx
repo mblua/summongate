@@ -9,6 +9,7 @@ import SidebarApp from "../sidebar/App";
 import TerminalApp from "../terminal/App";
 import Titlebar from "../sidebar/components/Titlebar";
 import QuitConfirmModal from "./components/QuitConfirmModal";
+import RtkBanner from "./components/RtkBanner";
 import "./styles/main.css";
 
 const SIDEBAR_MIN_WIDTH = 200;
@@ -207,6 +208,7 @@ const MainApp: Component = () => {
       }}
     >
       <Titlebar />
+      <RtkBanner />
       <div class="main-body">
         <div class="main-sidebar-pane" style={{ width: `${sidebarWidth()}px` }}>
           <SidebarApp embedded />

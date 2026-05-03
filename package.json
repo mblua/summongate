@@ -1,6 +1,6 @@
 {
   "name": "agentscommander",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -29,5 +29,8 @@
     "typescript": "^5",
     "vite": "^8.0.2",
     "vite-plugin-solid": "^2.11.11"
+  },
+  "engines": {
+    "npm": ">=11.0.0"
   }
 }

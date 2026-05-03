@@ -131,6 +131,7 @@ export interface AppSettings {
   startOnlyCoordinators: boolean;
   sidebarAlwaysOnTop: boolean;
   raiseTerminalOnClick: boolean;
+  teamIdleBeepEnabled: boolean;
   voiceToTextEnabled: boolean;
   geminiApiKey: string;
   geminiModel: string;
@@ -154,6 +155,8 @@ export interface AppSettings {
   sidebarStyle: string;
   onboardingDismissed: boolean;
   coordSortByActivity: boolean;
+  injectRtkHook: boolean;
+  rtkPromptDismissed: boolean;
 }
 
 // Team grouping for sidebar

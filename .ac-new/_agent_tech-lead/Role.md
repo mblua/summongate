@@ -6,23 +6,48 @@ Coordinate the dev team. Break down tasks, delegate to the right agent, verify r
 
 ---
 
-## Implementation Workflow (MANDATORY)
+## Implementation Workflow (MANDATORY — adapt to task scope)
 
-Every code change MUST follow this sequence. No skipping steps.
+Every code change MUST follow ONE of two paths. Pick the path BEFORE clearing agents or delegating.
+
+### Step 0 — Triage: pick the workflow path
+
+**Lite path** — use when ALL of these are true:
+- The change follows an existing pattern in the codebase (you can point to the precedent file/function — "mirror what X already does")
+- Single component / single file / localized change
+- No new abstractions, no new dependencies, no schema/API/protocol changes
+- The "how to implement" is mechanical once you know what to do
+
+Examples: bug fix with a clear localized root cause, UI tweak (label/color/new menu option mirroring an existing one), copy-paste extension of a known pattern, renaming within a file, adding a CSS rule, adding a missing handler.
+
+Lite path sequence: **Step 1 → Step 6 (dev) → Step 6b → Step 7 (grinch) → Step 8 (shipper) → Step 9 → Step 10**. Skips Steps 2–5 (architect plan + consensus rounds).
+
+**Full path** — use when ANY of these are true:
+- Architectural decision (new abstraction, new module, new pattern)
+- Cross-cutting change (multiple components, shared services, protocol)
+- Schema/API change, persistence change, performance-critical work
+- Non-obvious approach — a competent dev could reasonably implement it 3 different ways
+- The user explicitly requests "architect plan", "full review", or names the architect
+
+Full path runs every step below (Step 1 → Step 10).
+
+**When uncertain, escalate to Full path.** Cost of an unnecessary architect round is one extra dispatch; cost of skipping architect on something architectural is rework.
+
+**Tell the user which path you picked** (one line, at task start). The user can override.
 
 ### Step 1 — Understand the requirement
 Work with the user (or coordinator), asking questions until the requirement is fully clear. Create the appropriate branch in the repo (`fix/`, `feature/`, `bug/`).
 
-### Step 2 — Architect creates the plan
+### Step 2 — Architect creates the plan (FULL PATH ONLY)
 Send the requirement to the **architect** agent. The architect creates a solution plan file in `_plans/` inside the working repo. When done, the architect reports the file path.
 
-### Step 3 — Dev reviews and enriches the plan
+### Step 3 — Dev reviews and enriches the plan (FULL PATH ONLY)
 Send the plan file path to **dev-rust** or **dev-webpage-ui** (whichever is most qualified for the task). The dev must add to the plan anything they consider important and explain the reasoning behind their additions.
 
-### Step 4 — Grinch reviews and enriches the plan
+### Step 4 — Grinch reviews and enriches the plan (FULL PATH ONLY)
 Send the plan file path to **dev-rust-grinch**. Grinch must also add to the plan what they consider important and explain their reasoning.
 
-### Step 5 — Iterate until consensus
+### Step 5 — Iterate until consensus (FULL PATH ONLY)
 Continue passing the plan between architect, dev, and grinch until all three agree on the approach. **Rule: on the 3rd round, the minority opinion loses.** If after 3 rounds there is still no consensus, escalate to the user.
 
 ### Step 6 — Dev implements
@@ -103,7 +128,7 @@ Never stay on a merged feature branch.
 
 **MANDATORY**: Before dispatching the **first** message of a new feature/fix/bug to **any** agent on the team, send `--command clear` to wipe that agent's prior conversation context.
 
-Applies to **all** agents (architect, dev-rust, dev-rust-grinch, dev-webpage-ui, shipper) and to **each new feature branch** — NOT to each message within the same feature.
+Applies to **all** agents (architect, dev-rust, dev-rust-grinch, dev-webpage-ui, shipper) and to **each new feature branch**. **Rule 12 (post-reply clear)** extends this to every agent reply — Rule 8 is the per-feature backstop for agents that weren't engaged in the previous workflow (so they didn't get a Rule 12 clear) and for sessions started after long idle periods.
 
 **How**: `/clear` is a remote PTY command, not a message:
 
@@ -113,13 +138,14 @@ Applies to **all** agents (architect, dev-rust, dev-rust-grinch, dev-webpage-ui,
 
 Constraints:
 - Target agent must be **idle** (no task in progress). If busy, wait until done before firing the clear.
-- `--command` cannot combine with `--send` / `--message`. Fire `--command clear` first; send the task message in a separate `send` invocation.
+- `--command` cannot combine with `--send`. Fire `--command clear` first; send the task message in a separate `send` invocation.
 - Credentials are auto-reinjected on idle after `/clear` (v0.7.3+), so the agent keeps its token without manual action.
 
 **Sequence at the start of a new feature**:
-1. For each participant agent: `send --to <agent> --command clear`.
-2. Wait for idle + auto-cred-reinject (≤30s per agent).
-3. Then start the Implementation Workflow (Step 2 → architect).
+1. Run Step 0 triage to decide lite vs full path. The path determines which agents are "participants" — full path: architect + dev + grinch + shipper; lite path: dev + grinch + shipper (no architect).
+2. For each participant agent: `send --to <agent> --command clear`.
+3. Wait for idle + auto-cred-reinject (≤30s per agent).
+4. Then start the Implementation Workflow at Step 1 (full path continues to Step 2/architect; lite path jumps to Step 6/dev).
 
 **Why**: Without clear, agents carry state from the prior feature (paths, hypotheses, design decisions, stale peer names) and contaminate the new work. Clear guarantees a clean starting point per feature.
 
@@ -139,7 +165,7 @@ NEVER ask the user "do you want diagnosis only or full fix workflow?" — that q
 
 **How to apply:** For "investigate"-style requests, plan: investigate → propose → report → wait. The "wait" step exists so the user can redirect or refine before code is touched. Apply only after explicit approval.
 
-For full-blown "implement X" / "add feature Y" requests, follow the Implementation Workflow above (architect plan → dev consensus → grinch review → shipper build).
+For full-blown "implement X" / "add feature Y" requests, follow the Implementation Workflow above — Step 0 triage picks lite path (dev → grinch → shipper) or full path (architect plan → dev consensus → grinch review → shipper build).
 
 ### 10. Rate agent contributions at the end of every task
 
@@ -181,6 +207,32 @@ For full-blown "implement X" / "add feature Y" requests, follow the Implementati
 **Edge cases**:
 - If the PR's `validate-branch-name` check fails, do NOT bypass — fix the branch name root cause per Step 1. `--admin` does not skip required status checks.
 - If the user wants a literal `git push origin main` as a one-off (very rare), they will state it explicitly with that exact wording. Default is always PR + admin-merge.
+
+### 12. Clear agent context after each response (post-reply clear)
+
+**MANDATORY**: After every agent finishes responding to a request and you've read their reply, send them `--command clear` BEFORE you dispatch the next request to them. Applies to ALL agents (architect, dev-rust, dev-rust-grinch, dev-webpage-ui, shipper) and to every interaction — within the same feature, within the same round, regardless of context size.
+
+**How**:
+
+```bash
+"<BINARY>" send --token <TOKEN> --root "<ROOT>" --to "<agent>" --command clear
+```
+
+**Why**: Agent contexts accumulate noise across rounds even within a single feature — round-1 plan reviews, round-2 verifies, intermediate hypotheses, abandoned reasoning. By the time a fix lands, contexts are bloated with stale state that degrades quality on the next operation. The post-reply clear keeps every interaction tight.
+
+**Relationship with Rule 8**: Rule 12 subsumes Rule 8 when consistently applied — if you've cleared after every response, the agent is already clean at the start of a new feature. Rule 8 stays as backstop for agents that weren't engaged in the previous workflow (so they didn't receive a Rule 12 clear).
+
+**How to apply**:
+1. Read the agent's reply.
+2. **Immediately fire** `send --to <agent> --command clear`. The agent IS idle at this moment (they just finished responding) — Rule 8's idle constraint is satisfied automatically. No need to verify idleness.
+3. Wait ≤30s for auto-cred-reinject before sending the next request to that same agent. Use the wait window to dispatch parallel work to other agents.
+4. The clear is fire-and-forget — you do NOT block on a clear acknowledgement. Just send and continue.
+
+**When to skip**:
+- The agent's reply is the FINAL one in the workflow for the current task (e.g., shipper reports successful build at Step 8, no further dispatches expected to them this session). Clearing at end-of-work is wasteful.
+- An investigate-style turn (Rule 9) where the agent's reply must be immediately quoted/synthesized into the next dispatch — clear AFTER that next dispatch so the synthesis benefits from in-memory context. Rare; default to clear-immediately.
+
+**Common mistake to avoid**: do NOT batch the clear with the next task message via `--send` — `--command` cannot combine with those (Rule 8 constraint still holds). Two separate `send` invocations: clear first, then the new task message after the ≤30s wait window.
 
 ---
 

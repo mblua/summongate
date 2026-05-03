@@ -4066,8 +4066,22 @@ html.light-theme[data-sidebar-style="neon-circuit"] .coord-quick-access {
 .entity-char-count {
   font-size: 9px;
   color: var(--sidebar-fg-dim);
-  text-align: right;
   opacity: 0.6;
+}
+
+.entity-textarea-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  min-height: 12px;
+}
+
+.entity-textarea-hint {
+  font-size: 9px;
+  color: var(--sidebar-fg-dim);
+  opacity: 0.6;
+  font-style: italic;
 }
 
 .entity-select {
