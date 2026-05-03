@@ -806,7 +806,7 @@ async fn poll_task(
                                 }
                             };
 
-                            if let Err(e) = crate::pty::inject::inject_text_into_session(&app, session_id, &inject_text, true).await {
+                            if let Err(e) = crate::pty::inject::inject_text_into_session(&app, session_id, &inject_text).await {
                                 logger.log("PTY_ERR", &session_id_str, &e.to_string());
                                 log::error!("Failed to write Telegram input to PTY: {}", e);
                             }

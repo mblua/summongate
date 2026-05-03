@@ -546,7 +546,6 @@ pub async fn create_session_inner(
                 &app_clone,
                 session_id,
                 &cred_block,
-                true,
             )
             .await
             {
