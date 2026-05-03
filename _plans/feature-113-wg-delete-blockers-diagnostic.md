@@ -2530,3 +2530,263 @@ blockers; these are guidance):
 No pushback on any specific finding. Plan is sound, fixes hold against
 the failure modes round 1 called out, no minority position remaining.
 Dev-rust can proceed to Step 6.
+
+---
+
+## Grinch Step 7 review — implementation review
+
+Reviewed: `feature/113-wg-delete-blockers-diagnostic` @ `77c7a75`
+(commits `ef27632` backend, `792e427` os-error-gate expansion,
+`77c7a75` frontend + Show keyed-callback HIGH fix).
+
+Walked the diff line-by-line against the plan I signed off in Step 5
+round 3.
+
+### S.1 — Per-fix verification
+
+Every previously-approved fix is present and behaves as specified.
+
+| Fix | Plan ref | Code site | Status |
+|---|---|---|---|
+| **G.2.1** wgLastForceUsed captured pre-await, replayed in retry | §4.6.b/d/g | `ProjectPanel.tsx:210` (signal), `:1448` (capture before await), `:240` (replay in retry) | ✅ |
+| **G.2.2** orthogonal-state reset on every BLOCKERS hop | §4.6.d catch + §4.6.g retry | `ProjectPanel.tsx:1460-1462` (initial catch), `:254-256` (retry catch) — both clear wgDirtyRepos + wgConfirmText + wgDeleteError | ✅ |
+| **G.2.3** `collect_blockers_tolerant` binary-search-fallback | §4.2 | `wg_delete_diagnostic.rs:450-494` — single-bad-file isolation at `wide.len() == 1` (line 477), session dropped before recursion (line 486), tree depth ceil(log2(200))=8 | ✅ |
+| **G.2.4** sanitised parse-failure copy in both paths | §4.6.d/g | `ProjectPanel.tsx:1467` ("Workgroup is locked, but the blocker report could not be parsed."), `:257` ("Workgroup is **still** locked, ...") — distinct copy as specified | ✅ |
+| **G.2.5** `set_len` UB cap with `min(needed)` | §4.2 `rm_get_list` | `wg_delete_diagnostic.rs:388-399` — `debug_assert!` + `let actual = (have as usize).min(needed as usize); buf.set_len(actual);` exactly as specified, with the SAFETY comment | ✅ |
+| **G.2.6** BFS+hot-priority via `VecDeque` | §4.2 `collect_files_to_probe` | `wg_delete_diagnostic.rs:174-242` — VecDeque pop_front, `is_hot_lock_candidate` checks `*.lock` AND .git metadata names, segregated into separate `hot`/`cold` Vecs, output is `hot.truncate(MAX) ⊕ cold.take(remaining)`. WALK_SOFT_CEILING = 4× MAX | ✅ |
+| **G.2.7** retryGen counter race fix | §4.6.b/c/g | `ProjectPanel.tsx:211` (`let retryGen = 0`), `:232` (close bumps), `:239` (retry bumps + captures myGen), `:243/245/248` (post-await guards) | ✅ for the retry path; **see N.1 below** for the original-Delete-handler counterpart |
+| **G.3.1** dead `agent_name.is_empty()` branch removed | §4.2 scan_ac_sessions | `wg_delete_diagnostic.rs:260-265` — direct `agent_fqn_from_path` call into Some(...), no is_empty branch | ✅ |
+| **G.3.2** `canonicalize_for_compare` UNC-strip ordering | §4.2 | `wg_delete_diagnostic.rs:150-158` (`strip_long_prefix_str`) — `\\?\UNC\` checked **before** `\\?\`, exactly per spec. Test §7.23 at `:608-625` covers all three cases | ✅ |
+| **G.3.4** exe-name buffer 260 → 1024 | §4.2 pid_to_exe_basename | `wg_delete_diagnostic.rs:426` — `let mut buf: [u16; 1024] = [0; 1024];` | ✅ |
+| **C.10** `enum Platform` + serde lowercase | §4.2 | `wg_delete_diagnostic.rs:19-26` — `enum Platform { Windows, Linux, Macos, Other }` with `#[serde(rename_all = "lowercase")]`. TS literal union at `src/shared/types.ts:303` matches | ✅ |
+| **R.1.a** `Platform::Windows` in §7.4 + JSON-value assert | §7.4 | `wg_delete_diagnostic.rs:697` (`platform: Platform::Windows,`), `:723-728` (`assert_eq!(json.get("platform").and_then(|v| v.as_str()), Some("windows"), ...)`) | ✅ |
+| **R.1.b** `validate_existing_name` exposed `pub(crate)` | §7.22 | `entity_creation.rs:120` (`pub(crate) fn validate_existing_name`) — comment cites the sentinel-collision invariant test as the reason | ✅ |
+| **Bonus** — `is_file_in_use_error` exposed `pub(crate)` for the `is_file_in_use_error_*` tests | (not previously called out, but consistent) | `entity_creation.rs:1389` (`pub(crate) fn is_file_in_use_error`) — same pattern, same reasoning comment | ✅ |
+
+### S.2 — Backend MEDIUMs (M1–M4)
+
+- **M1 — UNC-strip duplication.** `strip_long_prefix_str`
+  (`wg_delete_diagnostic.rs:150`) handles both `\\?\UNC\` and `\\?\`.
+  The pre-existing `strip_unc` closure inside `pathdiff_relative`
+  (`entity_creation.rs:1470`) only handles `\\?\` — it would mangle a
+  real `\\?\UNC\server\share\…` path into `UNC\server\share\…`. That
+  pre-existing bug is **not** introduced by this PR; `pathdiff_relative`
+  is called from agent-path computation, not from the WG-delete flow.
+  **Verdict: defer to a follow-up issue.** Recommend opening "Unify
+  Windows long-prefix stripping into a single shared helper" so the
+  next caller doesn't re-invent the half-correct version.
+
+- **M2 — `pid_to_exe_basename` empty-string sentinel.** Style nit; the
+  caller chain at `wg_delete_diagnostic.rs:528-540` reads correctly
+  (`if exe.is_empty() { format!("pid {}", pid) } else { exe }`). No
+  silent-failure risk because `String::new()` is the only failure path.
+  **Verdict: defer.** `Option<String>` would be cleaner if anyone
+  refactors this module; not worth churn now.
+
+- **M3 — `is_file_in_use_error` expansion.** Verified commit `792e427`:
+  `entity_creation.rs:1393-1397` matches the union
+  `ERROR_SHARING_VIOLATION (32) | ERROR_LOCK_VIOLATION (33) |
+  ERROR_USER_MAPPED_FILE (1224)`. Tests at
+  `wg_delete_diagnostic.rs:761-820` cover positive cases for all three
+  codes and negative cases for `ERROR_ACCESS_DENIED (5)` + `ERROR_FILE_NOT_FOUND (2)`.
+  The negative tests are the right defensive bound — they prevent
+  accidental over-widening of the gate. **Verdict: ✅ matches my G.6 +
+  R.1 expectations.**
+
+- **M4 — Cross-module test placement (`is_file_in_use_error` /
+  `validate_existing_name` tests in `wg_delete_diagnostic::tests`,
+  forced `pub(crate)`).** Both placements were called equivalent in the
+  plan; dev-rust picked central, with explicit reasoning comments at
+  the `pub(crate)` declarations. The diagnostic-feature surface is
+  better grouped this way for someone reviewing #113. The visibility
+  bump is one notch (private → pub-crate) on two functions that already
+  participate in cross-module behaviour, so the surface-area cost is
+  near zero. **Verdict: keep central.** Moving to co-located now would
+  be churn for codebase-style conformance with no functional gain.
+
+### S.3 — Frontend HIGH fix (`<Show>` keyed-callback)
+
+- The IIFE form from §4.6.e was correctly replaced. `ProjectPanel.tsx:1362-1364`:
+  ```tsx
+  <Show when={wgBlockers()}>
+    {(r) => (
+      <div ...>
+  ```
+- The keyed-callback `(r) => ...` form means SolidJS wraps the body in
+  a reactive computation; reads of `r()` (e.g. `r().sessions`,
+  `r().processes`, `r().rawOsError`) re-run their parent computation
+  whenever `wgBlockers()` returns a fresh value. Verified the body
+  uses `r()` at every read site, not a captured snapshot.
+- Retry → BLOCKERS-with-new-report exercises this: `setWgBlockers(report2)`
+  → wgBlockers() truthiness stays truthy → reactive reads of `r()` re-run
+  → `<For each={r().sessions}>` and `<For each={r().processes}>` re-render
+  with the new arrays. ✅ No flash, no stale data.
+- **Verdict: HIGH fix is correctly applied and structurally sound.**
+  Plan §4.6.e prose still shows the buggy IIFE (line 1660-1700ish);
+  doc cleanup for the architect post-Step-7 (not a code blocker).
+
+### S.4 — Frontend test infrastructure gap (§7.17, §7.21)
+
+The plan called for "Frontend mock" tests at §7.17 (BLOCKERS:
+parse-failure sanitised copy) and §7.21 (retry-during-cancel race).
+The repo has **no frontend test runner** (no vitest/jest, no
+`@solidjs/testing-library`, no test scripts in `package.json`). These
+are not implementable without scaffolding a frontend test setup, which
+is out of scope for #113.
+
+The behaviour the tests would have exercised IS in the code:
+- §7.17 sanitised copy verified at `ProjectPanel.tsx:1467` and `:257`.
+- §7.21 retry-during-cancel race verified by the `retryGen` counter
+  at `:211/232/239/243/245/248`.
+
+**Verdict: not a blocker.** Logged as a known gap for the codebase as
+a whole. If frontend test scaffolding lands later, these two test
+specs are precise enough to drop in as-written.
+
+### S.5 — N.1 (new bug found in actual code)
+
+**Original Delete onClick lacks the `retryGen` guard that retryWgDelete has.**
+
+- **What.** The original Delete handler at `ProjectPanel.tsx:1442-1485`
+  awaits `EntityAPI.deleteWorkgroup(...)` and, in its catch block,
+  unconditionally calls `setWgBlockers(report)` / `setWgDirtyRepos(true)`
+  / `setWgDeleteError(msg)`. Unlike `retryWgDelete` (`:236-271`), it
+  does **not** capture `myGen = ++retryGen` before the await, and it
+  does not gate post-await writes on `myGen === retryGen`.
+- **Why.** This is the same class of bug as G.2.7 ("Cancel-while-X-in-flight
+  can resurrect a closed modal or stomp on a fresh modal"). The round-2
+  fix added `retryGen` to the **retry** path but not to the **initial**
+  path. Concrete failure scenario:
+  1. User opens delete modal for WG-A, clicks Delete. `wgDeleteInProgress(true)`,
+     await begins. Backend takes ~1-5 s (remove attempt + Restart-Manager scan).
+  2. User clicks Cancel mid-flight. `closeWgDeleteModal` runs:
+     `setWgBlockers(null)`, `setDeletingWg(null)`, `retryGen++`. Modal closes.
+  3. Backend returns `BLOCKERS:{json}` for WG-A. The await resolves.
+     The catch block sets `setWgBlockers(report-A)` — *the signal is
+     populated even though the modal is closed*.
+  4. User opens delete modal for WG-B. `setDeletingWg(wg-B)` → modal
+     renders. The `<Show when={wgBlockers()}>` is truthy → renders the
+     stale BLOCKERS banner from WG-A inside the WG-B dialog.
+  5. The original Delete button is correctly disabled
+     (`wgBlockers() !== null` is in the disabled predicate at `:1426`),
+     so the user can only click Cancel or Retry. Clicking Retry calls
+     `retryWgDelete` which uses `wg = deletingWg() = WG-B`, so the
+     stale state self-corrects after one Retry click.
+- **Severity.** Medium-low. Window is the ~1-5 s of an in-flight
+  delete, requires Cancel + open-different-WG within that window, and
+  self-corrects after the next Retry click. No data loss; the worst
+  case is one confused user click. But it IS a real instance of the
+  bug-class that G.2.7 was meant to close, just in a different code
+  path.
+- **Fix.** Three lines on `ProjectPanel.tsx:1442-1485`:
+  ```tsx
+  onClick={async () => {
+    if (wgDeleteInProgress()) return;
+    if (activeReplicas().length > 0) return;
+    setWgDeleteInProgress(true);
+    const myGen = ++retryGen;          // ADD
+    const wg = deletingWg()!;
+    const forceDelete = wgDirtyRepos();
+    setWgLastForceUsed(forceDelete);
+    try {
+      await EntityAPI.deleteWorkgroup(proj.path, wg.name, forceDelete);
+      if (myGen !== retryGen) return;  // ADD
+      await projectStore.reloadProject(proj.path);
+      if (myGen !== retryGen) return;  // ADD
+    } catch (e: any) {
+      if (myGen !== retryGen) {        // ADD
+        return;                        // skip stale-modal state writes
+      }
+      // …existing catch body…
+    }
+    closeWgDeleteModal();
+  }}
+  ```
+  Mirrors the exact pattern already in `retryWgDelete`.
+
+### S.6 — Other bug-hunt results (per tech-lead's checklist)
+
+- **`collect_blockers_tolerant` recursion termination + bound.** ✅
+  Base case at `wide.len() == 1` (line 477) returns before any split.
+  Sub-batches halve at `mid = wide.len() / 2`. For a 200-file batch
+  with k bad files: ~k·log₂(200) = up to ~70 internal sessions worst
+  case (k=10). All sessions are dropped before recursion (line 486),
+  so simultaneous open is always 1. RmStartSession failure inside the
+  recursion is logged and returns Vec::new() for that sub-batch — no
+  recursion explosion, no quota burn. ✅
+- **RmGetList non-MORE_DATA generic FFI failure.** Returns Err from
+  `rm_get_list`; `collect_blockers_tolerant`'s `Ok(())` arm calls
+  `unwrap_or_else(|e| { log; Vec::new() })`. The whole sub-batch is
+  silently skipped (logged at `warn`). Phase 2 then sees an empty
+  `target_pids`, returns empty processes, and the UI shows "No
+  blockers identified" with rawOsError. Degraded but correct — not
+  a crash. ✅
+- **`spawn_blocking` cancellation.** If the parent task is cancelled
+  mid-FFI, the closure continues to completion on the blocking pool;
+  the result is dropped. `RmSession::Drop` runs as the closure unwinds
+  and calls `RmEndSession` regardless. Tauri commands aren't currently
+  cancellable in practice, but the code is robust if they become so. ✅
+- **`canonicalize` on a vanished WG dir.** Multiple defenses: (a)
+  `canonicalize_for_compare` falls back to the input path if
+  `std::fs::canonicalize` fails (line 163); (b) `collect_files_to_probe`
+  silently returns empty if `read_dir(&dir)` fails (line 213-214); (c)
+  the diagnostic only runs when `is_file_in_use_error` returned true,
+  which can only happen if `remove_dir_all` actually saw files —
+  vanished-dir produces NotFound, not file-in-use, so the diagnostic
+  isn't entered. ✅
+- **TS type drift.** The TS `BlockerReport` interface at
+  `src/shared/types.ts:303` exactly mirrors the Rust struct. The §7.4
+  JSON-shape test catches Rust-side rename or removal of any of the
+  six top-level fields (workgroup, platform, diagnosticAvailable,
+  rawOsError, sessions, processes) and the nested fields. TS-side
+  silent-misparse on a future Rust addition is a generic boundary
+  risk, not introduced by this PR. ✅
+- **Sentinel collision.** `validate_existing_name` (entity_creation.rs:120)
+  rejects `:` and `_` (whitelist is `is_ascii_alphanumeric() || c == '-'`),
+  so no valid WG name can contain `BLOCKERS:` or `DIRTY_REPOS:`. Test
+  §7.22 (wg_delete_diagnostic.rs:825-836) locks this. Other error paths
+  format strings starting with "Failed to..." or std::io::Error verbatim
+  (Windows error strings start with verb phrases like "The process..."),
+  none of which begin with BLOCKERS:/DIRTY_REPOS:. Panic messages
+  start with "panicked at...". ✅
+- **`pid_to_exe_basename` long-path.** Buffer is 1024 wide chars (~2 KB).
+  `QueryFullProcessImageNameW` returns 0 on buffer-too-small; the code
+  guards with `if ok == 0 || size == 0 { return String::new(); }`
+  (line 430-432). Caller falls back to `format!("pid {}", pid)`. No
+  truncation crash, just degraded display. ✅
+- **Retry button double-click.** `if (wgRetryInProgress()) return;` at
+  `:237` is the synchronous gate; SolidJS signal writes are immediate.
+  The first click sets `setWgRetryInProgress(true)` synchronously
+  before yielding at the await; any subsequent click in a later
+  microtask reads `true` and returns. ✅ Plus the button has
+  `disabled={wgRetryInProgress() || wgDeleteInProgress()}` (line 1418)
+  for visual gating.
+
+### S.7 — Final verdict
+
+**APPROVED WITH NOTES — implementation matches the plan.**
+
+All 13 round-1/2/3 fixes are present in the code and behave as
+specified. Backend MEDIUM follow-ups (M1, M2, M4) are correct
+deferral calls. The os-error-gate expansion (M3) is verified. The
+frontend HIGH fix (Show keyed-callback) is structurally sound.
+
+**One new finding (N.1) was surfaced:** the original Delete onClick
+handler is missing the `retryGen` guard pattern that `retryWgDelete`
+has. Same bug class as G.2.7 in a different code path. Severity
+medium-low, narrow window, self-corrects. Recommend a 3-line fix
+before user-facing release; the fix mirrors the existing retry-path
+pattern exactly.
+
+**Two known gaps (not blockers):**
+- §5 still mentions `Win32_System_ProcessStatus` (round-3 doc-only
+  cleanup, never fixed).
+- §4.6.e still shows the buggy IIFE (architect post-Step-7 doc
+  cleanup).
+
+Both are doc-only; the implementation is correct.
+
+If tech-lead wants N.1 fixed before Step 8 ship, route to
+dev-webpage-ui for the 3-line `retryGen` retrofit on the original
+Delete handler. If shipping straight to Step 8, log N.1 as a
+follow-up issue and expect to fix in the next user-facing release.
