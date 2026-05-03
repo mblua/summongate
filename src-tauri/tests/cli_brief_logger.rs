@@ -101,6 +101,12 @@ fn brief_set_title_audit_line_reaches_file_sink() {
             "--title",
             "cli-logger smoke title",
         ])
+        // Pin RUST_LOG so this assertion does not depend on the parent
+        // (`cargo test`) shell's env. Without this, running
+        // `RUST_LOG=warn cargo test --tests` filters out the `info!`
+        // audit line and the `[brief] set-title:` check below
+        // false-fails — production behavior is unchanged.
+        .env("RUST_LOG", "agentscommander=info")
         .output()
         .expect("spawn binary");
 
