@@ -166,8 +166,17 @@ fn canonicalize_for_compare(p: &Path) -> PathBuf {
 }
 
 /// Walk the workgroup tree breadth-first and collect up to MAX_FILES_TO_PROBE absolute
-/// file paths to feed RmRegisterResources. Hot files (lock-prone metadata) are always
-/// taken first so the budget can't be exhausted on a single `.git/objects/` subtree.
+/// resource paths to feed RmRegisterResources.
+///
+/// Priority order in the output:
+///   1. **Directories** — WG root, top-level `repo-*` and `__agent_*` subdirs,
+///      and `messaging/` if present. Surfaces dir-handle holders (terminal
+///      cwd, IDE workspace open, file watchers via `ReadDirectoryChangesW`)
+///      that file-only registration misses (#113 follow-up).
+///   2. **Hot lock files** — lock-prone git metadata (`.lock`, `index`,
+///      `HEAD`, etc.) so the budget can't be exhausted on a single
+///      `.git/objects/` subtree.
+///   3. **Cold files** — everything else, until the cap is hit.
 ///
 /// Skips dirs we can't read; never follows symlinks.
 #[cfg(windows)]
@@ -195,20 +204,32 @@ fn collect_files_to_probe(wg_dir: &Path) -> Vec<PathBuf> {
             )
     }
 
+    /// Top-level WG-child dirs whose handles commonly indicate a blocker:
+    /// `repo-*` (clones — git operations, IDE workspaces),
+    /// `__agent_*` (replicas — agent-spawned shells holding cwd),
+    /// `messaging/` (mailbox — file watchers).
+    fn is_relevant_top_level_dir(name: &str) -> bool {
+        name.starts_with("repo-") || name.starts_with("__agent_") || name == "messaging"
+    }
+
     /// Soft ceiling on total walk size — once we've inventoried 4× the probe
     /// budget, we have plenty to choose from. Avoids walking gigabytes of
     /// `.git/objects/` when the WG is unusually large.
     const WALK_SOFT_CEILING: usize = MAX_FILES_TO_PROBE * 4;
 
+    // Always include the WG root itself. A terminal cwd or IDE workspace open
+    // anywhere under the tree usually surfaces via a handle on this directory.
+    let mut dirs: Vec<PathBuf> = vec![wg_dir.to_path_buf()];
     let mut hot: Vec<PathBuf> = Vec::new();
     let mut cold: Vec<PathBuf> = Vec::new();
     let mut queue: VecDeque<PathBuf> = VecDeque::new();
     queue.push_back(wg_dir.to_path_buf());
 
     while let Some(dir) = queue.pop_front() {
-        if hot.len() + cold.len() >= WALK_SOFT_CEILING {
+        if hot.len() + cold.len() + dirs.len() >= WALK_SOFT_CEILING {
             break;
         }
+        let is_wg_root = dir == wg_dir;
         let entries = match std::fs::read_dir(&dir) {
             Ok(e) => e,
             Err(_) => continue,
@@ -223,6 +244,13 @@ fn collect_files_to_probe(wg_dir: &Path) -> Vec<PathBuf> {
                 continue;
             }
             if ft.is_dir() {
+                if is_wg_root {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        if is_relevant_top_level_dir(name) {
+                            dirs.push(path.clone());
+                        }
+                    }
+                }
                 queue.push_back(path);
             } else if ft.is_file() {
                 if is_hot_lock_candidate(&path) {
@@ -234,9 +262,14 @@ fn collect_files_to_probe(wg_dir: &Path) -> Vec<PathBuf> {
         }
     }
 
-    let mut out = hot;
+    // Dirs first (the new signal — small set, ~5–10 entries; prefer over cold
+    // files as the plan dictates), then hot files, then cold files. All
+    // capped at MAX_FILES_TO_PROBE total.
+    let mut out = dirs;
     out.truncate(MAX_FILES_TO_PROBE);
-    let remaining = MAX_FILES_TO_PROBE - out.len();
+    let remaining = MAX_FILES_TO_PROBE.saturating_sub(out.len());
+    out.extend(hot.into_iter().take(remaining));
+    let remaining = MAX_FILES_TO_PROBE.saturating_sub(out.len());
     out.extend(cold.into_iter().take(remaining));
     out
 }
@@ -833,5 +866,95 @@ mod tests {
         // but bare prefixes aren't sentinel hits (frontend uses startsWith with the colon).
         assert!(validate_existing_name("BLOCKERS", "Workgroup").is_ok());
         assert!(validate_existing_name("DIRTY-REPOS", "Workgroup").is_ok());
+    }
+
+    /// #113 follow-up: `collect_files_to_probe` must include the WG root
+    /// directory plus every `repo-*`, `__agent_*`, and `messaging/` top-level
+    /// subdir. Surfacing dir handles is what lets RM detect terminal-cwd /
+    /// IDE-workspace-open / file-watcher blockers, which file-only registration
+    /// missed.
+    #[cfg(windows)]
+    #[test]
+    fn collect_files_to_probe_includes_wg_root_and_top_level_dirs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wg_dir = tmp.path().join("wg-1-test");
+        std::fs::create_dir(&wg_dir).expect("create wg_dir");
+        // Top-level dirs the diagnostic should now register.
+        let repo_dir = wg_dir.join("repo-foo");
+        let agent_dir = wg_dir.join("__agent_dev-rust");
+        let messaging_dir = wg_dir.join("messaging");
+        std::fs::create_dir(&repo_dir).expect("create repo-foo");
+        std::fs::create_dir(&agent_dir).expect("create __agent_dev-rust");
+        std::fs::create_dir(&messaging_dir).expect("create messaging");
+        // A non-relevant top-level dir must NOT be registered (filter discipline).
+        let unrelated = wg_dir.join("docs");
+        std::fs::create_dir(&unrelated).expect("create docs");
+        // A regular file at WG root — should still appear in the result, just
+        // after the dirs.
+        std::fs::write(wg_dir.join("BRIEF.md"), "# t\n").expect("write BRIEF.md");
+
+        let result = collect_files_to_probe(&wg_dir);
+
+        assert!(
+            result.iter().any(|p| p == &wg_dir),
+            "result must include WG root, got {:?}",
+            result
+        );
+        assert!(
+            result.iter().any(|p| p == &repo_dir),
+            "result must include repo-* subdir, got {:?}",
+            result
+        );
+        assert!(
+            result.iter().any(|p| p == &agent_dir),
+            "result must include __agent_* subdir, got {:?}",
+            result
+        );
+        assert!(
+            result.iter().any(|p| p == &messaging_dir),
+            "result must include messaging/ subdir, got {:?}",
+            result
+        );
+        assert!(
+            !result.iter().any(|p| p == &unrelated),
+            "result must NOT include unrelated top-level dirs (got 'docs'); result={:?}",
+            result
+        );
+    }
+
+    /// #113 follow-up: the dir entries must come BEFORE files in the output
+    /// so that, under the `MAX_FILES_TO_PROBE` cap, dirs are preferred. The
+    /// plan calls this out explicitly: dir handles are the new signal, file
+    /// handles were already covered.
+    #[cfg(windows)]
+    #[test]
+    fn collect_files_to_probe_orders_dirs_before_files() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wg_dir = tmp.path().join("wg-1-test");
+        std::fs::create_dir(&wg_dir).expect("create wg_dir");
+        let repo_dir = wg_dir.join("repo-foo");
+        std::fs::create_dir(&repo_dir).expect("create repo-foo");
+        std::fs::write(wg_dir.join("BRIEF.md"), "# t\n").expect("write BRIEF.md");
+        std::fs::write(repo_dir.join("README.md"), "x").expect("write README.md");
+
+        let result = collect_files_to_probe(&wg_dir);
+
+        let first_file_idx = result.iter().position(|p| p.is_file());
+        let last_dir_idx = result.iter().rposition(|p| p.is_dir());
+        match (first_file_idx, last_dir_idx) {
+            (Some(file_i), Some(dir_i)) => assert!(
+                dir_i < file_i,
+                "all dirs must precede all files in output; got dirs ending at {} but a file at {}; result={:?}",
+                dir_i,
+                file_i,
+                result
+            ),
+            // If there are no files (empty WG) or no dirs (would be a bug),
+            // the test is moot — but it shouldn't happen with the setup above.
+            other => panic!(
+                "expected at least one dir and one file in result, got {:?}; result={:?}",
+                other, result
+            ),
+        }
     }
 }
