@@ -20,6 +20,13 @@ fn main() {
             match agentscommander_lib::cli::Cli::from_arg_matches(&matches) {
                 Ok(cli) => match cli.command {
                     Some(cmd) => {
+                        // Install the same logger backend the GUI uses so
+                        // every `log::*` call from CLI verbs (the `[brief]`
+                        // audit lines in particular — plan #137 §3a HIGH-1
+                        // mitigation) reaches stderr + <config_dir>/app.log.
+                        // GATED on `cli.command.is_some()` so the GUI branch
+                        // below initializes via `lib::run()` exactly once.
+                        agentscommander_lib::logging::init_logger();
                         let code = agentscommander_lib::cli::handle_cli(cmd);
                         std::process::exit(code);
                     }
