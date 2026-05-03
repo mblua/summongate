@@ -890,7 +890,7 @@ impl MailboxPoller {
             payload.len(),
             payload.chars().take(100).collect::<String>()
         );
-        crate::pty::inject::inject_text_into_session(app, session_id, &payload, true)
+        crate::pty::inject::inject_text_into_session(app, session_id, &payload)
             .await
             .map_err(|e| {
                 log::error!(
@@ -961,7 +961,7 @@ impl MailboxPoller {
         // Note: same TOCTOU race as the command path — agent could become busy
         // between the idle check above and this write. Acceptable for this use case.
         let payload = crate::phone::messaging::format_pty_wrap(&msg.from, &msg.body);
-        crate::pty::inject::inject_text_into_session(app, session_id, &payload, true).await
+        crate::pty::inject::inject_text_into_session(app, session_id, &payload).await
     }
 
     /// Wait for agent to become idle after `/clear`, then re-inject the
@@ -1029,7 +1029,7 @@ impl MailboxPoller {
 
         // Build + inject. Same call shape as spawn path.
         let cred_block = crate::pty::credentials::build_credentials_block(&token, &cwd);
-        crate::pty::inject::inject_text_into_session(app, session_id, &cred_block, true).await?;
+        crate::pty::inject::inject_text_into_session(app, session_id, &cred_block).await?;
 
         log::info!(
             "[mailbox] Credentials re-injected after /clear (session={})",
@@ -1871,7 +1871,7 @@ impl MailboxPoller {
                     # Updated send command:\n\
                     #   \"{exe}\" send --token {token} --root \"{root}\" --to \"<agent_name>\" --send <filename> --mode wake\n\
                     # === End Token Refresh ===\n\
-                    \r",
+                    ",
                     exe = crate::config::profile::exe_name(),
                     token = session.token,
                     root = session.working_directory,
@@ -1884,7 +1884,7 @@ impl MailboxPoller {
             // SessionManager read-lock dropped here
         };
 
-        match crate::pty::inject::inject_text_into_session(app, session_id, &notice, false).await {
+        match crate::pty::inject::inject_text_into_session(app, session_id, &notice).await {
             Ok(()) => log::info!("[mailbox] Fresh token injected into session {}", session_id),
             Err(e) => log::warn!(
                 "[mailbox] Failed to inject fresh token into session {}: {}",
