@@ -231,6 +231,9 @@ pub fn execute(args: SendArgs) -> i32 {
         None
     };
 
+    let mode_for_ack = args.mode.clone();
+    let to_for_ack = resolved_to.clone();
+
     let message = OutboxMessage {
         id: msg_id.clone(),
         token: args.token,
@@ -302,7 +305,10 @@ pub fn execute(args: SendArgs) -> i32 {
 
     loop {
         if delivered_path.exists() {
-            println!("Message delivered: {}", msg_id);
+            println!(
+                "Delivered: {} (mode={}, to={})",
+                msg_id, mode_for_ack, to_for_ack
+            );
             break;
         }
         if rejected_reason_path.exists() {
