@@ -1443,13 +1443,17 @@ const ProjectPanel: Component = () => {
                           if (wgDeleteInProgress()) return;
                           if (activeReplicas().length > 0) return;
                           setWgDeleteInProgress(true);
+                          const myGen = ++retryGen;
                           const wg = deletingWg()!;
                           const forceDelete = wgDirtyRepos();
                           setWgLastForceUsed(forceDelete);
                           try {
                             await EntityAPI.deleteWorkgroup(proj.path, wg.name, forceDelete);
+                            if (myGen !== retryGen) return;
                             await projectStore.reloadProject(proj.path);
+                            if (myGen !== retryGen) return;
                           } catch (e: any) {
+                            if (myGen !== retryGen) return;
                             console.error("delete_workgroup failed:", e);
                             const msg = typeof e === "string" ? e : e?.message ?? "Failed to delete workgroup";
                             // BLOCKERS: sentinel — render structured blocker list, no force-delete option.
