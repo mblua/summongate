@@ -113,12 +113,16 @@ pub fn execute(args: BriefSetTitleArgs) -> i32 {
     };
 
     // Hand off to brief_ops::perform.
+    // NIT-2: include `pid={}` so an auditor can cross-reference the AC process
+    // tree. `sender=` and `wg=` are both caller-derived (--root) and a forged
+    // --root produces a forged-but-consistent line; pid disambiguates.
     match brief_ops::perform(&wg_root, BriefOp::SetTitle(args.title.clone())) {
         Ok(EditOutcome::Wrote { backup: Some(bp) }) => {
             log::info!(
-                "[brief] set-title: sender={} wg={} backup={}",
+                "[brief] set-title: sender={} wg={} pid={} backup={}",
                 sender,
                 wg_root.display(),
+                std::process::id(),
                 bp.display()
             );
             println!("BRIEF.md title updated; backup: {}", bp.display());
@@ -126,18 +130,20 @@ pub fn execute(args: BriefSetTitleArgs) -> i32 {
         }
         Ok(EditOutcome::Wrote { backup: None }) => {
             log::info!(
-                "[brief] set-title: sender={} wg={} backup=<no prior file>",
+                "[brief] set-title: sender={} wg={} pid={} backup=<no prior file>",
                 sender,
-                wg_root.display()
+                wg_root.display(),
+                std::process::id()
             );
             println!("BRIEF.md created; no prior content to back up");
             0
         }
         Ok(EditOutcome::NoOp) => {
             log::info!(
-                "[brief] set-title (no-op): sender={} wg={} (title value already matches)",
+                "[brief] set-title (no-op): sender={} wg={} pid={} (title value already matches)",
                 sender,
-                wg_root.display()
+                wg_root.display(),
+                std::process::id()
             );
             println!("BRIEF.md unchanged (title value already matches)");
             0

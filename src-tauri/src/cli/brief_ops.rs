@@ -211,7 +211,11 @@ fn apply_set_title(parsed: &ParsedBrief, title: &str) -> ParsedBrief {
 
     // Brand-new file: parsed has empty body and no frontmatter. The set-title
     // matrix says born-LF and BOM-less per entity_creation.rs convention.
-    if !parsed.has_frontmatter && parsed.body.is_empty() {
+    // Also require !parsed.bom so a BOM-only existing file (post-BOM-peel
+    // body is "") falls through to the "preserve bom/eol" branch instead of
+    // tripping this brand-new shortcut and stripping the BOM (LOW-1, plan §5
+    // row 2 — HIGH-3 byte-exact round-trip).
+    if !parsed.has_frontmatter && parsed.body.is_empty() && !parsed.bom {
         return ParsedBrief {
             bom: false,
             line_ending: "\n",
@@ -1095,6 +1099,21 @@ mod tests {
         let p = apply_append_body(&parsed, "NewLine");
         // Line1's CRLF preserved; Line2's trailing CRLF replaced; NewLine ends with LF.
         assert_eq!(p.body, "Line1\r\nLine2\n\nNewLine\n");
+    }
+
+    // ── U35: BOM-only existing file preserves BOM through set-title (LOW-1)
+
+    #[test]
+    fn apply_set_title_preserves_bom_on_bom_only_existing_file() {
+        // BOM-only file (e.g. coordinator opened BRIEF.md in Notepad on
+        // Windows, which writes \xEF\xBB\xBF, then saved). The brand-new
+        // branch must NOT fire — that would strip the BOM and violate the
+        // HIGH-3 byte-exact round-trip guarantee. The fix gates the
+        // brand-new branch on !parsed.bom so this case falls through to the
+        // "no frontmatter, preserve bom/eol" branch.
+        let parsed = parse_brief("\u{FEFF}");
+        let p = apply_set_title(&parsed, "X");
+        assert_eq!(render(&p), "\u{FEFF}---\ntitle: 'X'\n---\n");
     }
 
     // ── extra: title_value_of helper ────────────────────────────────────

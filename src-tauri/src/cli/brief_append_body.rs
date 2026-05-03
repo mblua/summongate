@@ -112,12 +112,16 @@ pub fn execute(args: BriefAppendBodyArgs) -> i32 {
         }
     };
 
+    // NIT-2: include `pid={}` so an auditor can cross-reference the AC process
+    // tree. `sender=` and `wg=` are both caller-derived (--root) and a forged
+    // --root produces a forged-but-consistent line; pid disambiguates.
     match brief_ops::perform(&wg_root, BriefOp::AppendBody(args.text.clone())) {
         Ok(EditOutcome::Wrote { backup: Some(bp) }) => {
             log::info!(
-                "[brief] append-body: sender={} wg={} backup={}",
+                "[brief] append-body: sender={} wg={} pid={} backup={}",
                 sender,
                 wg_root.display(),
+                std::process::id(),
                 bp.display()
             );
             println!("BRIEF.md body appended; backup: {}", bp.display());
@@ -125,9 +129,10 @@ pub fn execute(args: BriefAppendBodyArgs) -> i32 {
         }
         Ok(EditOutcome::Wrote { backup: None }) => {
             log::info!(
-                "[brief] append-body: sender={} wg={} backup=<no prior file>",
+                "[brief] append-body: sender={} wg={} pid={} backup=<no prior file>",
                 sender,
-                wg_root.display()
+                wg_root.display(),
+                std::process::id()
             );
             println!("BRIEF.md created; no prior content to back up");
             0
@@ -219,16 +224,22 @@ mod tests {
         assert!(!wg_root.join("BRIEF.md").exists());
     }
 
-    // ── I19: --text preserves internal newlines ─────────────────────────
+    // ── (token rejection) ───────────────────────────────────────────────
+    // Note: the substantive I19 guarantee ("--text preserves internal
+    // newlines after a successful append") is covered at the apply layer by
+    // `brief_ops::tests::apply_append_body_preserves_internal_body_line_endings_and_documents_trailing_loss`.
+    // Reaching the apply layer through `execute` would require stubbing
+    // team-config so the coordinator gate passes — the apply-layer test
+    // gives the same byte-level guarantee at much lower cost.
 
     #[test]
     fn append_body_rejects_invalid_token() {
-        let fix = FixtureRoot::new("brief-ai19a");
+        let fix = FixtureRoot::new("brief-ai-token");
         let agent_root = make_wg_fixture(fix.path());
         let args = args_for(
             Some("not-a-uuid".into()),
             Some(agent_root.to_string_lossy().into_owned()),
-            "line1\nline2\n\nline4",
+            "hello",
         );
         let code = execute(args);
         assert_eq!(code, 1);
