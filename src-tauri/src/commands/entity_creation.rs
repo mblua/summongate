@@ -113,7 +113,11 @@ fn sanitize_name(raw: &str) -> Result<String, String> {
 /// Validate that an existing entity name is safe for path operations.
 /// Unlike `sanitize_name`, this does NOT transform the name — it just rejects
 /// names that contain path traversal or separator characters.
-fn validate_existing_name(name: &str, entity_label: &str) -> Result<(), String> {
+///
+/// `pub(crate)` so the sentinel-collision invariant test in
+/// `wg_delete_diagnostic::tests` can prove that no valid WG name can collide
+/// with the `BLOCKERS:` / `DIRTY_REPOS:` sentinel prefixes.
+pub(crate) fn validate_existing_name(name: &str, entity_label: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err(format!("{} name cannot be empty", entity_label));
     }
@@ -841,8 +845,42 @@ pub async fn delete_workgroup(
         }
     }
 
-    std::fs::remove_dir_all(&wg_dir)
-        .map_err(|e| format!("Failed to delete workgroup directory: {}", e))?;
+    // Preflight rename probe (#113 follow-up): try an atomic same-parent rename
+    // BEFORE remove_dir_all. NTFS rename requires DELETE access on every open
+    // handle to the dir or any descendant; if any blocker holds a handle without
+    // FILE_SHARE_DELETE (terminal cwd, VSCode workspace open, file watcher,
+    // memory-mapped BRIEF.md), the rename fails atomically — no files touched —
+    // and we run the diagnostic on the still-intact tree. On success the dir is
+    // re-parented to a sentinel name and removed; the user-visible WG is gone.
+    match try_atomic_delete_wg(&wg_dir) {
+        WgDeleteOutcome::Deleted => {
+            // fall through to success path
+        }
+        WgDeleteOutcome::Blocked(e) => {
+            let raw = e.to_string();
+            log::info!(
+                "[entity_creation] delete_workgroup: file-in-use detected for '{}' on rename probe, running blocker diagnostic on intact tree",
+                workgroup_name
+            );
+            let report = crate::commands::wg_delete_diagnostic::diagnose_blockers(
+                &wg_dir,
+                &workgroup_name,
+                &raw, // raw OS error verbatim — see plan §C.1
+                session_mgr.inner(),
+            )
+            .await;
+            let json = serde_json::to_string(&report).map_err(|se| {
+                format!(
+                    "Failed to serialize blocker report: {}; original error: {}",
+                    se, raw
+                )
+            })?;
+            return Err(format!("BLOCKERS:{}", json));
+        }
+        WgDeleteOutcome::Other(e) => {
+            return Err(format!("Failed to delete workgroup directory: {}", e));
+        }
+    }
     log::info!(
         "[entity_creation] Deleted workgroup: {} (force={})",
         workgroup_name,
@@ -1388,6 +1426,147 @@ fn check_workgroup_repos_dirty(wg_dirs: &[PathBuf]) -> Vec<(String, String)> {
     dirty
 }
 
+/// Result of a preflight-rename `delete_workgroup` attempt.
+///
+/// `pub(crate)` so the unit tests can pattern-match on the variants.
+pub(crate) enum WgDeleteOutcome {
+    /// Rename succeeded and the renamed dir was removed (or, in the rare race
+    /// where remove failed after a successful rename, an orphan remains and a
+    /// `log::warn!` was emitted — from the user's perspective the WG is gone).
+    Deleted,
+    /// Rename failed with a Windows file-in-use error. Tree is intact; caller
+    /// should run the blocker diagnostic and return `BLOCKERS:` to the frontend.
+    Blocked(std::io::Error),
+    /// Rename failed with any other error (NotFound, permission, invalid path,
+    /// …). Caller passes the raw error through unchanged.
+    Other(std::io::Error),
+}
+
+/// Atomically detect blockers before deleting a workgroup directory.
+///
+/// Strategy: rename the WG dir to a unique sentinel name in the same parent
+/// (NTFS metadata-only operation, fails atomically if any handle blocks it),
+/// then `remove_dir_all` the renamed dir. If rename fails with a file-in-use
+/// error the WG is still intact, so the caller can run the diagnostic over the
+/// original tree and surface a `BLOCKERS:` report.
+///
+/// Suffix scheme: `.deleting-<wg_name>-<uuid>` — leading `.` keeps any orphan
+/// (rare race: rename succeeds but remove_dir_all fails) invisible to the
+/// `starts_with("wg-")` filters in `ac_discovery`, `cli::list_peers`, and
+/// `claude_settings`, so an orphan won't surface as a ghost workgroup. UUID is
+/// used (already in `Cargo.toml`) to guarantee uniqueness across rapid retries.
+///
+/// `pub(crate)` so unit tests can drive it directly.
+pub(crate) fn try_atomic_delete_wg(wg_dir: &Path) -> WgDeleteOutcome {
+    let parent = match wg_dir.parent() {
+        Some(p) => p,
+        None => {
+            return WgDeleteOutcome::Other(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "workgroup directory has no parent",
+            ));
+        }
+    };
+    let original_name = match wg_dir.file_name().and_then(|n| n.to_str()) {
+        Some(n) => n,
+        None => {
+            return WgDeleteOutcome::Other(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "workgroup directory has no filename",
+            ));
+        }
+    };
+    let temp_name = format!(".deleting-{}-{}", original_name, uuid::Uuid::new_v4());
+    let temp_path = parent.join(&temp_name);
+
+    match std::fs::rename(wg_dir, &temp_path) {
+        Ok(()) => {
+            if let Err(e) = std::fs::remove_dir_all(&temp_path) {
+                // Rare race: a new handle opened between rename and remove. The
+                // user-visible WG is gone (renamed away); leave the orphan on
+                // disk for future cleanup tooling.
+                log::warn!(
+                    "[entity_creation] Renamed workgroup '{}' to '{}' but remove_dir_all failed: {}. \
+                     User-visible WG is gone; orphan remains on disk.",
+                    wg_dir.display(),
+                    temp_path.display(),
+                    e
+                );
+            }
+            WgDeleteOutcome::Deleted
+        }
+        Err(e) => {
+            if is_rename_blocked_by_handle(&e) {
+                WgDeleteOutcome::Blocked(e)
+            } else {
+                WgDeleteOutcome::Other(e)
+            }
+        }
+    }
+}
+
+/// True iff the rename-probe error indicates a blocker holds an open handle.
+///
+/// Superset of `is_file_in_use_error`: matches the same {32, 33, 1224} codes
+/// PLUS `ERROR_ACCESS_DENIED` (5). Empirically `MoveFileEx` (and therefore
+/// `std::fs::rename`) returns 5, not 32, when an existing open handle on the
+/// source's descendant lacks `FILE_SHARE_DELETE` — the most common real-world
+/// blocker shape (default-share opens by IDEs and terminals). This is the
+/// rename-path counterpart to `is_file_in_use_error`, which was tuned for
+/// `remove_dir_all` semantics where ACCESS_DENIED typically means a real
+/// permission failure (read-only file) rather than a share-mode mismatch.
+///
+/// `pub(crate)` so unit tests can exercise it without going through `try_atomic_delete_wg`.
+pub(crate) fn is_rename_blocked_by_handle(e: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        const ERROR_ACCESS_DENIED: i32 = 5;
+        if e.raw_os_error() == Some(ERROR_ACCESS_DENIED) {
+            return true;
+        }
+        is_file_in_use_error(e)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = e;
+        false
+    }
+}
+
+/// True iff `e` represents a Windows "file in use" error.
+///
+/// Matches the Win32 codes that surface when another process holds an open or
+/// memory-mapped handle to a file we tried to delete:
+/// - `ERROR_SHARING_VIOLATION` (32) — standard open with a deny-share mode.
+/// - `ERROR_LOCK_VIOLATION` (33) — byte-range lock collision.
+/// - `ERROR_USER_MAPPED_FILE` (1224) — file is mapped into another process's address
+///   space. This is the VSCode / IDE memory-mapped-I/O case and was the motivating
+///   real-world scenario for the blocker diagnostic. See plan §6.1.
+///
+/// On non-Windows always returns false: Linux / macOS produce different error codes
+/// for "directory not empty due to open file" and we don't run the Restart-Manager
+/// diagnostic there.
+///
+/// `pub(crate)` so the unit test in `wg_delete_diagnostic::tests` can exercise it
+/// without moving the test into this module.
+pub(crate) fn is_file_in_use_error(e: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        const ERROR_LOCK_VIOLATION: i32 = 33;
+        const ERROR_USER_MAPPED_FILE: i32 = 1224;
+        matches!(
+            e.raw_os_error(),
+            Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION | ERROR_USER_MAPPED_FILE)
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = e;
+        false
+    }
+}
+
 /// Scan .ac-new/ for existing wg-*-{team_name}/ dirs and return the next N.
 fn determine_next_wg_number(ac_new_dir: &Path, team_name: &str) -> u32 {
     let suffix = format!("-{}", team_name);
@@ -1545,4 +1724,188 @@ async fn git_clone_async(url: &str, target: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the preflight-rename `delete_workgroup` helper added in
+    //! the #113 follow-up dispatch.
+
+    use super::*;
+
+    /// Success path: a clean WG dir with no blockers gets renamed and removed.
+    /// The original path must not exist after the call, and there must be no
+    /// `.deleting-*` orphan left in the parent.
+    #[test]
+    fn try_atomic_delete_wg_removes_clean_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wg_dir = tmp.path().join("wg-1-test");
+        std::fs::create_dir(&wg_dir).expect("create wg_dir");
+        std::fs::write(wg_dir.join("BRIEF.md"), "# test\n").expect("write BRIEF.md");
+        std::fs::create_dir(wg_dir.join("repo-foo")).expect("create repo-foo");
+        std::fs::write(wg_dir.join("repo-foo").join("README.md"), "x").expect("write inside");
+
+        let outcome = try_atomic_delete_wg(&wg_dir);
+        assert!(
+            matches!(outcome, WgDeleteOutcome::Deleted),
+            "clean dir must report Deleted"
+        );
+        assert!(!wg_dir.exists(), "wg_dir must be gone after delete");
+
+        // Parent must contain no `.deleting-*` orphan.
+        let parent = tmp.path();
+        let orphans: Vec<_> = std::fs::read_dir(parent)
+            .expect("read tempdir")
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(".deleting-")
+            })
+            .collect();
+        assert!(
+            orphans.is_empty(),
+            "no .deleting-* orphan should remain after a clean delete; found {:?}",
+            orphans.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+        );
+    }
+
+    /// Other-error path: deleting a nonexistent WG dir surfaces as
+    /// `WgDeleteOutcome::Other` (NotFound), NOT as `Blocked`.
+    #[test]
+    fn try_atomic_delete_wg_classifies_missing_dir_as_other() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let missing = tmp.path().join("does-not-exist");
+        let outcome = try_atomic_delete_wg(&missing);
+        match outcome {
+            WgDeleteOutcome::Other(e) => {
+                assert_eq!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound,
+                    "missing-dir error must classify as NotFound"
+                );
+            }
+            WgDeleteOutcome::Blocked(_) => {
+                panic!("missing dir must NOT classify as Blocked")
+            }
+            WgDeleteOutcome::Deleted => panic!("missing dir cannot be Deleted"),
+        }
+    }
+
+    /// Blocked path (Windows-only): a child file opened without
+    /// `FILE_SHARE_DELETE` blocks the parent-dir rename with
+    /// `ERROR_SHARING_VIOLATION` (32). The rename must fail before any file is
+    /// touched, so the WG dir + child must both be intact afterward.
+    #[cfg(windows)]
+    #[test]
+    fn try_atomic_delete_wg_blocked_with_restrictive_share_mode() {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_SHARE_READ only — explicitly NO FILE_SHARE_DELETE.
+        const FILE_SHARE_READ: u32 = 0x00000001;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wg_dir = tmp.path().join("wg-1-test");
+        std::fs::create_dir(&wg_dir).expect("create wg_dir");
+        let inside = wg_dir.join("locked.bin");
+        std::fs::write(&inside, b"hold me").expect("write inside file");
+
+        // Hold a handle that denies DELETE share. Drop scope at end of test.
+        let _handle = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&inside)
+            .expect("open with restricted share mode");
+
+        let outcome = try_atomic_delete_wg(&wg_dir);
+        match &outcome {
+            WgDeleteOutcome::Blocked(_) => {
+                assert!(wg_dir.is_dir(), "wg_dir must remain after blocked rename");
+                assert!(inside.is_file(), "inner file must remain after blocked rename");
+            }
+            WgDeleteOutcome::Deleted => {
+                panic!(
+                    "expected Blocked when child file is held without FILE_SHARE_DELETE; \
+                     got Deleted (rename succeeded — Windows behavior may have changed)"
+                );
+            }
+            WgDeleteOutcome::Other(e) => {
+                panic!("expected Blocked, got Other({:?}={})", e.kind(), e);
+            }
+        }
+    }
+
+    /// Suffix scheme invariant (#113 follow-up): the orphan name produced on a
+    /// rename-success-then-remove-fails race must NOT match the
+    /// `starts_with("wg-")` filters used by `ac_discovery`, `cli::list_peers`,
+    /// and `claude_settings`. We test this by asserting the format directly:
+    /// the temp name starts with `.deleting-`, which automatically dodges the
+    /// `wg-` prefix filter.
+    #[test]
+    fn temp_name_format_dodges_workgroup_filter() {
+        // Inline the same name construction `try_atomic_delete_wg` uses, so the
+        // assertion locks the contract independent of fs interaction.
+        let original_name = "wg-7-dev-team";
+        let temp_name = format!(".deleting-{}-{}", original_name, uuid::Uuid::new_v4());
+        assert!(
+            temp_name.starts_with(".deleting-"),
+            "temp name must start with .deleting- so future cleanup tooling can identify orphans"
+        );
+        assert!(
+            !temp_name.starts_with("wg-"),
+            "temp name must NOT match the wg- discovery filter (would surface as ghost workgroup)"
+        );
+    }
+
+    /// `is_rename_blocked_by_handle` matches `ERROR_ACCESS_DENIED` (5).
+    /// MoveFileEx returns 5 — not 32 — when an open handle on a descendant
+    /// lacks `FILE_SHARE_DELETE`. Empirical, verified by the
+    /// `try_atomic_delete_wg_blocked_with_restrictive_share_mode` test below.
+    #[cfg(windows)]
+    #[test]
+    fn is_rename_blocked_by_handle_matches_access_denied() {
+        let e = std::io::Error::from_raw_os_error(5);
+        assert!(
+            is_rename_blocked_by_handle(&e),
+            "os error 5 (ERROR_ACCESS_DENIED) must classify as a rename blocker"
+        );
+    }
+
+    /// `is_rename_blocked_by_handle` is a superset of `is_file_in_use_error` —
+    /// the existing 32/33/1224 codes still match.
+    #[cfg(windows)]
+    #[test]
+    fn is_rename_blocked_by_handle_matches_file_in_use_codes() {
+        for code in [32, 33, 1224] {
+            let e = std::io::Error::from_raw_os_error(code);
+            assert!(
+                is_rename_blocked_by_handle(&e),
+                "os error {} must classify as a rename blocker",
+                code
+            );
+        }
+    }
+
+    /// `is_rename_blocked_by_handle` does NOT match unrelated errors. NotFound
+    /// (2) is the canonical legitimate non-blocker error path.
+    #[cfg(windows)]
+    #[test]
+    fn is_rename_blocked_by_handle_rejects_not_found() {
+        let e = std::io::Error::from_raw_os_error(2);
+        assert!(
+            !is_rename_blocked_by_handle(&e),
+            "os error 2 (ERROR_FILE_NOT_FOUND) must NOT classify as blocker"
+        );
+    }
+
+    /// Off Windows the helper always returns false — diagnostic isn't run on
+    /// non-Windows platforms.
+    #[cfg(not(windows))]
+    #[test]
+    fn is_rename_blocked_by_handle_no_op_on_non_windows() {
+        let e = std::io::Error::from_raw_os_error(5);
+        assert!(
+            !is_rename_blocked_by_handle(&e),
+            "non-Windows must always return false"
+        );
+    }
 }

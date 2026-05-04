@@ -29,17 +29,12 @@ pub struct WindowGeometry {
     pub height: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MainSidebarSide {
     Left,
+    #[default]
     Right,
-}
-
-impl Default for MainSidebarSide {
-    fn default() -> Self {
-        Self::Right
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
