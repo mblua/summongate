@@ -244,14 +244,20 @@ impl MailboxPoller {
                                 )
                             };
 
-                            let rejected = if let Ok(content) = read_text_bom_tolerant(&path) {
-                                if let Ok(msg) = serde_json::from_str::<OutboxMessage>(&content) {
-                                    self.reject_message(&path, &msg, &reason).await.is_ok()
-                                } else {
-                                    Self::reject_raw_file(&path, &reason).is_ok()
+                            // §130-stuck-file: on read failure (e.g. non-UTF-8 non-BOM file),
+                            // fall back to `reject_raw_file` so the file is moved to `rejected/`
+                            // instead of looping forever with `attempt_count >= MAX`.
+                            let rejected = match read_text_bom_tolerant(&path) {
+                                Ok(content) => {
+                                    if let Ok(msg) =
+                                        serde_json::from_str::<OutboxMessage>(&content)
+                                    {
+                                        self.reject_message(&path, &msg, &reason).await.is_ok()
+                                    } else {
+                                        Self::reject_raw_file(&path, &reason).is_ok()
+                                    }
                                 }
-                            } else {
-                                false
+                                Err(_) => Self::reject_raw_file(&path, &reason).is_ok(),
                             };
 
                             if rejected {
@@ -2176,7 +2182,9 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    const SAMPLE_JSON: &str = r#"{"id":"abc","kind":"ping"}"#;
+    // Includes a non-BMP codepoint (😀 U+1F600 → surrogate pair D83D DE00) so the
+    // UTF-16 LE/BE BOM tests exercise surrogate-pair decoding, not just BMP.
+    const SAMPLE_JSON: &str = r#"{"id":"abc","kind":"ping","emoji":"😀"}"#;
 
     fn write_temp(bytes: &[u8]) -> NamedTempFile {
         let mut f = NamedTempFile::new().expect("tempfile");
@@ -2246,5 +2254,50 @@ mod tests {
         // context strings.
         let parse_err = serde_json::from_str::<serde_json::Value>(&got).expect_err("must err");
         assert!(parse_err.is_eof(), "expected EOF parse error, got: {}", parse_err);
+    }
+
+    /// §130-stuck-file regression: when the reject path receives a file whose
+    /// bytes are non-UTF-8 and have no BOM (e.g. PowerShell `Set-Content
+    /// -Encoding ANSI` from a CP1252 locale), `read_text_bom_tolerant` returns
+    /// `Err` every poll cycle. Before this fix, the reject branch was guarded
+    /// by `if let Ok(content) = ...` and dropped to `else { false }` on Err —
+    /// the file stayed in the source dir at `attempt_count >= MAX`, looping
+    /// forever. The new `Err(_) => reject_raw_file(...)` arm closes that gap.
+    /// This test drives the fallback directly: an unreadable file is moved to
+    /// `rejected/` and a reason file is written, exactly as the new branch does.
+    #[test]
+    fn reject_raw_file_moves_unreadable_outbox_file_to_rejected_dir() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let outbox = tmp.path();
+        let stuck = outbox.join("stuck.json");
+        // CP1252 high-byte sequence — invalid UTF-8, no BOM.
+        std::fs::write(&stuck, [0x80, 0x81, 0x82]).expect("write stuck file");
+
+        // Precondition: this is exactly the input shape that hits the new Err arm.
+        let read_err = read_text_bom_tolerant(&stuck).expect_err("read must err");
+        assert!(
+            read_err.contains("Invalid UTF-8"),
+            "unexpected error: {}",
+            read_err
+        );
+
+        // Drive the new fallback path.
+        MailboxPoller::reject_raw_file(
+            &stuck,
+            "Undeliverable after 10 attempts. Last error: Failed to read outbox file: Invalid UTF-8",
+        )
+        .expect("reject_raw_file ok");
+
+        assert!(!stuck.exists(), "original file should be moved out of source dir");
+        let rejected_dir = outbox.join("rejected");
+        assert!(rejected_dir.is_dir(), "rejected/ should be created");
+        assert!(
+            rejected_dir.join("stuck.json").is_file(),
+            "file should be moved to rejected/stuck.json"
+        );
+        let reason_file = rejected_dir.join("stuck.reason.txt");
+        assert!(reason_file.is_file(), "reason file should be in rejected/");
+        let reason = std::fs::read_to_string(&reason_file).expect("read reason");
+        assert!(reason.contains("Undeliverable"), "reason content: {}", reason);
     }
 }
