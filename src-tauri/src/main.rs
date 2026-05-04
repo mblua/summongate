@@ -20,6 +20,20 @@ fn main() {
             match agentscommander_lib::cli::Cli::from_arg_matches(&matches) {
                 Ok(cli) => match cli.command {
                     Some(cmd) => {
+                        // Attach to the parent console BEFORE init_logger so
+                        // any startup eprintln! (e.g. the "[log] file logging
+                        // to ..." line) reaches the user's terminal on
+                        // Windows release builds (where the binary is linked
+                        // with `windows_subsystem = "windows"` and starts
+                        // with no attached stderr).
+                        agentscommander_lib::cli::attach_parent_console();
+                        // Install the same logger backend the GUI uses so
+                        // every `log::*` call from CLI verbs (the `[brief]`
+                        // audit lines in particular — plan #137 §3a HIGH-1
+                        // mitigation) reaches stderr + <config_dir>/app.log.
+                        // GATED on `cli.command.is_some()` so the GUI branch
+                        // below initializes via `lib::run()` exactly once.
+                        agentscommander_lib::logging::init_logger();
                         let code = agentscommander_lib::cli::handle_cli(cmd);
                         std::process::exit(code);
                     }
@@ -35,6 +49,7 @@ fn main() {
                 Err(e) => {
                     agentscommander_lib::cli::attach_parent_console();
                     let _ = e.print();
+                    agentscommander_lib::cli::flush_outputs();
                     std::process::exit(1);
                 }
             }
@@ -43,6 +58,7 @@ fn main() {
             // --help, --version, or invalid args: print and exit
             agentscommander_lib::cli::attach_parent_console();
             let _ = e.print();
+            agentscommander_lib::cli::flush_outputs();
             std::process::exit(if e.use_stderr() { 1 } else { 0 });
         }
     }

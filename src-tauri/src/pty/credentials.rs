@@ -9,8 +9,8 @@ use uuid::Uuid;
 /// Build the credentials block for a session.
 ///
 /// The block is terminated by `\n` (no trailing Enter) — the caller is
-/// responsible for flagging `submit=true` to `inject_text_into_session`
-/// which adds the Enter keystrokes for agents that need them.
+/// responsible for calling `inject_text_into_session` which adds the Enter
+/// keystrokes for agents that need them.
 ///
 /// `token` is `Display`'d lowercase with dashes (standard `Uuid` format).
 /// `cwd` is the session's working directory, verbatim.
@@ -59,7 +59,7 @@ pub fn build_credentials_block(token: &Uuid, cwd: &str) -> String {
 
     format!(
         concat!(
-            "\n",
+            "\n\n",
             "# === Session Credentials ===\n",
             "# Token: {token}\n",
             "# Root: {root}\n",
@@ -88,25 +88,27 @@ mod tests {
         // Split on '\n' (keep empty trailing element → final "" after last \n).
         let lines: Vec<&str> = block.split('\n').collect();
 
-        // Expected structure, in order (9 elements: 8 \n-terminated lines + trailing empty):
-        //  0: ""                                   (leading \n)
-        //  1: "# === Session Credentials ==="
-        //  2: "# Token: 00000000-0000-0000-0000-000000000001"
-        //  3: "# Root: C:\example\root"
-        //  4: "# Binary: <runtime-derived>"
-        //  5: "# BinaryPath: <runtime-derived>"
-        //  6: "# LocalDir: <runtime-derived>"
-        //  7: "# === End Credentials ==="
-        //  8: ""                                   (trailing \n)
-        assert_eq!(lines.len(), 9, "line count drift: {}", lines.len());
-        assert_eq!(lines[0], "", "missing leading newline");
-        assert_eq!(lines[1], "# === Session Credentials ===");
-        assert_eq!(lines[2], "# Token: 00000000-0000-0000-0000-000000000001");
-        assert_eq!(lines[3], r"# Root: C:\example\root");
-        assert!(lines[4].starts_with("# Binary: "), "Binary line prefix");
-        assert!(lines[5].starts_with("# BinaryPath: "), "BinaryPath prefix");
-        assert!(lines[6].starts_with("# LocalDir: "), "LocalDir prefix");
-        assert_eq!(lines[7], "# === End Credentials ===");
-        assert_eq!(lines[8], "", "missing trailing newline");
+        // Expected structure, in order (10 elements: 9 \n-terminated lines + trailing empty):
+        //  0: ""                                   (first leading \n)
+        //  1: ""                                   (second leading \n)
+        //  2: "# === Session Credentials ==="
+        //  3: "# Token: 00000000-0000-0000-0000-000000000001"
+        //  4: "# Root: C:\example\root"
+        //  5: "# Binary: <runtime-derived>"
+        //  6: "# BinaryPath: <runtime-derived>"
+        //  7: "# LocalDir: <runtime-derived>"
+        //  8: "# === End Credentials ==="
+        //  9: ""                                   (trailing \n)
+        assert_eq!(lines.len(), 10, "line count drift: {}", lines.len());
+        assert_eq!(lines[0], "", "missing first leading newline");
+        assert_eq!(lines[1], "", "missing second leading newline");
+        assert_eq!(lines[2], "# === Session Credentials ===");
+        assert_eq!(lines[3], "# Token: 00000000-0000-0000-0000-000000000001");
+        assert_eq!(lines[4], r"# Root: C:\example\root");
+        assert!(lines[5].starts_with("# Binary: "), "Binary line prefix");
+        assert!(lines[6].starts_with("# BinaryPath: "), "BinaryPath prefix");
+        assert!(lines[7].starts_with("# LocalDir: "), "LocalDir prefix");
+        assert_eq!(lines[8], "# === End Credentials ===");
+        assert_eq!(lines[9], "", "missing trailing newline");
     }
 }

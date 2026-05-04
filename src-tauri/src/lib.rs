@@ -2,6 +2,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod errors;
+pub mod logging;
 pub mod phone;
 pub mod pty;
 pub mod session;
@@ -96,69 +97,10 @@ impl AppOutbox {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize logging — stderr + file at config_dir()/app.log
-    {
-        use std::io::Write;
-
-        // Resolve log file path: <config_dir>/app.log
-        let log_file: Option<std::sync::Mutex<std::fs::File>> =
-            config::config_dir().and_then(|dir| {
-                let _ = std::fs::create_dir_all(&dir);
-                let path = dir.join("app.log");
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&path)
-                    .ok()
-                    .map(|f| {
-                        eprintln!("[log] file logging to {}", path.display());
-                        std::sync::Mutex::new(f)
-                    })
-            });
-        let log_file = std::sync::Arc::new(log_file);
-
-        // #93 precedence: RUST_LOG env > settings.logLevel > "agentscommander=info" default.
-        // - read_log_level_only is read-only and side-effect-free: does NOT trigger
-        //   migrations, auto-token-gen, or save_settings, so all log calls inside the
-        //   full load_settings() flow re-fire on the post-init SettingsState construction
-        //   call and are captured.
-        // - from_env(Env::default()) preserves RUST_LOG_STYLE handling (color output).
-        // - No floor is applied: if `resolved_filter` is malformed (e.g. user typo in
-        //   settings.json::logLevel), parse_filters produces no matching directives for
-        //   agentscommander* targets, and all logs from those targets are suppressed.
-        //   The user-facing recovery is to fix the typo. Same behavior pre-#93 had for
-        //   malformed RUST_LOG values; #93 does not introduce a new failure mode.
-        let resolved_filter = std::env::var("RUST_LOG")
-            .ok()
-            .or_else(crate::config::settings::read_log_level_only)
-            .unwrap_or_else(|| "agentscommander=info".to_string());
-
-        env_logger::Builder::from_env(env_logger::Env::default())
-            .parse_filters(&resolved_filter)
-            .format({
-            let log_file = std::sync::Arc::clone(&log_file);
-            move |buf, record| {
-                let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-                let line = format!(
-                    "{} [{}] {} — {}\n",
-                    ts,
-                    record.level(),
-                    record.target(),
-                    record.args()
-                );
-                // Write to stderr (via env_logger's buf)
-                buf.write_all(line.as_bytes())?;
-                // Tee to file
-                if let Some(ref file_mtx) = *log_file {
-                    if let Ok(mut f) = file_mtx.lock() {
-                        let _ = f.write_all(line.as_bytes());
-                    }
-                }
-                Ok(())
-            }
-        })
-        .init();
-    }
+    // Same backend the CLI path now installs in `main.rs` — see `logging.rs`
+    // for the rationale. Idempotent, so a hypothetical second call (or the
+    // CLI path having already run in this process) is a no-op.
+    crate::logging::init_logger();
 
     // Generate master token — printed to stdout and persisted to master-token.txt for CLI use
     let master_token = MasterToken::new(uuid::Uuid::new_v4().to_string());

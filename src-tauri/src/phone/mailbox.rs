@@ -417,7 +417,14 @@ impl MailboxPoller {
                                     "[mailbox] Stale token from '{}' — found active session {}, refreshing token",
                                     msg.from, session_id
                                 );
-                                self.inject_fresh_token(app, session_id).await;
+                                // Detach: inject_fresh_token_static blocks ~2s on the
+                                // staggered Enter writes; running it inline would stall
+                                // the poll loop. Mirrors reinject_credentials_after_clear_static
+                                // spawn pattern above (mailbox.rs:813-829).
+                                let app_clone = app.clone();
+                                tauri::async_runtime::spawn(async move {
+                                    Self::inject_fresh_token_static(&app_clone, session_id).await;
+                                });
                                 // Continue processing — sender verified by CWD match
                             } else {
                                 return self
@@ -463,7 +470,11 @@ impl MailboxPoller {
                             "[mailbox] Malformed token from '{}' — found active session {}, refreshing token",
                             msg.from, session_id
                         );
-                        self.inject_fresh_token(app, session_id).await;
+                        // Detach: see comment on the stale-token branch above.
+                        let app_clone = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            Self::inject_fresh_token_static(&app_clone, session_id).await;
+                        });
                     } else {
                         return self
                             .reject_message(
@@ -890,7 +901,7 @@ impl MailboxPoller {
             payload.len(),
             payload.chars().take(100).collect::<String>()
         );
-        crate::pty::inject::inject_text_into_session(app, session_id, &payload, true)
+        crate::pty::inject::inject_text_into_session(app, session_id, &payload)
             .await
             .map_err(|e| {
                 log::error!(
@@ -961,7 +972,7 @@ impl MailboxPoller {
         // Note: same TOCTOU race as the command path — agent could become busy
         // between the idle check above and this write. Acceptable for this use case.
         let payload = crate::phone::messaging::format_pty_wrap(&msg.from, &msg.body);
-        crate::pty::inject::inject_text_into_session(app, session_id, &payload, true).await
+        crate::pty::inject::inject_text_into_session(app, session_id, &payload).await
     }
 
     /// Wait for agent to become idle after `/clear`, then re-inject the
@@ -1029,7 +1040,7 @@ impl MailboxPoller {
 
         // Build + inject. Same call shape as spawn path.
         let cred_block = crate::pty::credentials::build_credentials_block(&token, &cwd);
-        crate::pty::inject::inject_text_into_session(app, session_id, &cred_block, true).await?;
+        crate::pty::inject::inject_text_into_session(app, session_id, &cred_block).await?;
 
         log::info!(
             "[mailbox] Credentials re-injected after /clear (session={})",
@@ -1853,9 +1864,15 @@ impl MailboxPoller {
 
     /// Inject the current valid token into a session's PTY so the agent can update its credentials.
     /// Called when we detect the agent is using a stale token.
-    async fn inject_fresh_token(&self, app: &tauri::AppHandle, session_id: Uuid) {
-        // Extract session data under the read-lock, then drop before acquiring PtyManager mutex.
-        // This follows the same lock ordering pattern as inject_into_pty / deliver_wake.
+    ///
+    /// Static — designed to run inside a detached `tauri::async_runtime::spawn`
+    /// at the call site so the ~2s staggered-Enter inject does not stall the
+    /// mailbox poll loop. Idle-gates on `waiting_for_input` before injecting so
+    /// the trailing \r writes don't submit unrelated input that landed in the
+    /// PTY between the original write and the staggered Enters.
+    async fn inject_fresh_token_static(app: &tauri::AppHandle, session_id: Uuid) {
+        // Extract session data under the read-lock, then drop before the idle-poll
+        // loop and the PTY inject. Same lock ordering as deliver_wake / inject_into_pty.
         let notice = {
             let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
             let mgr = session_mgr.read().await;
@@ -1871,7 +1888,7 @@ impl MailboxPoller {
                     # Updated send command:\n\
                     #   \"{exe}\" send --token {token} --root \"{root}\" --to \"<agent_name>\" --send <filename> --mode wake\n\
                     # === End Token Refresh ===\n\
-                    \r",
+                    ",
                     exe = crate::config::profile::exe_name(),
                     token = session.token,
                     root = session.working_directory,
@@ -1884,7 +1901,42 @@ impl MailboxPoller {
             // SessionManager read-lock dropped here
         };
 
-        match crate::pty::inject::inject_text_into_session(app, session_id, &notice, false).await {
+        // Wait for the agent to be at-prompt before injecting. Same poll/timeout
+        // values used by the other Enter-sending paths
+        // (commands/session.rs:520-541, mailbox.rs:1006-1028). On timeout, fall
+        // through and inject anyway — matches commands/session.rs:520-541 fallback.
+        let max_wait = std::time::Duration::from_secs(30);
+        let poll = std::time::Duration::from_millis(500);
+        let start = std::time::Instant::now();
+
+        loop {
+            if start.elapsed() >= max_wait {
+                log::warn!(
+                    "[mailbox] Timeout waiting for idle before fresh token inject (session={}, {}s) — injecting anyway",
+                    session_id,
+                    max_wait.as_secs()
+                );
+                break;
+            }
+            tokio::time::sleep(poll).await;
+
+            let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
+            let mgr = session_mgr.read().await;
+            let sessions = mgr.list_sessions().await;
+            match sessions.iter().find(|s| s.id == session_id.to_string()) {
+                Some(s) if s.waiting_for_input => break,
+                Some(_) => {} // busy — keep polling
+                None => {
+                    log::warn!(
+                        "[mailbox] Session {} gone before fresh token inject",
+                        session_id
+                    );
+                    return;
+                }
+            }
+        }
+
+        match crate::pty::inject::inject_text_into_session(app, session_id, &notice).await {
             Ok(()) => log::info!("[mailbox] Fresh token injected into session {}", session_id),
             Err(e) => log::warn!(
                 "[mailbox] Failed to inject fresh token into session {}: {}",
