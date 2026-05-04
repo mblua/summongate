@@ -2790,3 +2790,212 @@ If tech-lead wants N.1 fixed before Step 8 ship, route to
 dev-webpage-ui for the 3-line `retryGen` retrofit on the original
 Delete handler. If shipping straight to Step 8, log N.1 as a
 follow-up issue and expect to fix in the next user-facing release.
+
+---
+
+## Grinch focused review (post-#113-followup)
+
+Scope: commits `4dcba2e` (preflight rename probe) and `2b46d62` (RM
+dir registration) only. Original Step 7 implementation review was
+already approved in a prior session and is not re-litigated here.
+
+### Verdict: APPROVED WITH NOTES
+
+Both fixes hold. The two deviations from the dispatch plan are sound
+and improve the design over what was originally proposed. No
+data-loss-class bugs, no state-corruption paths, no regressions vs.
+the previous (broken) behavior. Notes below are for testing guidance
+and future hardening — none are merge blockers.
+
+### Deviation review
+
+#### D1 — `.deleting-<wg_name>-<uuid>` (leading dot) — APPROVED
+
+Verified each `starts_with("wg-")` filter call site against the orphan
+name shape (`.deleting-wg-7-dev-team-<uuid>`):
+
+- `commands/ac_discovery.rs:666` — checks `dir_name.starts_with("wg-")`
+  → orphan starts with `.`, fails filter, invisible.
+- `commands/ac_discovery.rs:1107` — same shape, same outcome.
+- `commands/entity_creation.rs:763`, `:1037`, `:1582` — additionally
+  require `ends_with(&wg_suffix)` where suffix is `"-{team_name}"`;
+  orphan ends with `-{uuid}`, fails second filter even if first
+  passed. Defense in depth.
+- `cli/list_peers.rs:132/368/563` — same `starts_with("wg-")`, same
+  outcome.
+- `config/claude_settings.rs:571` — same.
+- `config/teams.rs:71/323/516` — these inspect agent FQNs derived
+  from path, not raw dir names; orphan path components carry the
+  leading `.` and never match `wg-` prefix.
+- `phone/mailbox.rs:1476/1639` — same pattern as above.
+- `session/session.rs:129` — `is_workgroup_dir` check, dodged.
+
+Additionally checked:
+
+- `walkdir`/`notify`/file-watcher recursive walks: none in src-tauri
+  that walk `.ac-new/`. Recursive walks of the workspace root in
+  `commands/repos.rs:129`, `web/commands.rs:358`, `cli/list_peers.rs:537`,
+  `config/teams.rs:155/562`, `commands/ac_discovery.rs:603` all already
+  skip `name.starts_with('.')` — orphan filtered out at workspace
+  level too.
+- No other `.deleting-` literal anywhere in `src-tauri/`. No naming
+  collision risk.
+- Children of `.ac-new/` in normal AC use are `_agent_*`, `_team_*`,
+  `wg-*`, plus the `.deleting-*` orphans we now create. No other
+  dotfile prefix is in use, so `.deleting-` is a unique marker for
+  future cleanup tooling.
+
+#### D2 — `is_rename_blocked_by_handle` matches code 5 — APPROVED
+
+Empirical claim: `MoveFileExW` returns `ERROR_ACCESS_DENIED` (5), not
+`ERROR_SHARING_VIOLATION` (32), when a child handle lacks
+`FILE_SHARE_DELETE`. This matches public Windows behavior reported
+across MS docs and SO consensus, and is exercised end-to-end by the
+new `try_atomic_delete_wg_blocked_with_restrictive_share_mode` test.
+
+The classifier set `{5, 32, 33, 1224}` covers the practical
+share-violation surface for `MoveFileExW`. Other plausible codes
+(`ERROR_FILE_NOT_FOUND` 2, `ERROR_NOT_SAME_DEVICE` 17,
+`ERROR_DISK_FULL` 112, `ERROR_INVALID_NAME` 123, `ERROR_DIR_NOT_EMPTY`
+145, `ERROR_ALREADY_EXISTS` 183) are either same-volume-irrelevant,
+not blocker-shaped, or would correctly route through `Other`. No
+additions recommended.
+
+`is_file_in_use_error` is correctly left untouched — its
+`remove_dir_all` semantics (where 5 = legit perms denial) are
+preserved, and the negative test
+`is_file_in_use_error_rejects_unrelated_errors_on_windows` still
+guards that contract.
+
+Trade-off acknowledgement: a legit access-denied error on the parent
+`.ac-new/` (e.g. NTFS perms misconfig) will now route through
+`Blocked` → diagnostic finds nothing → modal shows "No blockers
+identified". The frontend mitigates this by also rendering
+`r().rawOsError` inside the same modal block
+(`ProjectPanel.tsx:1409`), so the user sees the "Access is denied
+(os error 5)" string. Acceptable per "strictly better than data loss"
+bar.
+
+### Other angles attacked
+
+| Angle | Result |
+|---|---|
+| TOCTOU rename → remove_dir_all → orphan accumulation | Real concern, see N.1 below |
+| UUID collision (~1e-37) | Would route through `Blocked` (rename to existing dst → code 5); user retries with fresh UUID. Acceptable. |
+| Symlinks | `std::fs::rename` moves the symlink itself (does not follow); `remove_dir_all` since Rust 1.70 also does not follow. SAFER than original `remove_dir_all` behavior. Not a concern. |
+| Parent dir read-only | Routes through `Blocked` with code 5 → modal shows "no blockers identified" + raw error. Misleading lead but actionable. See N.4 below. |
+| Concurrent deletes (two AC instances) | First wins (rename atomic); second gets `NotFound` → `Other` → "Failed to delete workgroup directory: …". Acceptable. |
+| Filesystem boundary | Same parent → same volume always. Confirmed. |
+| Rollback of failed remove_dir_all | No rollback attempted. Documented `log::warn!`. Correct call — rollback could fail too and leave worse state. |
+| Non-ASCII WG names | `format!` + `Path::join` + `MoveFileExW` are UTF-16 clean. Fine. |
+| Dirty-repo check ordering | Runs BEFORE rename, on the intact tree. Correct. |
+| Async-context blocking | `try_atomic_delete_wg` calls sync `rename` + `remove_dir_all` from an async fn without `spawn_blocking`. Pre-existing behavior — `remove_dir_all` was sync before too. Not a regression. |
+
+### Test audit
+
+| Test | Verdict |
+|---|---|
+| `try_atomic_delete_wg_removes_clean_directory` | Meaningful — checks happy path AND verifies parent contains no `.deleting-*` orphan. |
+| `try_atomic_delete_wg_classifies_missing_dir_as_other` | Meaningful — guards the regression where `NotFound` was misclassified as a blocker. |
+| `try_atomic_delete_wg_blocked_with_restrictive_share_mode` | Meaningful end-to-end — but does NOT verify the actual returned code is 5. See N.3 below. |
+| `temp_name_format_dodges_workgroup_filter` | Marginal — only asserts the format string starts with `.deleting-` and not `wg-`. Catches accidental rename of the format literal. Doesn't actually run the discovery filters against the name. Acceptable as a regression check. |
+| `is_rename_blocked_by_handle_matches_access_denied` | Meaningful — locks the new contract. |
+| `is_rename_blocked_by_handle_matches_file_in_use_codes` | Meaningful — locks the superset relationship. |
+| `is_rename_blocked_by_handle_rejects_not_found` | Meaningful — guards against the predicate widening into legit `Other` codes. |
+| `is_rename_blocked_by_handle_no_op_on_non_windows` | Meaningful — locks platform discipline. |
+| `collect_files_to_probe_includes_wg_root_and_top_level_dirs` | Meaningful — verifies WG root + each kind of top-level dir is registered AND filters out `docs` (non-relevant). |
+| `collect_files_to_probe_orders_dirs_before_files` | Meaningful — verifies the cap-priority contract. |
+
+Untested edge: rename-success-then-remove-fails race that produces
+an orphan + `log::warn!`. Hard to test without an injection hook
+between rename and remove. Skip.
+
+### Notes (NOT blockers)
+
+**N.1 — Orphan accumulation has no cleanup mechanism.**
+- *What:* Every rename-success-then-remove-fails race leaves a
+  `.deleting-*` dir in `.ac-new/`. There is no cleanup anywhere — not
+  at app startup, not in `delete_workgroup`, not in any sweep.
+- *Why it matters:* Each orphan is a partial-content directory tree
+  invisible to the user. Across many delete attempts (especially on
+  systems with persistent IDE/file-watcher handles), the parent
+  `.ac-new/` will accumulate orphans that consume disk space the user
+  cannot reclaim through the UI.
+- *Recommended follow-up:* Add an app-startup sweep that iterates
+  `.ac-new/` entries and removes anything matching `.deleting-*` if
+  it can be removed. Pair with the existing instance-dir cleanup at
+  `lib.rs:171-176`. Could also be a manual "Clean orphans" command.
+
+**N.2 — `Other` branch silently logs nothing.**
+- *What:* `WgDeleteOutcome::Blocked` emits `log::info!` with the WG
+  name and rename-probe hint. `WgDeleteOutcome::Other` returns the
+  error to the user but writes no log line.
+- *Why it matters:* When rename fails with an unusual non-blocker
+  code (disk full, antivirus interference, kernel quirk), the user
+  sees the raw OS error but the developer has no log trail to
+  diagnose. The asymmetry is unintentional.
+- *Recommended follow-up:* Add `log::warn!` in the `Other` arm at
+  `entity_creation.rs:880` mirroring the `Blocked` arm, including the
+  workgroup name and `e.raw_os_error()`.
+
+**N.3 — Blocked test does not assert specific OS error code.**
+- *What:* `try_atomic_delete_wg_blocked_with_restrictive_share_mode`
+  asserts `Blocked(_)` but does not destructure to check
+  `e.raw_os_error() == Some(5)`.
+- *Why it matters:* The empirical claim "MoveFileExW returns 5 in
+  this scenario" is the load-bearing rationale for adding 5 to the
+  classifier. The test would silently still pass if the kernel ever
+  returned 32 instead. This weakens the regression coverage if MS
+  ever changes share-mode error reporting.
+- *Recommended follow-up:* Inside the `Blocked(e)` arm of the match,
+  add `assert_eq!(e.raw_os_error(), Some(5), "...")`. One-line
+  addition; locks the empirical claim into CI.
+
+**N.4 — Permission-denied UX is misleading lead text + correct raw
+error.**
+- *What:* When `.ac-new/` itself has insufficient perms, rename fails
+  with code 5 → `Blocked` → diagnostic finds nothing → modal shows
+  "No blockers identified. The lock may be transient — try again in
+  a moment." followed by "Raw error: Access is denied. (os error 5)".
+- *Why it matters:* The lead text says "may be transient — try
+  again", which is wrong advice for a perms problem. The user might
+  retry indefinitely. The actionable info (raw error) is below the
+  misleading lead.
+- *Acceptable trade-off* given the data-loss avoidance, but a
+  follow-up could either (a) detect code-5-with-no-blockers and swap
+  the lead text, or (b) elevate the raw error above the lead.
+
+### Testing guidance for the user
+
+1. Reproduce the original repro cases on the rebuilt exe:
+   - Open a terminal cwd inside a WG, click Delete → expect BLOCKERS
+     modal with the terminal listed (or at least no partial deletion
+     of WG contents).
+   - Open the WG folder in VSCode, click Delete → same.
+   - Open `BRIEF.md` in VSCode and let it memory-map (some extensions
+     do), click Delete → same.
+2. After each test, list `.ac-new/` and check whether any
+   `.deleting-*` orphans appeared. If so, those are the rare-race
+   case from N.1; report count to the team so we can prioritize the
+   cleanup follow-up.
+3. Verify that for blocker cases, the WG dir contents are still
+   intact after the modal appears (no partial deletion).
+
+### Files reviewed
+
+- `src-tauri/src/commands/entity_creation.rs` — full diff,
+  `delete_workgroup` flow, `try_atomic_delete_wg`,
+  `is_rename_blocked_by_handle`, `is_file_in_use_error` (unchanged),
+  all 8 new tests.
+- `src-tauri/src/commands/wg_delete_diagnostic.rs` — full diff,
+  `collect_files_to_probe`, both new tests, frontend wire-up.
+- `src/sidebar/components/ProjectPanel.tsx:250-263, 1400-1473` —
+  BLOCKERS modal payload handling.
+- `src/shared/types.ts:285-311` — BlockerReport TS shape.
+- All 13 `starts_with("wg-")` and `.starts_with('.')` call sites
+  enumerated above.
+- `src-tauri/src/lib.rs:166-176` — adjacent cleanup precedent for
+  N.1 follow-up.
+
+— dev-rust-grinch, 2026-05-03
+

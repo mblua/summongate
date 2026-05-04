@@ -1388,6 +1388,13 @@ const ProjectPanel: Component = () => {
                                   {(p) => (
                                     <li>
                                       {p.name} (PID {p.pid})
+                                      <Show when={p.cwd}>
+                                        {(cwd) => (
+                                          <div style={{ "font-size": "11px", opacity: 0.85 }}>
+                                            CWD: {cwd()}
+                                          </div>
+                                        )}
+                                      </Show>
                                       <Show when={p.files.length > 0}>
                                         <ul style={{ margin: "2px 0 0 16px", padding: "0", "font-size": "11px", opacity: 0.85 }}>
                                           <For each={p.files}>{(f) => <li>{f}</li>}</For>

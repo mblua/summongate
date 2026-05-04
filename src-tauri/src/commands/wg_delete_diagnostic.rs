@@ -1,9 +1,11 @@
 //! Diagnostic for `delete_workgroup` failures caused by file-in-use (Windows os error 32).
 //!
-//! Two scans:
+//! Three scans:
 //!   1. AC-internal sessions whose `working_directory` lives inside the workgroup tree.
 //!   2. External processes holding handles on files inside the workgroup tree, via the
 //!      Windows Restart Manager API (RmStartSession / RmRegisterResources / RmGetList).
+//!   3. External Windows processes whose current working directory is under the
+//!      workgroup tree, via a direct PEB ProcessParameters read.
 //!
 //! Pure helpers — no Tauri commands. Invoked from `entity_creation::delete_workgroup`.
 
@@ -52,6 +54,9 @@ pub struct BlockerProcess {
     pub pid: u32,
     /// Executable file name (e.g. "git.exe", "node.exe"). Best-effort.
     pub name: String,
+    /// Current working directory if this process was identified by the CWD fallback.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     /// Sample of paths inside the workgroup that this process holds. Capped at MAX_FILES_PER_PROCESS.
     pub files: Vec<String>,
 }
@@ -90,12 +95,12 @@ pub async fn diagnose_blockers(
         {
             Ok(Ok(p)) => (p, true),
             Ok(Err(e)) => {
-                log::warn!("[wg_delete_diagnostic] Restart Manager scan failed: {}", e);
+                log::warn!("[wg_delete_diagnostic] external process scan failed: {}", e);
                 (Vec::new(), false)
             }
             Err(join_err) => {
                 log::warn!(
-                    "[wg_delete_diagnostic] Restart Manager scan task failed: {}",
+                    "[wg_delete_diagnostic] external process scan join failed: {}",
                     join_err
                 );
                 (Vec::new(), false)
@@ -152,6 +157,10 @@ fn strip_long_prefix_str(s: &str) -> String {
         format!(r"\\{}", rest)
     } else if let Some(rest) = s.strip_prefix(r"\\?\") {
         rest.to_string()
+    } else if let Some(rest) = s.strip_prefix(r"\??\UNC\") {
+        format!(r"\\{}", rest)
+    } else if let Some(rest) = s.strip_prefix(r"\??\") {
+        rest.to_string()
     } else {
         s.to_string()
     }
@@ -163,6 +172,20 @@ fn canonicalize_for_compare(p: &Path) -> PathBuf {
     let canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let s = canon.to_string_lossy();
     PathBuf::from(strip_long_prefix_str(&s))
+}
+
+#[cfg(windows)]
+fn path_is_under_windows(candidate: &Path, root: &Path) -> bool {
+    fn normalize(p: &Path) -> String {
+        strip_long_prefix_str(&p.to_string_lossy())
+            .replace('/', r"\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase()
+    }
+
+    let candidate = normalize(candidate);
+    let root = normalize(root);
+    candidate == root || candidate.starts_with(&format!(r"{}\", root))
 }
 
 /// Walk the workgroup tree breadth-first and collect up to MAX_FILES_TO_PROBE absolute
@@ -300,6 +323,73 @@ async fn scan_ac_sessions(
         .collect()
 }
 
+#[cfg(windows)]
+fn scan_external_processes_windows(wg_dir: &Path) -> Result<Vec<BlockerProcess>, String> {
+    let rm = scan_restart_manager_processes_windows(wg_dir);
+    let cwd = scan_cwd_processes_windows(wg_dir);
+
+    match (rm, cwd) {
+        (Ok(rm_processes), Ok(cwd_processes)) => {
+            Ok(merge_blocker_processes(rm_processes, cwd_processes))
+        }
+        (Ok(rm_processes), Err(cwd_err)) => {
+            log::warn!(
+                "[wg_delete_diagnostic] CWD fallback scan failed; preserving Restart Manager result: {}",
+                cwd_err
+            );
+            Ok(rm_processes)
+        }
+        (Err(rm_err), Ok(cwd_processes)) => {
+            log::warn!(
+                "[wg_delete_diagnostic] Restart Manager scan failed; preserving CWD fallback result: {}",
+                rm_err
+            );
+            Ok(cwd_processes)
+        }
+        (Err(rm_err), Err(cwd_err)) => Err(format!(
+            "Restart Manager scan failed: {}; CWD fallback scan failed: {}",
+            rm_err, cwd_err
+        )),
+    }
+}
+
+#[cfg(windows)]
+fn merge_blocker_processes(
+    rm_processes: Vec<BlockerProcess>,
+    cwd_processes: Vec<BlockerProcess>,
+) -> Vec<BlockerProcess> {
+    use std::collections::HashMap;
+
+    let mut by_pid: HashMap<u32, BlockerProcess> = HashMap::new();
+    for process in rm_processes.into_iter().chain(cwd_processes) {
+        by_pid
+            .entry(process.pid)
+            .and_modify(|existing| {
+                if existing.cwd.is_none() {
+                    existing.cwd = process.cwd.clone();
+                }
+                for file in &process.files {
+                    if existing.files.len() < MAX_FILES_PER_PROCESS
+                        && !existing.files.contains(file)
+                    {
+                        existing.files.push(file.clone());
+                    }
+                }
+                // PID-only cross-source merge is best effort. Preserve a
+                // non-placeholder RM name instead of replacing it with a later
+                // CWD snapshot name.
+                if existing.name.starts_with("pid ") && !process.name.starts_with("pid ") {
+                    existing.name = process.name.clone();
+                }
+            })
+            .or_insert(process);
+    }
+
+    let mut out: Vec<BlockerProcess> = by_pid.into_values().collect();
+    out.sort_by_key(|p| p.pid);
+    out
+}
+
 /// Two-pass Restart Manager scan:
 ///
 /// 1. **Bulk pass** — open RM sessions for batches of probed files (binary-search
@@ -312,16 +402,16 @@ async fn scan_ac_sessions(
 ///    `MAX_FILES_PER_PROCESS` (5) and short-circuit once every blocker PID is
 ///    saturated.
 #[cfg(windows)]
-fn scan_external_processes_windows(wg_dir: &Path) -> Result<Vec<BlockerProcess>, String> {
+fn scan_restart_manager_processes_windows(wg_dir: &Path) -> Result<Vec<BlockerProcess>, String> {
     use std::collections::{HashMap, HashSet};
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::RestartManager::{
-        RmEndSession, RmGetList, RmRegisterResources, RmStartSession, CCH_RM_SESSION_KEY,
-        RM_PROCESS_INFO,
+        CCH_RM_SESSION_KEY, RM_PROCESS_INFO, RmEndSession, RmGetList, RmRegisterResources,
+        RmStartSession,
     };
     use windows_sys::Win32::System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
     };
 
     const ERROR_SUCCESS: u32 = 0;
@@ -411,7 +501,13 @@ fn scan_external_processes_windows(wg_dir: &Path) -> Result<Vec<BlockerProcess>,
             let mut buf: Vec<RM_PROCESS_INFO> = Vec::with_capacity(needed as usize);
             have = needed;
             let rc = unsafe {
-                RmGetList(handle, &mut needed, &mut have, buf.as_mut_ptr(), &mut reasons)
+                RmGetList(
+                    handle,
+                    &mut needed,
+                    &mut have,
+                    buf.as_mut_ptr(),
+                    &mut reasons,
+                )
             };
             if rc == ERROR_SUCCESS {
                 // Defensive cap. If RM ever wrote `have > needed` (RM bug, hostile
@@ -574,6 +670,7 @@ fn scan_external_processes_windows(wg_dir: &Path) -> Result<Vec<BlockerProcess>,
         by_pid.entry(pid).or_insert(BlockerProcess {
             pid,
             name,
+            cwd: None,
             files: Vec::new(),
         });
     }
@@ -581,7 +678,10 @@ fn scan_external_processes_windows(wg_dir: &Path) -> Result<Vec<BlockerProcess>,
     // ── Phase 2: per-file attribution ────────────────────────────────────────
     let target_pids: HashSet<u32> = by_pid.keys().copied().collect();
     for (path, wide) in alive.iter().zip(wide_files.iter()) {
-        if by_pid.values().all(|p| p.files.len() >= MAX_FILES_PER_PROCESS) {
+        if by_pid
+            .values()
+            .all(|p| p.files.len() >= MAX_FILES_PER_PROCESS)
+        {
             break; // every blocker has its quota — further probing wastes RM sessions
         }
         if !path.exists() {
@@ -632,6 +732,464 @@ fn scan_external_processes_windows(wg_dir: &Path) -> Result<Vec<BlockerProcess>,
     Ok(by_pid.into_values().collect())
 }
 
+#[cfg(windows)]
+#[derive(Debug)]
+struct ProcessSnapshotEntry {
+    pid: u32,
+    name: String,
+}
+
+#[cfg(windows)]
+struct HandleGuard(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl HandleGuard {
+    fn raw(&self) -> windows_sys::Win32::Foundation::HANDLE {
+        self.0
+    }
+}
+
+#[cfg(windows)]
+impl Drop for HandleGuard {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+
+        if !self.0.is_null() && self.0 != INVALID_HANDLE_VALUE {
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ProcessBasicInformationRaw {
+    exit_status: windows_sys::Win32::Foundation::NTSTATUS,
+    peb_base_address: *mut core::ffi::c_void,
+    affinity_mask: usize,
+    base_priority: i32,
+    unique_process_id: usize,
+    inherited_from_unique_process_id: usize,
+}
+
+#[cfg(all(windows, target_pointer_width = "64"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RemotePebPrefix64 {
+    reserved: [u8; 0x20],
+    process_parameters: *mut core::ffi::c_void,
+}
+
+#[cfg(all(windows, target_pointer_width = "64"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RemoteUnicodeString {
+    length: u16,
+    maximum_length: u16,
+    buffer: *mut u16,
+}
+
+#[cfg(all(windows, target_pointer_width = "64"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RemoteCurDir {
+    dos_path: RemoteUnicodeString,
+    handle: windows_sys::Win32::Foundation::HANDLE,
+}
+
+#[cfg(all(windows, target_pointer_width = "64"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RemoteProcessParametersPrefix {
+    maximum_length: u32,
+    length: u32,
+    flags: u32,
+    debug_flags: u32,
+    console_handle: windows_sys::Win32::Foundation::HANDLE,
+    console_flags: u32,
+    standard_input: windows_sys::Win32::Foundation::HANDLE,
+    standard_output: windows_sys::Win32::Foundation::HANDLE,
+    standard_error: windows_sys::Win32::Foundation::HANDLE,
+    current_directory: RemoteCurDir,
+}
+
+#[cfg(all(windows, target_pointer_width = "64"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RemotePebPrefix32 {
+    reserved: [u8; 0x10],
+    process_parameters: u32,
+}
+
+#[cfg(all(windows, target_pointer_width = "64"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RemoteUnicodeString32 {
+    length: u16,
+    maximum_length: u16,
+    buffer: u32,
+}
+
+#[cfg(all(windows, target_pointer_width = "64"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RemoteCurDir32 {
+    dos_path: RemoteUnicodeString32,
+    handle: u32,
+}
+
+#[cfg(all(windows, target_pointer_width = "64"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RemoteProcessParametersPrefix32 {
+    maximum_length: u32,
+    length: u32,
+    flags: u32,
+    debug_flags: u32,
+    console_handle: u32,
+    console_flags: u32,
+    standard_input: u32,
+    standard_output: u32,
+    standard_error: u32,
+    current_directory: RemoteCurDir32,
+}
+
+#[cfg(windows)]
+const MAX_CWD_BYTES: usize = 32 * 1024;
+
+#[cfg(windows)]
+fn scan_cwd_processes_windows(wg_dir: &Path) -> Result<Vec<BlockerProcess>, String> {
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+
+    let canonical_wg = canonicalize_for_compare(wg_dir);
+    let current_pid = unsafe { GetCurrentProcessId() };
+    let mut out = Vec::new();
+
+    if let Some(blocker) = current_process_cwd_blocker(&canonical_wg, current_pid) {
+        out.push(blocker);
+    }
+
+    for process in enumerate_processes_windows()? {
+        if process.pid == 0 || process.pid == current_pid {
+            continue;
+        }
+        let Some(cwd) = read_process_cwd_windows(process.pid) else {
+            continue;
+        };
+        let cwd_compare = canonicalize_for_compare(Path::new(&cwd));
+        if path_is_under_windows(&cwd_compare, &canonical_wg) {
+            out.push(BlockerProcess {
+                pid: process.pid,
+                name: process.name,
+                cwd: Some(cwd),
+                files: Vec::new(),
+            });
+        }
+    }
+
+    Ok(out)
+}
+
+#[cfg(windows)]
+fn current_process_cwd_blocker(canonical_wg: &Path, current_pid: u32) -> Option<BlockerProcess> {
+    let current_dir = std::env::current_dir().ok()?;
+    let current_exe = std::env::current_exe().ok();
+    current_process_cwd_blocker_from_parts(
+        canonical_wg,
+        current_pid,
+        &current_dir,
+        current_exe.as_deref(),
+    )
+}
+
+#[cfg(windows)]
+fn current_process_cwd_blocker_from_parts(
+    canonical_wg: &Path,
+    current_pid: u32,
+    current_dir: &Path,
+    current_exe: Option<&Path>,
+) -> Option<BlockerProcess> {
+    let cwd_compare = canonicalize_for_compare(current_dir);
+    if !path_is_under_windows(&cwd_compare, canonical_wg) {
+        return None;
+    }
+
+    let name = current_exe
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .filter(|n| !n.is_empty())
+        .unwrap_or("current process")
+        .to_string();
+
+    Some(BlockerProcess {
+        pid: current_pid,
+        name,
+        cwd: Some(strip_long_prefix_str(&current_dir.to_string_lossy())),
+        files: Vec::new(),
+    })
+}
+
+#[cfg(windows)]
+fn enumerate_processes_windows() -> Result<Vec<ProcessSnapshotEntry>, String> {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
+
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err("CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS) failed".into());
+    }
+    let snapshot = HandleGuard(snapshot);
+
+    let mut entry = unsafe { std::mem::zeroed::<PROCESSENTRY32W>() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+
+    let mut out = Vec::new();
+    let mut ok = unsafe { Process32FirstW(snapshot.raw(), &mut entry) };
+    while ok != 0 {
+        out.push(ProcessSnapshotEntry {
+            pid: entry.th32ProcessID,
+            name: nul_terminated_utf16(&entry.szExeFile),
+        });
+        ok = unsafe { Process32NextW(snapshot.raw(), &mut entry) };
+    }
+
+    Ok(out)
+}
+
+#[cfg(windows)]
+fn nul_terminated_utf16(buf: &[u16]) -> String {
+    let nul = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    String::from_utf16_lossy(&buf[..nul])
+}
+
+#[cfg(windows)]
+fn read_process_cwd_windows(pid: u32) -> Option<String> {
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+    };
+
+    let handle =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid) };
+    if handle.is_null() {
+        log::debug!(
+            "[wg_delete_diagnostic] CWD scan: OpenProcess failed for pid {}",
+            pid
+        );
+        return None;
+    }
+    let handle = HandleGuard(handle);
+
+    read_process_cwd_from_handle(handle.raw()).or_else(|| {
+        log::debug!(
+            "[wg_delete_diagnostic] CWD scan: unable to read cwd for pid {}",
+            pid
+        );
+        None
+    })
+}
+
+#[cfg(all(windows, target_pointer_width = "64"))]
+fn read_process_cwd_from_handle(handle: windows_sys::Win32::Foundation::HANDLE) -> Option<String> {
+    if let Some(wow64_peb) = query_wow64_peb_address(handle) {
+        return read_process_cwd_wow64_32(handle, wow64_peb);
+    }
+
+    let pbi = query_process_basic_info(handle)?;
+    if pbi.peb_base_address.is_null() {
+        return None;
+    }
+    let peb: RemotePebPrefix64 = read_remote_struct(handle, pbi.peb_base_address as usize)?;
+    if peb.process_parameters.is_null() {
+        return None;
+    }
+    let params: RemoteProcessParametersPrefix =
+        read_remote_struct(handle, peb.process_parameters as usize)?;
+    read_remote_unicode_string(handle, params.current_directory.dos_path)
+}
+
+#[cfg(all(windows, target_pointer_width = "32"))]
+fn read_process_cwd_from_handle(_handle: windows_sys::Win32::Foundation::HANDLE) -> Option<String> {
+    // 32-bit AC builds reading remote ProcessParameters are out of scope for
+    // this release. The shipped Windows app is 64-bit, which covers the
+    // reported terminal-blocker repro.
+    None
+}
+
+#[cfg(windows)]
+fn query_process_basic_info(
+    handle: windows_sys::Win32::Foundation::HANDLE,
+) -> Option<ProcessBasicInformationRaw> {
+    use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
+
+    let mut pbi = std::mem::MaybeUninit::<ProcessBasicInformationRaw>::uninit();
+    let mut return_len: u32 = 0;
+    let status = unsafe {
+        NtQueryInformationProcess(
+            handle,
+            ProcessBasicInformation,
+            pbi.as_mut_ptr() as *mut core::ffi::c_void,
+            std::mem::size_of::<ProcessBasicInformationRaw>() as u32,
+            &mut return_len,
+        )
+    };
+    if status != 0 {
+        return None;
+    }
+    Some(unsafe { pbi.assume_init() })
+}
+
+#[cfg(all(windows, target_pointer_width = "64"))]
+fn query_wow64_peb_address(handle: windows_sys::Win32::Foundation::HANDLE) -> Option<usize> {
+    use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessWow64Information};
+
+    let mut peb_address: usize = 0;
+    let mut return_len: u32 = 0;
+    let status = unsafe {
+        NtQueryInformationProcess(
+            handle,
+            ProcessWow64Information,
+            &mut peb_address as *mut usize as *mut core::ffi::c_void,
+            std::mem::size_of::<usize>() as u32,
+            &mut return_len,
+        )
+    };
+    if status == 0 && peb_address != 0 {
+        Some(peb_address)
+    } else {
+        None
+    }
+}
+
+#[cfg(windows)]
+fn read_remote_struct<T: Copy>(
+    handle: windows_sys::Win32::Foundation::HANDLE,
+    address: usize,
+) -> Option<T> {
+    use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+
+    if address == 0 {
+        return None;
+    }
+    let mut out = std::mem::MaybeUninit::<T>::uninit();
+    let requested = std::mem::size_of::<T>();
+    let mut bytes_read: usize = 0;
+    let ok = unsafe {
+        ReadProcessMemory(
+            handle,
+            address as *const core::ffi::c_void,
+            out.as_mut_ptr() as *mut core::ffi::c_void,
+            requested,
+            &mut bytes_read,
+        )
+    };
+    if ok == 0 || bytes_read != requested {
+        return None;
+    }
+    Some(unsafe { out.assume_init() })
+}
+
+#[cfg(windows)]
+fn read_remote_bytes(
+    handle: windows_sys::Win32::Foundation::HANDLE,
+    address: usize,
+    len: usize,
+) -> Option<Vec<u8>> {
+    use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+
+    if address == 0 || len == 0 || len > MAX_CWD_BYTES {
+        return None;
+    }
+    let mut buf = vec![0u8; len];
+    let mut bytes_read: usize = 0;
+    let ok = unsafe {
+        ReadProcessMemory(
+            handle,
+            address as *const core::ffi::c_void,
+            buf.as_mut_ptr() as *mut core::ffi::c_void,
+            len,
+            &mut bytes_read,
+        )
+    };
+    if ok == 0 || bytes_read != len {
+        return None;
+    }
+    Some(buf)
+}
+
+#[cfg(all(windows, target_pointer_width = "64"))]
+fn read_process_cwd_wow64_32(
+    handle: windows_sys::Win32::Foundation::HANDLE,
+    peb_address: usize,
+) -> Option<String> {
+    let peb: RemotePebPrefix32 = read_remote_struct(handle, peb_address)?;
+    if peb.process_parameters == 0 {
+        return None;
+    }
+    let params: RemoteProcessParametersPrefix32 =
+        read_remote_struct(handle, peb.process_parameters as usize)?;
+    read_remote_unicode_string32(handle, params.current_directory.dos_path)
+}
+
+#[cfg(all(windows, target_pointer_width = "64"))]
+fn read_remote_unicode_string(
+    handle: windows_sys::Win32::Foundation::HANDLE,
+    remote: RemoteUnicodeString,
+) -> Option<String> {
+    read_remote_utf16_path(
+        handle,
+        remote.buffer as usize,
+        remote.length,
+        remote.maximum_length,
+    )
+}
+
+#[cfg(all(windows, target_pointer_width = "64"))]
+fn read_remote_unicode_string32(
+    handle: windows_sys::Win32::Foundation::HANDLE,
+    remote: RemoteUnicodeString32,
+) -> Option<String> {
+    read_remote_utf16_path(
+        handle,
+        remote.buffer as usize,
+        remote.length,
+        remote.maximum_length,
+    )
+}
+
+#[cfg(windows)]
+fn read_remote_utf16_path(
+    handle: windows_sys::Win32::Foundation::HANDLE,
+    buffer: usize,
+    length: u16,
+    maximum_length: u16,
+) -> Option<String> {
+    let length = usize::from(length);
+    let maximum_length = usize::from(maximum_length);
+    if length == 0
+        || length % 2 != 0
+        || maximum_length % 2 != 0
+        || length > maximum_length
+        || length > MAX_CWD_BYTES
+        || maximum_length > MAX_CWD_BYTES + 2
+        || buffer == 0
+    {
+        return None;
+    }
+
+    let bytes = read_remote_bytes(handle, buffer, length)?;
+    let wide: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        .collect();
+    let cwd = strip_long_prefix_str(String::from_utf16_lossy(&wide).trim_end_matches('\0'));
+    if cwd.is_empty() { None } else { Some(cwd) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -645,7 +1203,15 @@ mod tests {
             r"\\server\share\proj"
         );
         assert_eq!(
+            strip_long_prefix_str(r"\??\UNC\server\share\proj"),
+            r"\\server\share\proj"
+        );
+        assert_eq!(
             strip_long_prefix_str(r"\\?\C:\Users\me\proj"),
+            r"C:\Users\me\proj"
+        );
+        assert_eq!(
+            strip_long_prefix_str(r"\??\C:\Users\me\proj"),
             r"C:\Users\me\proj"
         );
         assert_eq!(
@@ -738,6 +1304,7 @@ mod tests {
             processes: vec![BlockerProcess {
                 pid: 42,
                 name: "git.exe".into(),
+                cwd: Some(r"C:\foo".into()),
                 files: vec![r"C:\foo\bar".into()],
             }],
         };
@@ -766,7 +1333,7 @@ mod tests {
         }
         // BlockerProcess fields
         let p = &json["processes"][0];
-        for k in &["pid", "name", "files"] {
+        for k in &["pid", "name", "cwd", "files"] {
             assert!(p.get(*k).is_some(), "missing process field: {}", k);
         }
         // Snake-case must NOT leak at the wire boundary.
@@ -956,5 +1523,142 @@ mod tests {
                 other, result
             ),
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn merge_blocker_processes_combines_rm_files_and_cwd_by_pid() {
+        let merged = merge_blocker_processes(
+            vec![BlockerProcess {
+                pid: 123,
+                name: "git.exe".into(),
+                cwd: None,
+                files: vec![r"C:\wg\repo\.git\index".into()],
+            }],
+            vec![BlockerProcess {
+                pid: 123,
+                name: "powershell.exe".into(),
+                cwd: Some(r"C:\wg\repo".into()),
+                files: Vec::new(),
+            }],
+        );
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].pid, 123);
+        assert_eq!(merged[0].name, "git.exe");
+        assert_eq!(merged[0].cwd.as_deref(), Some(r"C:\wg\repo"));
+        assert_eq!(merged[0].files, vec![r"C:\wg\repo\.git\index"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn path_is_under_windows_is_case_insensitive_prefix_aware_and_boundary_safe() {
+        assert!(path_is_under_windows(
+            Path::new(r"C:\Users\Maria\WG\repo-foo"),
+            Path::new(r"c:\users\maria\wg")
+        ));
+        assert!(path_is_under_windows(
+            Path::new(r"\??\C:\Users\Maria\WG\repo-foo"),
+            Path::new(r"C:\Users\Maria\WG")
+        ));
+        assert!(path_is_under_windows(
+            Path::new(r"\??\UNC\server\share\WG\repo-foo"),
+            Path::new(r"\\server\share\WG")
+        ));
+        assert!(!path_is_under_windows(
+            Path::new(r"C:\Users\Maria\WG2"),
+            Path::new(r"C:\Users\Maria\WG")
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn current_process_cwd_blocker_detects_self_cwd_under_wg() {
+        let blocker = current_process_cwd_blocker_from_parts(
+            Path::new(r"C:\Users\Maria\WG"),
+            4242,
+            Path::new(r"C:\Users\Maria\WG\repo-foo"),
+            Some(Path::new(
+                r"C:\Program Files\AgentsCommander\AgentsCommander.exe",
+            )),
+        )
+        .expect("current process cwd should be reported when it is under the workgroup");
+
+        assert_eq!(blocker.pid, 4242);
+        assert_eq!(blocker.name, "AgentsCommander.exe");
+        assert_eq!(blocker.cwd.as_deref(), Some(r"C:\Users\Maria\WG\repo-foo"));
+        assert!(blocker.files.is_empty());
+
+        assert!(
+            current_process_cwd_blocker_from_parts(
+                Path::new(r"C:\Users\Maria\WG"),
+                4242,
+                Path::new(r"C:\Users\Maria\outside"),
+                None,
+            )
+            .is_none(),
+            "current process outside the workgroup must not be reported"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn scan_cwd_processes_windows_detects_child_process_current_dir() {
+        use std::process::{Child, Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        struct ChildGuard(Child);
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wg_dir = tmp.path().join("wg-1-test");
+        let repo_dir = wg_dir.join("repo-foo");
+        std::fs::create_dir_all(&repo_dir).expect("create repo");
+
+        let child = Command::new("powershell.exe")
+            .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"])
+            .current_dir(&repo_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn powershell blocker");
+        let child_pid = child.id();
+        let _child = ChildGuard(child);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut found = false;
+        let mut last_error: Option<String> = None;
+        while Instant::now() < deadline {
+            match scan_cwd_processes_windows(&wg_dir) {
+                Ok(blockers) => {
+                    found = blockers.iter().any(|p| {
+                        p.pid == child_pid
+                            && p.cwd
+                                .as_deref()
+                                .is_some_and(|cwd| path_is_under_windows(Path::new(cwd), &repo_dir))
+                    });
+                    if found {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    last_error = Some(e);
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        assert!(
+            found,
+            "CWD fallback must detect child powershell.exe under WG; last_error={:?}",
+            last_error
+        );
     }
 }

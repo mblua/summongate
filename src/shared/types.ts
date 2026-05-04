@@ -298,6 +298,7 @@ export interface BlockerSession {
 export interface BlockerProcess {
   pid: number;
   name: string;
+  cwd?: string;
   files: string[];
 }
 
