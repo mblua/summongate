@@ -1,3 +1,6 @@
+pub mod brief_append_body;
+pub mod brief_ops;
+pub mod brief_set_title;
 pub mod close_session;
 pub mod create_agent;
 pub mod list_peers;
@@ -35,6 +38,10 @@ pub enum Commands {
     CreateAgent(create_agent::CreateAgentArgs),
     /// Close all sessions for a target agent (coordinator authorization required)
     CloseSession(close_session::CloseSessionArgs),
+    /// Set the title field in the workgroup BRIEF.md frontmatter (coordinator-only)
+    BriefSetTitle(brief_set_title::BriefSetTitleArgs),
+    /// Append text to the body of the workgroup BRIEF.md (coordinator-only)
+    BriefAppendBody(brief_append_body::BriefAppendBodyArgs),
 }
 
 /// Attach to parent console (or allocate a new one) ONLY if both stdout and stderr
@@ -126,15 +133,19 @@ pub fn validate_cli_token(token: &Option<String>) -> Result<(String, bool), Stri
 }
 
 /// Dispatch CLI subcommands. Returns exit code.
+///
+/// Caller contract: `attach_parent_console()` MUST be called before this — see
+/// `main.rs`. Done there (not here) so the eprintln!s inside `init_logger()`
+/// reach the user's terminal on Windows release builds.
 pub fn handle_cli(cmd: Commands) -> i32 {
-    attach_parent_console();
-
     let code = match cmd {
         Commands::Send(args) => send::execute(args),
         Commands::ListPeers(args) => list_peers::execute(args),
         Commands::ListSessions(args) => list_sessions::execute(args),
         Commands::CreateAgent(args) => create_agent::execute(args),
         Commands::CloseSession(args) => close_session::execute(args),
+        Commands::BriefSetTitle(args) => brief_set_title::execute(args),
+        Commands::BriefAppendBody(args) => brief_append_body::execute(args),
     };
 
     flush_outputs();
