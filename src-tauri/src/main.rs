@@ -49,6 +49,7 @@ fn main() {
                 Err(e) => {
                     agentscommander_lib::cli::attach_parent_console();
                     let _ = e.print();
+                    agentscommander_lib::cli::flush_outputs();
                     std::process::exit(1);
                 }
             }
@@ -57,6 +58,7 @@ fn main() {
             // --help, --version, or invalid args: print and exit
             agentscommander_lib::cli::attach_parent_console();
             let _ = e.print();
+            agentscommander_lib::cli::flush_outputs();
             std::process::exit(if e.use_stderr() { 1 } else { 0 });
         }
     }

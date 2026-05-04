@@ -44,13 +44,41 @@ pub enum Commands {
     BriefAppendBody(brief_append_body::BriefAppendBodyArgs),
 }
 
-/// Attach to parent console on Windows release builds so CLI output is visible.
+/// Attach to parent console (or allocate a new one) ONLY if both stdout and stderr
+/// have invalid/missing handles. When stdio is already valid (inherited pipes,
+/// inherited console handles, or file redirects from the parent), `AttachConsole`
+/// would REBIND the std handles to a fresh console buffer — breaking those
+/// inherited channels. That rebinding is the root cause of issue #129: PS
+/// -NonInteractive `&` direct calls inherit pipe handles to the GUI-subsystem
+/// child, and AttachConsole's rebind sends subsequent writes to a console buffer
+/// that PS does not surface, dropping all output.
+///
+/// The condition uses `GetFileType` on the std handles. `FILE_TYPE_UNKNOWN`
+/// (returned for null/invalid handles) is the only case where attaching is
+/// useful (the user double-clicked the GUI exe in explorer.exe, etc.). For PIPE,
+/// CHAR, DISK, REMOTE — the inherited handle is already routable, leave it alone.
 #[cfg(target_os = "windows")]
+#[allow(clippy::collapsible_if)]
 pub fn attach_parent_console() {
-    use windows_sys::Win32::System::Console::{AllocConsole, AttachConsole, ATTACH_PARENT_PROCESS};
+    use windows_sys::Win32::Storage::FileSystem::{GetFileType, FILE_TYPE_UNKNOWN};
+    use windows_sys::Win32::System::Console::{
+        AllocConsole, AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS,
+        STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
+    };
+
     unsafe {
-        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
-            AllocConsole();
+        let out = GetStdHandle(STD_OUTPUT_HANDLE);
+        let err = GetStdHandle(STD_ERROR_HANDLE);
+
+        // GetFileType returns FILE_TYPE_UNKNOWN for null/invalid handles. Short-
+        // circuit the null check first so GetFileType is never called on null.
+        let out_invalid = out.is_null() || GetFileType(out) == FILE_TYPE_UNKNOWN;
+        let err_invalid = err.is_null() || GetFileType(err) == FILE_TYPE_UNKNOWN;
+
+        if out_invalid && err_invalid {
+            if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+                AllocConsole();
+            }
         }
     }
 }
@@ -110,7 +138,7 @@ pub fn validate_cli_token(token: &Option<String>) -> Result<(String, bool), Stri
 /// `main.rs`. Done there (not here) so the eprintln!s inside `init_logger()`
 /// reach the user's terminal on Windows release builds.
 pub fn handle_cli(cmd: Commands) -> i32 {
-    match cmd {
+    let code = match cmd {
         Commands::Send(args) => send::execute(args),
         Commands::ListPeers(args) => list_peers::execute(args),
         Commands::ListSessions(args) => list_sessions::execute(args),
@@ -118,5 +146,21 @@ pub fn handle_cli(cmd: Commands) -> i32 {
         Commands::CloseSession(args) => close_session::execute(args),
         Commands::BriefSetTitle(args) => brief_set_title::execute(args),
         Commands::BriefAppendBody(args) => brief_append_body::execute(args),
-    }
+    };
+
+    flush_outputs();
+    code
+}
+
+/// Flush stdout and stderr. Called before any `std::process::exit` to ensure
+/// that pending writes are committed before the process is torn down.
+///
+/// `std::process::exit` skips destructors, so the default flush-on-drop
+/// behavior of `Stdout`/`Stderr` does not run. This helper forces an
+/// explicit flush. Errors are silenced — there is nothing meaningful to do
+/// with a flush failure at process exit.
+pub fn flush_outputs() {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
 }

@@ -9,8 +9,8 @@ use uuid::Uuid;
 /// Build the credentials block for a session.
 ///
 /// The block is terminated by `\n` (no trailing Enter) — the caller is
-/// responsible for flagging `submit=true` to `inject_text_into_session`
-/// which adds the Enter keystrokes for agents that need them.
+/// responsible for calling `inject_text_into_session` which adds the Enter
+/// keystrokes for agents that need them.
 ///
 /// `token` is `Display`'d lowercase with dashes (standard `Uuid` format).
 /// `cwd` is the session's working directory, verbatim.

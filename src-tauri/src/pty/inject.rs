@@ -24,12 +24,11 @@ fn needs_explicit_enter(shell: &str) -> bool {
 
 /// Inject a text block into a session's PTY stdin.
 ///
-/// - `submit = false` → passive injection (token refresh).
-///   Text is written as-is. No Enter is ever sent, regardless of agent type.
-/// - `submit = true` → active injection (init prompt, message delivery, Telegram input).
-///   For agents that require explicit Enter (Claude, Codex), `\r` is sent
-///   twice — at 1500 ms and 2000 ms after the text write — as a reliability
-///   measure against Enter not registering on the first attempt.
+/// For agents that require explicit Enter (Claude, Codex, Gemini), `\r` is
+/// sent twice — at 1500 ms and 2000 ms after the text write — as a reliability
+/// measure against Enter not registering on the first attempt. For plain shells
+/// (bash, powershell), no Enter is sent (the caller's text already controls
+/// submission).
 ///
 /// This is the ONLY function that should be used for text-block injection.
 /// Direct keystrokes from xterm.js (single chars, Ctrl sequences) bypass this
@@ -38,7 +37,6 @@ pub async fn inject_text_into_session(
     app: &tauri::AppHandle,
     session_id: Uuid,
     text: &str,
-    submit: bool,
 ) -> Result<(), String> {
     // Resolve shell without holding any lock across an await point
     let shell = {
@@ -49,11 +47,10 @@ pub async fn inject_text_into_session(
         result
     };
 
-    let send_enter = submit && shell.as_deref().map(needs_explicit_enter).unwrap_or(false);
+    let send_enter = shell.as_deref().map(needs_explicit_enter).unwrap_or(false);
     log::info!(
-        "[inject] session={} submit={} shell={:?} send_enter={}",
+        "[inject] session={} shell={:?} send_enter={}",
         session_id,
-        submit,
         shell,
         send_enter
     );
