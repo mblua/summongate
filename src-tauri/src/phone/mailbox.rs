@@ -244,7 +244,7 @@ impl MailboxPoller {
                                 )
                             };
 
-                            let rejected = if let Ok(content) = std::fs::read_to_string(&path) {
+                            let rejected = if let Ok(content) = read_text_bom_tolerant(&path) {
                                 if let Ok(msg) = serde_json::from_str::<OutboxMessage>(&content) {
                                     self.reject_message(&path, &msg, &reason).await.is_ok()
                                 } else {
@@ -285,7 +285,7 @@ impl MailboxPoller {
         path: &Path,
         is_app_outbox: bool,
     ) -> Result<(), String> {
-        let content = std::fs::read_to_string(path)
+        let content = read_text_bom_tolerant(path)
             .map_err(|e| format!("Failed to read outbox file: {}", e))?;
 
         // `let mut msg`: §AR2-norm below mutates `msg.from` / `msg.to` in place
@@ -1796,7 +1796,7 @@ impl MailboxPoller {
         };
 
         for path in entries {
-            let content = match std::fs::read_to_string(&path) {
+            let content = match read_text_bom_tolerant(&path) {
                 Ok(c) => c,
                 Err(e) => {
                     log::warn!("[session-requests] Failed to read {:?}: {}", path, e);
@@ -1944,6 +1944,43 @@ impl MailboxPoller {
                 e
             ),
         }
+    }
+}
+
+/// Read a file as UTF-8 string, tolerant of UTF-8 / UTF-16 LE / UTF-16 BE BOMs.
+/// Logs a warning when a BOM is detected so users see which tool is writing
+/// odd encoding into outbox / session-requests (typically PowerShell on Windows).
+fn read_text_bom_tolerant(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
+
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        log::warn!(
+            "[bom] UTF-16 LE BOM detected in {:?} — decoding to UTF-8 (writer should use UTF-8 without BOM)",
+            path
+        );
+        let u16_data: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        Ok(String::from_utf16_lossy(&u16_data))
+    } else if bytes.starts_with(&[0xFE, 0xFF]) {
+        log::warn!(
+            "[bom] UTF-16 BE BOM detected in {:?} — decoding to UTF-8 (writer should use UTF-8 without BOM)",
+            path
+        );
+        let u16_data: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
+        Ok(String::from_utf16_lossy(&u16_data))
+    } else if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        log::warn!(
+            "[bom] UTF-8 BOM detected in {:?} — stripping (writer should use UTF-8 without BOM)",
+            path
+        );
+        String::from_utf8(bytes[3..].to_vec()).map_err(|e| format!("Invalid UTF-8 after BOM: {}", e))
+    } else {
+        String::from_utf8(bytes).map_err(|e| format!("Invalid UTF-8: {}", e))
     }
 }
 
@@ -2133,4 +2170,81 @@ mod tests {
     #[test]
     #[ignore = "integration: full CLI + mailbox + two-project fixture"]
     fn resolve_to_target_round_trip_integration() {}
+
+    // ── BOM-tolerant reader tests (issue #130) ──
+
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    const SAMPLE_JSON: &str = r#"{"id":"abc","kind":"ping"}"#;
+
+    fn write_temp(bytes: &[u8]) -> NamedTempFile {
+        let mut f = NamedTempFile::new().expect("tempfile");
+        f.write_all(bytes).expect("write");
+        f.flush().expect("flush");
+        f
+    }
+
+    #[test]
+    fn bom_tolerant_reads_plain_utf8() {
+        let f = write_temp(SAMPLE_JSON.as_bytes());
+        let got = read_text_bom_tolerant(f.path()).expect("read");
+        assert_eq!(got, SAMPLE_JSON);
+        // Parses as JSON.
+        let _: serde_json::Value = serde_json::from_str(&got).expect("parse");
+    }
+
+    #[test]
+    fn bom_tolerant_strips_utf8_bom() {
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(SAMPLE_JSON.as_bytes());
+        let f = write_temp(&bytes);
+        let got = read_text_bom_tolerant(f.path()).expect("read");
+        assert_eq!(got, SAMPLE_JSON);
+        let _: serde_json::Value = serde_json::from_str(&got).expect("parse");
+    }
+
+    #[test]
+    fn bom_tolerant_decodes_utf16_le_bom() {
+        let mut bytes = vec![0xFF, 0xFE];
+        for u in SAMPLE_JSON.encode_utf16() {
+            bytes.extend_from_slice(&u.to_le_bytes());
+        }
+        let f = write_temp(&bytes);
+        let got = read_text_bom_tolerant(f.path()).expect("read");
+        assert_eq!(got, SAMPLE_JSON);
+        let _: serde_json::Value = serde_json::from_str(&got).expect("parse");
+    }
+
+    #[test]
+    fn bom_tolerant_decodes_utf16_be_bom() {
+        let mut bytes = vec![0xFE, 0xFF];
+        for u in SAMPLE_JSON.encode_utf16() {
+            bytes.extend_from_slice(&u.to_be_bytes());
+        }
+        let f = write_temp(&bytes);
+        let got = read_text_bom_tolerant(f.path()).expect("read");
+        assert_eq!(got, SAMPLE_JSON);
+        let _: serde_json::Value = serde_json::from_str(&got).expect("parse");
+    }
+
+    #[test]
+    fn bom_tolerant_rejects_invalid_utf8_no_bom() {
+        // Lone continuation byte 0x80 is invalid UTF-8 and not a recognized BOM.
+        let f = write_temp(&[0x80, 0x81, 0x82]);
+        let err = read_text_bom_tolerant(f.path()).expect_err("must err");
+        assert!(err.contains("Invalid UTF-8"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn bom_tolerant_empty_file_returns_empty_string() {
+        let f = write_temp(&[]);
+        let got = read_text_bom_tolerant(f.path()).expect("empty ok");
+        assert_eq!(got, "");
+        // Serde fails with a parse error (NOT a read error) — confirms the failure
+        // surfaces at the parser, which is what the callsites wrap with their own
+        // context strings.
+        let parse_err = serde_json::from_str::<serde_json::Value>(&got).expect_err("must err");
+        assert!(parse_err.is_eof(), "expected EOF parse error, got: {}", parse_err);
+    }
 }
