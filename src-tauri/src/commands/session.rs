@@ -284,151 +284,55 @@ fn should_inject_continue(
     !already_has_continue
 }
 
-/// Issue #107 — Coordinator auto-title.
+/// Issue #107 round 5 — build the title-prompt segment to concat with the
+/// cred-block, OR `Ok(None)` if the auto-title preconditions don't hold.
 ///
-/// Wait for the agent to return to idle (after the credentials inject), then
-/// — if the workgroup BRIEF.md exists, is non-empty, and has no `title:` field
-/// in its YAML frontmatter — snapshot it to a timestamped `.bak` and inject
-/// a one-shot prompt asking the agent to add the title.
+/// Synchronous: filesystem reads only, no PTY, no await, no snapshot.
+/// (#137 introduced `brief-set-title` which creates its own atomic backup;
+/// the backend no longer snapshots before injection.)
 ///
-/// Best-effort. Returns `Err(reason)` for the caller to log at `warn` level;
-/// never panics, never retries.
+/// The caller is the post-spawn task in `create_session_inner`; it
+/// concatenates the returned `Some(prompt)` with the cred-block and issues a
+/// single `inject_text_into_session` call (Round 4 §R4.2.3 — preserved in
+/// Round 5).
 ///
 /// Gates layered (in order):
-///   1. workgroup root resolvable from `cwd` → else `Err` (config issue, F7).
+///   1. workgroup BRIEF.md path resolvable from `cwd` → else `Err`
+///      (config issue, F7 preserved).
 ///   2. BRIEF.md exists and read succeeds → else `Err`.
-///   3. BRIEF.md non-empty (after trim) → else `Ok(())` (silent skip).
-///   4. No `title:` field in existing frontmatter → else `Ok(())` (silent
+///   3. BRIEF.md non-empty (after trim) → else `Ok(None)` (silent skip).
+///   4. No `title:` field in existing frontmatter → else `Ok(None)` (silent
 ///      skip).
-///   5. Wait for idle (max 30 s, 500 ms poll) → on timeout `Err`.
-///   6. RE-READ BRIEF.md (F2 fold). Re-run gates 3 and 4 — sibling writers
-///      may have changed the file during the wait.
-///   7. Snapshot BRIEF.md to `BRIEF.md.<UTC-ts>.bak` (F6 fold). Snapshot
-///      failure → `Err` (do not inject without a backup).
-///   8. Inject the title prompt with the absolute, UNC-stripped path (F4
-///      fold).
-///
-/// Idle-poll parameters mirror the credentials path
-/// (`session.rs:516-541` — 30 s max, 500 ms poll).
-async fn inject_title_prompt_after_idle_static(
-    app: &AppHandle,
-    session_id: Uuid,
-    cwd: &str,
-) -> Result<(), String> {
-    use crate::commands::entity_creation::{parse_brief_title, snapshot_brief_before_edit};
+///   5. Build title prompt with the absolute, UNC-stripped path (F4
+///      preserved). Return `Ok(Some(prompt))`.
+fn build_title_prompt_appendage(cwd: &str) -> Result<Option<String>, String> {
+    use crate::commands::entity_creation::parse_brief_title;
     use crate::session::session::find_workgroup_brief_path_for_cwd;
 
-    // (1) Resolve workgroup BRIEF.md path. F7: keep `Err` here so a
-    //     Coordinator misconfigured to a non-`wg-*` CWD is logged once per
-    //     spawn — the warn line names the exact config inconsistency.
+    // (1) Resolve workgroup BRIEF.md path. F7 preserved.
     let brief_path = find_workgroup_brief_path_for_cwd(cwd)
         .ok_or_else(|| format!("[auto-title:config] no wg- ancestor in cwd '{}'", cwd))?;
 
-    // (2) Initial read. Missing file or unreadable → warn-and-skip.
+    // (2) Read BRIEF.md. Missing/unreadable → Err (warn-and-skip at caller).
     let content = std::fs::read_to_string(&brief_path)
         .map_err(|e| format!("read BRIEF.md at {:?}: {}", brief_path, e))?;
 
-    // (3) Empty brief → silent skip. Documented "no-op" state for newly-
-    //     created workgroups where the user did not supply a brief.
+    // (3) Empty brief → silent skip.
     if content.trim().is_empty() {
-        log::info!(
-            "[session] Auto-title skipped (BRIEF empty) for session {}",
-            session_id
-        );
-        return Ok(());
+        return Ok(None);
     }
 
-    // (4) Title already present (manual edit OR previous auto-title run).
+    // (4) Title already present → silent skip.
     if parse_brief_title(&content).is_some() {
-        log::info!(
-            "[session] Auto-title skipped (title present) for session {}",
-            session_id
-        );
-        return Ok(());
+        return Ok(None);
     }
 
-    // (5) Wait for idle a SECOND time — credentials inject just ran and
-    //     likely left the agent processing. Same poll shape as credentials
-    //     path. TOCTOU note (parity with phone/mailbox.rs:961-962): the
-    //     agent could become busy between the idle observation here and the
-    //     write below; acceptable for best-effort title-gen because the
-    //     prompt itself instructs the agent to re-check the file at
-    //     execution time.
-    let max_wait = std::time::Duration::from_secs(30);
-    let poll = std::time::Duration::from_millis(500);
-    let start = std::time::Instant::now();
-    loop {
-        if start.elapsed() >= max_wait {
-            return Err(format!(
-                "timeout ({}s) waiting for idle before title-prompt",
-                max_wait.as_secs()
-            ));
-        }
-        tokio::time::sleep(poll).await;
-
-        let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
-        let mgr = session_mgr.read().await;
-        let sessions = mgr.list_sessions().await;
-        match sessions.iter().find(|s| s.id == session_id.to_string()) {
-            Some(s) if s.waiting_for_input => break,
-            Some(_) => {} // still busy
-            None => {
-                return Err(format!(
-                    "session {} destroyed during title-prompt poll",
-                    session_id
-                ));
-            }
-        }
-    }
-
-    // (6) F2 fold — re-read after the wait. Up to 30 s elapsed; sibling
-    //     agents, manual edits, or even our own `restart_session` racing
-    //     with this task could have written `title:` already.
-    let content = std::fs::read_to_string(&brief_path)
-        .map_err(|e| format!("re-read BRIEF.md at {:?}: {}", brief_path, e))?;
-    if content.trim().is_empty() {
-        log::info!(
-            "[session] Auto-title skipped (BRIEF empty post-idle) for session {}",
-            session_id
-        );
-        return Ok(());
-    }
-    if parse_brief_title(&content).is_some() {
-        log::info!(
-            "[session] Auto-title skipped (title present post-idle) for session {}",
-            session_id
-        );
-        return Ok(());
-    }
-
-    // (7) F6 fold — snapshot BEFORE injecting. If snapshot fails (disk full,
-    //     permission error, same-second collision), abort the inject —
-    //     better to skip the feature than to let the agent edit an
-    //     unbacked-up file. Next restart retries.
-    let bak_path = snapshot_brief_before_edit(&brief_path)
-        .map_err(|e| format!("snapshot BRIEF.md before edit: {}", e))?;
-    log::info!(
-        "[session] Auto-title backup created: {:?} (session {})",
-        bak_path,
-        session_id
-    );
-
-    // (8) Build absolute-path string for the prompt. F4 fold: strip the
-    //     Windows extended-length `\\?\` prefix to match
-    //     `pty/credentials.rs`'s normalisation.
+    // (5) F4 preserved — strip Windows \\?\ extended-length prefix.
     let raw = brief_path.to_string_lossy().to_string();
     let path_str = raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string();
     let prompt = crate::pty::title_prompt::build_title_prompt(&path_str);
 
-    crate::pty::inject::inject_text_into_session(app, session_id, &prompt).await?;
-
-    log::info!(
-        "[session] Auto-title prompt injected for session {} (brief={:?}, bak={:?})",
-        session_id,
-        brief_path,
-        bak_path
-    );
-    Ok(())
+    Ok(Some(prompt))
 }
 
 /// Core session creation logic shared by the Tauri command and the restore path.
@@ -699,44 +603,62 @@ pub async fn create_session_inner(
                 }
             }
 
+            // Issue #107 round 5 — build the optional title-prompt segment
+            // BEFORE the PTY write. Synchronous fs reads only; no async
+            // work, no snapshot, no second idle-wait. See plan §R5.5.
+            let title_appendage = if is_coordinator_clone && auto_title_enabled {
+                match build_title_prompt_appendage(&cwd_clone) {
+                    Ok(Some(prompt)) => {
+                        log::info!(
+                            "[session] Auto-title appendage built for session {}",
+                            session_id
+                        );
+                        Some(prompt)
+                    }
+                    Ok(None) => {
+                        log::info!(
+                            "[session] Auto-title appendage skipped (gate not passed) for session {}",
+                            session_id
+                        );
+                        None
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[session] Auto-title appendage skipped for session {}: {}",
+                            session_id,
+                            e
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            let auto_title_was_appended = title_appendage.is_some();
             let cred_block = crate::pty::credentials::build_credentials_block(&token, &cwd_clone);
+            let combined = match title_appendage {
+                Some(prompt) => format!("{}\n{}", cred_block, prompt),
+                None => cred_block,
+            };
 
             match crate::pty::inject::inject_text_into_session(
                 &app_clone,
                 session_id,
-                &cred_block,
+                &combined,
             )
             .await
             {
                 Ok(()) => {
                     log::info!(
-                        "[session] Credentials auto-injected for session {}",
-                        session_id
+                        "[session] Bootstrap message injected for session {} (auto-title={})",
+                        session_id,
+                        auto_title_was_appended
                     );
-
-                    // Issue #107 — Coordinator-only auto-title chain.
-                    // Runs sequentially after the credentials inject so the
-                    // two PTY writes never collide and the agent already has
-                    // credentials in context when the title prompt arrives.
-                    if is_coordinator_clone && auto_title_enabled {
-                        if let Err(e) = inject_title_prompt_after_idle_static(
-                            &app_clone,
-                            session_id,
-                            &cwd_clone,
-                        )
-                        .await
-                        {
-                            log::warn!(
-                                "[session] Auto-title skipped for session {}: {}",
-                                session_id,
-                                e
-                            );
-                        }
-                    }
                 }
                 Err(e) => {
                     log::warn!(
-                        "[session] Failed to auto-inject credentials for {}: {}",
+                        "[session] Failed to inject bootstrap for {}: {}",
                         session_id,
                         e
                     );
@@ -1931,5 +1853,70 @@ mod tests {
             true,
             "claude --continued-mode something"
         ));
+    }
+
+    // ── Issue #107 Round 5 §R5.8.6 — build_title_prompt_appendage idempotence ──
+    //
+    // Tempdir naming starts with `wg-` so `find_workgroup_brief_path_for_cwd`'s
+    // ancestor walk finds the cwd itself as the wg ancestor. The three tests
+    // pin gates (3), (4), and the happy path. Path-walk gate (1) failure is
+    // exercised by the existing `find_workgroup_brief_path_for_cwd` tests in
+    // `session/session.rs`. Read-failure gate (2) requires fault-injecting
+    // `std::fs::read_to_string`, which is not worth the harness for a thin
+    // orchestrator.
+
+    #[test]
+    fn build_title_prompt_appendage_returns_none_when_title_already_present() {
+        use std::env;
+        let dir = env::temp_dir().join(format!(
+            "wg-r5-idempotent-{}", std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let brief = dir.join("BRIEF.md");
+        std::fs::write(&brief, b"---\ntitle: 'Pre-existing'\n---\nBody.\n").unwrap();
+        let cwd = dir.to_string_lossy().to_string();
+        let result = super::build_title_prompt_appendage(&cwd);
+        assert!(matches!(result, Ok(None)), "expected Ok(None), got {:?}", result);
+        let _ = std::fs::remove_file(&brief);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn build_title_prompt_appendage_returns_none_when_brief_empty() {
+        use std::env;
+        let dir = env::temp_dir().join(format!(
+            "wg-r5-empty-{}", std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let brief = dir.join("BRIEF.md");
+        std::fs::write(&brief, b"   \n\n\t\n").unwrap();
+        let cwd = dir.to_string_lossy().to_string();
+        let result = super::build_title_prompt_appendage(&cwd);
+        assert!(matches!(result, Ok(None)), "expected Ok(None), got {:?}", result);
+        let _ = std::fs::remove_file(&brief);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn build_title_prompt_appendage_returns_some_when_brief_has_no_title() {
+        use std::env;
+        let dir = env::temp_dir().join(format!(
+            "wg-r5-some-{}", std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let brief = dir.join("BRIEF.md");
+        std::fs::write(&brief, b"# A real brief with body content.\n").unwrap();
+        let cwd = dir.to_string_lossy().to_string();
+        let result = super::build_title_prompt_appendage(&cwd);
+        let prompt = match result {
+            Ok(Some(p)) => p,
+            other => panic!("expected Ok(Some(_)), got {:?}", other),
+        };
+        assert!(prompt.contains("brief-set-title"));
+        assert!(prompt.contains("<YOUR_BINARY_PATH>"));
+        let brief_str = brief.to_string_lossy().to_string();
+        assert!(prompt.contains(&brief_str));
+        let _ = std::fs::remove_file(&brief);
+        let _ = std::fs::remove_dir(&dir);
     }
 }

@@ -234,78 +234,6 @@ pub(crate) fn parse_brief_title(content: &str) -> Option<String> {
     None
 }
 
-/// Snapshot a BRIEF.md file to a sibling timestamped `.bak` before an
-/// agent-driven edit. The caller is expected to invoke this immediately
-/// before injecting any prompt that asks an agent to modify the file.
-///
-/// Filename pattern: `BRIEF.md.<YYYYMMDD-HHMMSS>.bak`, UTC timestamp.
-/// Backups accumulate in the workgroup directory and are NOT auto-deleted —
-/// they are removed alongside the workgroup when the `wg-*` directory is
-/// destroyed.
-///
-/// Returns the path of the created backup on success.
-///
-/// Atomicity: the destination is opened with
-/// `OpenOptions::new().write(true).create_new(true).open(...)` (R3 fold F9 /
-/// G18). On collision the call returns `ErrorKind::AlreadyExists` —
-/// `create_new` maps to `O_CREAT | O_EXCL` on POSIX and `CREATE_NEW` on
-/// Windows, both atomic against same-name races. Reading-then-overwriting
-/// via `std::fs::copy` would silently clobber an existing `.bak` from a
-/// same-second collision, breaking F6's reversibility contract.
-///
-/// Failure modes (all surfaced as `io::Error`):
-///   - Source `BRIEF.md` is missing/unreadable → `NotFound`.
-///   - Destination directory is read-only or full → `PermissionDenied` /
-///     `Other` / `StorageFull`.
-///   - Same-second collision (two restarts of the same Coordinator on the
-///     same workgroup within the same UTC second) → `AlreadyExists`. Caller
-///     treats this as a transient `Err` and skips the title prompt for this
-///     restart; idempotent retry next restart.
-///
-/// Pure I/O helper: no settings access, no PTY, no logging. Caller logs.
-///
-/// Round 2 fold F6 — see plan `_plans/107-auto-brief-title.md` §16. Designed
-/// for reuse by future flows that ask an agent to edit BRIEF.md (the user
-/// has said this is coming). Round 3 fold F9 hardened the implementation
-/// from `std::fs::copy` (silent overwrite) to atomic `create_new`.
-pub(crate) fn snapshot_brief_before_edit(
-    brief_path: &std::path::Path,
-) -> std::io::Result<std::path::PathBuf> {
-    use std::io::Write;
-
-    let parent = brief_path.parent().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "brief_path has no parent directory",
-        )
-    })?;
-    let stem = brief_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "brief_path has no filename",
-            )
-        })?;
-    let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
-    let bak_name = format!("{}.{}.bak", stem, timestamp);
-    let bak_path = parent.join(bak_name);
-
-    // R3 fold F9 / G18 — atomic create-new. Drop std::fs::copy because it
-    // silently overwrites, which breaks F6's reversibility contract on
-    // same-second restart collisions.
-    let mut source = std::fs::File::open(brief_path)?;
-    let mut dest = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&bak_path)?;
-    std::io::copy(&mut source, &mut dest)?;
-    dest.flush()?;
-
-    Ok(bak_path)
-}
-
 /// BRIEF.md content for a brand-new workgroup.
 ///
 /// - User-supplied brief → written verbatim with a single trailing newline.
@@ -1856,8 +1784,8 @@ async fn git_clone_async(url: &str, target: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     //! Tests for the preflight-rename `delete_workgroup` helper added in
-    //! the #113 follow-up dispatch, plus the #107 helpers
-    //! (`parse_brief_title`, `snapshot_brief_before_edit`).
+    //! the #113 follow-up dispatch, plus the #107 helper
+    //! `parse_brief_title`.
 
     use super::*;
 
@@ -2135,82 +2063,4 @@ mod tests {
         );
     }
 
-    // ── snapshot_brief_before_edit — F6 / F9 ──
-
-    #[test]
-    fn snapshot_brief_before_edit_creates_byte_identical_copy() {
-        let dir = std::env::temp_dir().join(format!(
-            "ac-snapshot-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let brief = dir.join("BRIEF.md");
-        let body = b"# A brief\n\nWith some body content.\n";
-        std::fs::write(&brief, body).unwrap();
-
-        let bak = snapshot_brief_before_edit(&brief).unwrap();
-
-        assert!(bak.exists());
-        let bak_name = bak.file_name().unwrap().to_string_lossy().to_string();
-        assert!(bak_name.starts_with("BRIEF.md."));
-        assert!(bak_name.ends_with(".bak"));
-        // The infix is a YYYYMMDD-HHMMSS UTC timestamp — 15 chars.
-        let infix = &bak_name["BRIEF.md.".len()..bak_name.len() - ".bak".len()];
-        assert_eq!(infix.len(), 15);
-        assert_eq!(infix.chars().nth(8), Some('-'));
-
-        let copied = std::fs::read(&bak).unwrap();
-        assert_eq!(copied, body);
-
-        // Cleanup.
-        let _ = std::fs::remove_file(&brief);
-        let _ = std::fs::remove_file(&bak);
-        let _ = std::fs::remove_dir(&dir);
-    }
-
-    #[test]
-    fn snapshot_brief_before_edit_errors_when_source_missing() {
-        let phantom = std::env::temp_dir().join(format!(
-            "ac-snapshot-missing-{}-BRIEF.md",
-            std::process::id()
-        ));
-        let result = snapshot_brief_before_edit(&phantom);
-        assert!(result.is_err());
-    }
-
-    // R3 fold F9 / G18 — exercise the atomic-create-new collision path.
-    // Calling the helper twice within the same UTC second on the same
-    // source must yield Err(ErrorKind::AlreadyExists) on the second call;
-    // the original .bak from the first call is preserved untouched.
-    #[test]
-    fn snapshot_brief_before_edit_returns_already_exists_on_collision() {
-        let dir = std::env::temp_dir().join(format!(
-            "ac-snapshot-collision-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let brief = dir.join("BRIEF.md");
-        std::fs::write(&brief, b"first body\n").unwrap();
-
-        let bak1 = snapshot_brief_before_edit(&brief).unwrap();
-        let bak1_bytes = std::fs::read(&bak1).unwrap();
-
-        // Mutate source between calls so we can prove the collision did NOT
-        // overwrite bak1 with the new body.
-        std::fs::write(&brief, b"second body - must not land in bak1\n").unwrap();
-
-        let err = snapshot_brief_before_edit(&brief)
-            .expect_err("second call within same UTC second must collide");
-        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
-
-        // bak1 untouched.
-        let bak1_after = std::fs::read(&bak1).unwrap();
-        assert_eq!(bak1_after, bak1_bytes);
-        assert_eq!(bak1_after, b"first body\n");
-
-        // Cleanup.
-        let _ = std::fs::remove_file(&brief);
-        let _ = std::fs::remove_file(&bak1);
-        let _ = std::fs::remove_dir(&dir);
-    }
 }
