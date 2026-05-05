@@ -25,7 +25,9 @@ function extractAgentName(workDir: string): string | null {
   const idx = parts.indexOf('.ac-new');
   if (idx < 0 || idx + 2 >= parts.length) return null;
   const seg = parts[idx + 2];
-  return seg.startsWith('__agent_') ? seg.slice('__agent_'.length) : null;
+  if (!seg.startsWith('__agent_')) return null;
+  const name = seg.slice('__agent_'.length);
+  return name.length > 0 ? name : null;
 }
 
 interface TitlebarProps {
