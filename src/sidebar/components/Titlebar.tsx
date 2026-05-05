@@ -29,8 +29,10 @@ const Titlebar: Component = () => {
   const agentName = createMemo(() => extractAgentName(terminalStore.activeWorkingDirectory));
   const trailingText = createMemo(() => {
     const proj = projectName();
-    const ag = agentName() ?? terminalStore.activeSessionName;
+    const ag = agentName();
     if (proj && ag) return `${ag}@${proj}`;
+    if (ag) return ag;
+    if (proj && terminalStore.activeSessionName) return `${terminalStore.activeSessionName}@${proj}`;
     return terminalStore.activeSessionName || null;
   });
 
