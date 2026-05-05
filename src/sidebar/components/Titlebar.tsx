@@ -1,7 +1,9 @@
-import { Component, Show, For, createSignal, onMount, onCleanup } from "solid-js";
+import { Component, Show, For, createSignal, createMemo, onMount, onCleanup } from "solid-js";
 import iconUrl from "../../assets/icon-16.png";
 import { SettingsAPI } from "../../shared/ipc";
 import { isTauri } from "../../shared/platform";
+import { extractProjectName, extractWorkgroupName, extractAgentName } from "../../shared/path-extractors";
+import { terminalStore } from "../../terminal/stores/terminal";
 import type { MainSidebarSide } from "../../shared/types";
 
 declare const __APP_VERSION__: string;
@@ -22,6 +24,17 @@ const Titlebar: Component = () => {
   const [layoutOpen, setLayoutOpen] = createSignal(false);
   const [instanceLabel, setInstanceLabel] = createSignal("");
   const [currentSide, setCurrentSide] = createSignal<MainSidebarSide>("right");
+  const projectName = createMemo(() => extractProjectName(terminalStore.activeWorkingDirectory));
+  const wgName = createMemo(() => extractWorkgroupName(terminalStore.activeWorkingDirectory));
+  const agentName = createMemo(() => extractAgentName(terminalStore.activeWorkingDirectory));
+  const trailingText = createMemo(() => {
+    const proj = projectName();
+    const ag = agentName();
+    if (proj && ag) return `${ag}@${proj}`;
+    if (ag) return ag;
+    if (proj && terminalStore.activeSessionName) return `${terminalStore.activeSessionName}@${proj}`;
+    return terminalStore.activeSessionName || null;
+  });
 
   const handleMinimize = async () => {
     if (!isTauri) return;
@@ -105,6 +118,12 @@ const Titlebar: Component = () => {
         {instanceLabel() && (
           <span class="titlebar-stage-badge" data-tauri-drag-region>{instanceLabel()}</span>
         )}
+        <Show when={wgName()}>
+          <span class="titlebar-wg-badge" data-tauri-drag-region>{wgName()}</span>
+        </Show>
+        <Show when={trailingText()} fallback={<span class="titlebar-session-name">Terminal</span>}>
+          <span class="titlebar-session-name">{trailingText()}</span>
+        </Show>
       </div>
       <div class="titlebar-controls">
         <div class="layout-dropdown-wrapper">
