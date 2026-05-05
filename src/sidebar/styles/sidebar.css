@@ -90,6 +90,18 @@ html, body, #root {
   vertical-align: middle;
 }
 
+.titlebar-wg-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  margin-left: 6px;
+  background: rgba(80, 200, 160, 0.15);
+  color: #5fd4a8;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
 .titlebar-controls {
   display: flex;
   gap: 0;
