@@ -3,32 +3,9 @@ import { terminalStore } from "../stores/terminal";
 import iconUrl from "../../assets/icon-16.png";
 import { isTauri } from "../../shared/platform";
 import { WindowAPI } from "../../shared/ipc";
+import { extractProjectName, extractWorkgroupName, extractAgentName } from "../../shared/path-extractors";
 declare const __APP_VERSION__: string;
 const APP_VERSION = __APP_VERSION__;
-
-function extractProjectName(workDir: string): string | null {
-  const parts = workDir.replace(/\\/g, '/').split('/');
-  const idx = parts.indexOf('.ac-new');
-  return idx > 0 ? parts[idx - 1] : null;
-}
-
-function extractWorkgroupName(workDir: string): string | null {
-  const parts = workDir.replace(/\\/g, '/').split('/');
-  const idx = parts.indexOf('.ac-new');
-  if (idx < 0 || idx + 1 >= parts.length) return null;
-  const wg = parts[idx + 1];
-  return wg.startsWith('wg-') ? wg.toUpperCase() : null;
-}
-
-function extractAgentName(workDir: string): string | null {
-  const parts = workDir.replace(/\\/g, '/').split('/');
-  const idx = parts.indexOf('.ac-new');
-  if (idx < 0 || idx + 2 >= parts.length) return null;
-  const seg = parts[idx + 2];
-  if (!seg.startsWith('__agent_')) return null;
-  const name = seg.slice('__agent_'.length);
-  return name.length > 0 ? name : null;
-}
 
 interface TitlebarProps {
   detached?: boolean;
