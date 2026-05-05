@@ -180,14 +180,70 @@ fn parse_role_frontmatter(content: &str) -> (Option<String>, Option<String>) {
     (name, description)
 }
 
-fn default_brief_content(wg_name: &str) -> String {
-    format!(
-        "# {}\n\n## Objective\n\n_Describe the goal of this workgroup._\n\n## Scope\n\n_What is in and out of scope._\n\n## Deliverables\n\n- [ ] _List deliverables here_\n",
-        wg_name
-    )
+/// Extract a `title:` field from the YAML frontmatter at the start of `content`.
+///
+/// Best-effort frontmatter detection — NOT a YAML implementation. Suitable
+/// only for the narrow case of one optional scalar field at the top of
+/// BRIEF.md.
+///
+/// Returns `Some(title)` when:
+///   - `content` starts with `---`,
+///   - a closing `---` exists,
+///   - a line of the form `<key>: <value>` exists between the delimiters
+///     where `<key>` matches `title` case-insensitively (`title:`, `Title:`,
+///     `TITLE:`, mixed casing all accepted).
+///
+/// The value half is preserved verbatim (case-sensitive), then stripped of
+/// surrounding `"` or `'` quote pairs.
+///
+/// Returns `None` otherwise (no frontmatter, no title key, or empty value).
+///
+/// Mirrors `parse_role_frontmatter`'s shape — both speak the same on-disk
+/// format. See plan `_plans/107-auto-brief-title.md` §6 for why we do not
+/// pull in `serde_yaml`.
+pub(crate) fn parse_brief_title(content: &str) -> Option<String> {
+    let content = content.strip_prefix('\u{FEFF}').unwrap_or(content);
+    if !content.starts_with("---") {
+        return None;
+    }
+    let rest = &content[3..];
+    let end = rest.find("---")?;
+    let frontmatter = &rest[..end];
+
+    for line in frontmatter.lines() {
+        let trimmed = line.trim();
+        // Case-insensitive key match on `title:`. Round 2 fold (F3 / G3):
+        // agents stochastically capitalize keys (`Title:`, `TITLE:`); a
+        // case-sensitive match would let duplicate `title:` lines accumulate
+        // across restarts. Split on the first `:` so we compare just the key.
+        let Some((key, value_raw)) = trimmed.split_once(':') else {
+            continue;
+        };
+        if !key.trim().eq_ignore_ascii_case("title") {
+            continue;
+        }
+        let value = value_raw
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string();
+        if value.is_empty() {
+            return None;
+        }
+        return Some(value);
+    }
+    None
 }
 
-fn build_brief_content(wg_name: &str, brief: Option<String>) -> String {
+/// BRIEF.md content for a brand-new workgroup.
+///
+/// - User-supplied brief → written verbatim with a single trailing newline.
+/// - Nothing supplied → empty file.
+///
+/// Issue #107: do not auto-template the brief. Empty briefs are a valid state
+/// and signal "no title-gen yet" to the Coordinator-spawn flow in
+/// `commands/session.rs` (which skips title-gen on empty briefs).
+fn build_brief_content(_wg_name: &str, brief: Option<String>) -> String {
     let trimmed = brief
         .as_deref()
         .map(str::trim)
@@ -195,7 +251,7 @@ fn build_brief_content(wg_name: &str, brief: Option<String>) -> String {
 
     match trimmed {
         Some(content) => format!("{}\n", content),
-        None => default_brief_content(wg_name),
+        None => String::new(),
     }
 }
 
@@ -1729,7 +1785,8 @@ async fn git_clone_async(url: &str, target: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     //! Tests for the preflight-rename `delete_workgroup` helper added in
-    //! the #113 follow-up dispatch.
+    //! the #113 follow-up dispatch, plus the #107 helper
+    //! `parse_brief_title`.
 
     use super::*;
 
@@ -1908,4 +1965,121 @@ mod tests {
             "non-Windows must always return false"
         );
     }
+
+    // ── parse_brief_title — dev-rust R7 cases ──
+
+    #[test]
+    fn parse_brief_title_returns_some_for_canonical_frontmatter() {
+        assert_eq!(
+            parse_brief_title("---\ntitle: Hello world\n---\n\nbody\n"),
+            Some("Hello world".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_strips_double_quotes() {
+        assert_eq!(
+            parse_brief_title("---\ntitle: \"Quoted\"\n---\n"),
+            Some("Quoted".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_strips_single_quotes() {
+        assert_eq!(
+            parse_brief_title("---\ntitle: 'Quoted'\n---\n"),
+            Some("Quoted".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_returns_none_when_no_frontmatter() {
+        assert_eq!(parse_brief_title("# Heading\n\nbody\n"), None);
+    }
+
+    #[test]
+    fn parse_brief_title_returns_none_for_empty_value() {
+        assert_eq!(parse_brief_title("---\ntitle:\n---\n"), None);
+    }
+
+    #[test]
+    fn parse_brief_title_returns_none_when_closing_delimiter_missing() {
+        assert_eq!(parse_brief_title("---\ntitle: foo\nbody only\n"), None);
+    }
+
+    #[test]
+    fn parse_brief_title_returns_none_when_title_field_absent() {
+        assert_eq!(parse_brief_title("---\nname: foo\n---\n"), None);
+    }
+
+    #[test]
+    fn parse_brief_title_preserves_inner_colon() {
+        assert_eq!(
+            parse_brief_title("---\ntitle: a: b\n---\n"),
+            Some("a: b".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_handles_indented_key() {
+        assert_eq!(
+            parse_brief_title("---\n  title: foo\n---\n"),
+            Some("foo".to_string())
+        );
+    }
+
+    // ── parse_brief_title — dev-rust-grinch G3 / G13 case-insensitivity ──
+
+    #[test]
+    fn parse_brief_title_handles_capital_t() {
+        assert_eq!(
+            parse_brief_title("---\nTitle: Foo\n---\n"),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_handles_all_caps_key() {
+        assert_eq!(
+            parse_brief_title("---\nTITLE: Foo\n---\n"),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_handles_mixed_case_key() {
+        assert_eq!(
+            parse_brief_title("---\ntItLe: Foo\n---\n"),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_value_remains_case_sensitive() {
+        // The key match is case-insensitive; the value MUST round-trip
+        // verbatim (it is user-visible content, not a structural marker).
+        assert_eq!(
+            parse_brief_title("---\nTitle: MixedCASE Value\n---\n"),
+            Some("MixedCASE Value".to_string())
+        );
+    }
+
+    // ── parse_brief_title — UTF-8 BOM (grinch MEDIUM) ──
+    // Mirrors `cli/brief_ops.rs::parse_brief` which already strips the BOM.
+    // Without this, BRIEF.md saved as "UTF-8 with BOM" breaks gate-4
+    // idempotency and risks silent overwrite of a user-edited title.
+
+    #[test]
+    fn parse_brief_title_strips_utf8_bom() {
+        assert_eq!(
+            parse_brief_title("\u{FEFF}---\ntitle: Foo\n---\n"),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_returns_none_for_bom_without_frontmatter() {
+        assert_eq!(parse_brief_title("\u{FEFF}# Heading\n\nbody\n"), None);
+    }
+
 }

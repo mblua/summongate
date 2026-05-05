@@ -284,6 +284,57 @@ fn should_inject_continue(
     !already_has_continue
 }
 
+/// Issue #107 round 5 — build the title-prompt segment to concat with the
+/// cred-block, OR `Ok(None)` if the auto-title preconditions don't hold.
+///
+/// Synchronous: filesystem reads only, no PTY, no await, no snapshot.
+/// (#137 introduced `brief-set-title` which creates its own atomic backup;
+/// the backend no longer snapshots before injection.)
+///
+/// The caller is the post-spawn task in `create_session_inner`; it
+/// concatenates the returned `Some(prompt)` with the cred-block and issues a
+/// single `inject_text_into_session` call (Round 4 §R4.2.3 — preserved in
+/// Round 5).
+///
+/// Gates layered (in order):
+///   1. workgroup BRIEF.md path resolvable from `cwd` → else `Err`
+///      (config issue, F7 preserved).
+///   2. BRIEF.md exists and read succeeds → else `Err`.
+///   3. BRIEF.md non-empty (after trim) → else `Ok(None)` (silent skip).
+///   4. No `title:` field in existing frontmatter → else `Ok(None)` (silent
+///      skip).
+///   5. Build title prompt with the absolute, UNC-stripped path (F4
+///      preserved). Return `Ok(Some(prompt))`.
+fn build_title_prompt_appendage(cwd: &str) -> Result<Option<String>, String> {
+    use crate::commands::entity_creation::parse_brief_title;
+    use crate::session::session::find_workgroup_brief_path_for_cwd;
+
+    // (1) Resolve workgroup BRIEF.md path. F7 preserved.
+    let brief_path = find_workgroup_brief_path_for_cwd(cwd)
+        .ok_or_else(|| format!("[auto-title:config] no wg- ancestor in cwd '{}'", cwd))?;
+
+    // (2) Read BRIEF.md. Missing/unreadable → Err (warn-and-skip at caller).
+    let content = std::fs::read_to_string(&brief_path)
+        .map_err(|e| format!("read BRIEF.md at {:?}: {}", brief_path, e))?;
+
+    // (3) Empty brief → silent skip.
+    if content.trim().is_empty() {
+        return Ok(None);
+    }
+
+    // (4) Title already present → silent skip.
+    if parse_brief_title(&content).is_some() {
+        return Ok(None);
+    }
+
+    // (5) F4 preserved — strip Windows \\?\ extended-length prefix.
+    let raw = brief_path.to_string_lossy().to_string();
+    let path_str = raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string();
+    let prompt = crate::pty::title_prompt::build_title_prompt(&path_str);
+
+    Ok(Some(prompt))
+}
+
 /// Core session creation logic shared by the Tauri command and the restore path.
 /// Creates a session record, spawns a PTY, and emits the session_created event.
 /// Auto-detects agent from shell command if not provided, and auto-injects provider-specific
@@ -512,6 +563,18 @@ pub async fn create_session_inner(
         let session_id = id;
         let token = session.token;
         let cwd_clone = cwd.clone();
+        // Issue #107 (R2 fold F1) — capture Coordinator gate + auto-title
+        // setting snapshot here so the spawned task can chain title-gen after
+        // the credentials inject. The `cfg` opened at lines 322-323 is bound
+        // inside an inner block and dropped at line 331 — there is no live
+        // `cfg` at this point, so we open a fresh read guard for one field.
+        // Concurrent readers don't block; deadlock-free (no other lock held).
+        let is_coordinator_clone = is_coordinator;
+        let auto_title_enabled = {
+            let settings_state = app.state::<SettingsState>();
+            let cfg = settings_state.read().await;
+            cfg.auto_generate_brief_title
+        };
         tokio::spawn(async move {
             let max_wait = std::time::Duration::from_secs(30);
             let poll = std::time::Duration::from_millis(500);
@@ -540,24 +603,62 @@ pub async fn create_session_inner(
                 }
             }
 
+            // Issue #107 round 5 — build the optional title-prompt segment
+            // BEFORE the PTY write. Synchronous fs reads only; no async
+            // work, no snapshot, no second idle-wait. See plan §R5.5.
+            let title_appendage = if is_coordinator_clone && auto_title_enabled {
+                match build_title_prompt_appendage(&cwd_clone) {
+                    Ok(Some(prompt)) => {
+                        log::info!(
+                            "[session] Auto-title appendage built for session {}",
+                            session_id
+                        );
+                        Some(prompt)
+                    }
+                    Ok(None) => {
+                        log::info!(
+                            "[session] Auto-title appendage skipped (gate not passed) for session {}",
+                            session_id
+                        );
+                        None
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[session] Auto-title appendage skipped for session {}: {}",
+                            session_id,
+                            e
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            let auto_title_was_appended = title_appendage.is_some();
             let cred_block = crate::pty::credentials::build_credentials_block(&token, &cwd_clone);
+            let combined = match title_appendage {
+                Some(prompt) => format!("{}\n{}", cred_block, prompt),
+                None => cred_block,
+            };
 
             match crate::pty::inject::inject_text_into_session(
                 &app_clone,
                 session_id,
-                &cred_block,
+                &combined,
             )
             .await
             {
                 Ok(()) => {
                     log::info!(
-                        "[session] Credentials auto-injected for session {}",
-                        session_id
+                        "[session] Bootstrap message injected for session {} (auto-title={})",
+                        session_id,
+                        auto_title_was_appended
                     );
                 }
                 Err(e) => {
                     log::warn!(
-                        "[session] Failed to auto-inject credentials for {}: {}",
+                        "[session] Failed to inject bootstrap for {}: {}",
                         session_id,
                         e
                     );
@@ -1752,5 +1853,74 @@ mod tests {
             true,
             "claude --continued-mode something"
         ));
+    }
+
+    // ── Issue #107 Round 5 §R5.8.6 — build_title_prompt_appendage idempotence ──
+    //
+    // Tempdir naming starts with `wg-` so `find_workgroup_brief_path_for_cwd`'s
+    // ancestor walk finds the cwd itself as the wg ancestor. The three tests
+    // pin gates (3), (4), and the happy path. Path-walk gate (1) failure is
+    // exercised by the existing `find_workgroup_brief_path_for_cwd` tests in
+    // `session/session.rs`. Read-failure gate (2) requires fault-injecting
+    // `std::fs::read_to_string`, which is not worth the harness for a thin
+    // orchestrator.
+
+    #[test]
+    fn build_title_prompt_appendage_returns_none_when_title_already_present() {
+        use std::env;
+        let dir = env::temp_dir().join(format!(
+            "wg-r5-idempotent-{}", std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let brief = dir.join("BRIEF.md");
+        std::fs::write(&brief, b"---\ntitle: 'Pre-existing'\n---\nBody.\n").unwrap();
+        let cwd = dir.to_string_lossy().to_string();
+        let result = super::build_title_prompt_appendage(&cwd);
+        assert!(matches!(result, Ok(None)), "expected Ok(None), got {:?}", result);
+        let _ = std::fs::remove_file(&brief);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn build_title_prompt_appendage_returns_none_when_brief_empty() {
+        use std::env;
+        let dir = env::temp_dir().join(format!(
+            "wg-r5-empty-{}", std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let brief = dir.join("BRIEF.md");
+        std::fs::write(&brief, b"   \n\n\t\n").unwrap();
+        let cwd = dir.to_string_lossy().to_string();
+        let result = super::build_title_prompt_appendage(&cwd);
+        assert!(matches!(result, Ok(None)), "expected Ok(None), got {:?}", result);
+        let _ = std::fs::remove_file(&brief);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn build_title_prompt_appendage_returns_some_when_brief_has_no_title() {
+        use std::env;
+        let dir = env::temp_dir().join(format!(
+            "wg-r5-some-{}", std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let brief = dir.join("BRIEF.md");
+        std::fs::write(&brief, b"# A real brief with body content.\n").unwrap();
+        let cwd = dir.to_string_lossy().to_string();
+        let result = super::build_title_prompt_appendage(&cwd);
+        let prompt = match result {
+            Ok(Some(p)) => p,
+            other => panic!("expected Ok(Some(_)), got {:?}", other),
+        };
+        assert!(prompt.contains("brief-set-title"));
+        assert!(prompt.contains("<YOUR_BINARY_PATH>"));
+        // Production code strips `\\?\` UNC prefix before embedding the path
+        // (F4 fold). Mirror the strip here so the assertion holds on Windows
+        // setups where `temp_dir()` returns an extended-length path.
+        let brief_raw = brief.to_string_lossy().to_string();
+        let brief_str = brief_raw.strip_prefix(r"\\?\").unwrap_or(&brief_raw);
+        assert!(prompt.contains(brief_str));
+        let _ = std::fs::remove_file(&brief);
+        let _ = std::fs::remove_dir(&dir);
     }
 }

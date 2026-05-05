@@ -157,6 +157,7 @@ export interface AppSettings {
   coordSortByActivity: boolean;
   injectRtkHook: boolean;
   rtkPromptDismissed: boolean;
+  autoGenerateBriefTitle: boolean;
 }
 
 // Team grouping for sidebar
