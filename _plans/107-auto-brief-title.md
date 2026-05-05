@@ -3444,3 +3444,603 @@ If R4.D2 (sibling-let body), R4.D3 (helper returns `(prompt, bak_path)` tuple), 
 Architect's three flagged checks (§R4.6.11) all pass — see R4.D-summary at the top of this section. No conflicts with §R4.10 open questions; tech-lead's resolutions noted at the §R4.10 preamble are consistent with the implementation surface verified above.
 
 I read the round-4 plan, the messaging chain, and the actual code on `feature/107-auto-brief-title` HEAD `e458b85`. No additional verification gaps surfaced.
+
+---
+
+## Round 5 — post-137 refresh
+
+Round 5 is **a refresh on top of Round 4**, triggered by issue #137 landing on `main` (PR #145, merged 2026-05-03). #137 introduced two coordinator-only CLI verbs that write `BRIEF.md` on the agent's behalf — `agentscommander_mb brief-set-title "<text>"` and `agentscommander_mb brief-append-body "<text>"` — both with caller validation, atomic write, timestamped backup, and advisory locking. The binary holds the write privilege, not the agent.
+
+This eliminates Round 4 §R4.3 (Change B — GOLDEN RULE 4th-zone amendment) entirely, because the agent never writes `BRIEF.md` directly. It also removes the backend-side snapshot helper, because the CLI verb does its own backup atomically.
+
+Round 5 source: `messaging/20260505-025423-wg5-tech-lead-to-wg5-architect-107-refresh-plan-post-137.md`.
+
+The audit trail above (v3, Round 4, dev-rust review of Round 4) stays intact. Round 5 documents only the deltas.
+
+### §R5.1 Why a Round 5
+
+Round 4's load-bearing fix (Change B) was: *amend the GOLDEN RULE template so the agent is permitted to write `BRIEF.md`*. That fix was the entire reason Round 4 existed — without it, the agent refused the write (§R4.1).
+
+#137 supersedes Change B. The new shape:
+
+```
+agent receives prompt ───►  agent runs:                                  ──► BRIEF.md
+                            "<BinaryPath>" brief-set-title \             updated
+                              --token <T> --root <R> --title "<text>"    by binary
+                            (binary validates caller, writes file,
+                             creates timestamped backup, exits 0/1)
+```
+
+Because the agent invokes a binary that writes the file in its name (gated by `is_coordinator` + token validation), the agent itself never modifies `BRIEF.md`. The GOLDEN RULE template stays at three zones; no 4th zone, no `brief_section` placeholder, no `forbidden_scope` carve-out. `session_context.rs` is **not touched** by Round 5.
+
+Change A (single combined PTY write) survives Round 5 — it was opportunistic in Round 4, but it remains the right design with #137 because:
+- It still reduces TOCTOU surface (one inject vs two).
+- Cred block + prompt in one paste is naturally referenceable from the prompt body — the prompt says *"use the values from your `# === Session Credentials ===` block above"*, and the values are literally above in the same paste.
+- v3's two-write model required a second idle-wait; Round 4 simplified to one wait; Round 5 keeps that simplification.
+
+### §R5.2 What Round 5 keeps from Round 4
+
+| Round 4 element | Round 5 |
+|---|---|
+| Single combined PTY write at spawn (cred-block + title-prompt) | **Kept** — same wire shape (`format!("{}\n{}", cred_block, prompt)`). |
+| `is_coordinator_clone` + `auto_title_enabled` capture before `tokio::spawn` (F1) | **Kept** unchanged. |
+| Synchronous helper `build_title_prompt_appendage(cwd: &str)` placed before `create_session_inner` | **Kept** — but signature simplified (see §R5.3). |
+| Gate (1) — workgroup root resolvable; F7 → `Err` + `[auto-title:config]` warn | **Kept**. |
+| Gate (2) — BRIEF.md exists and read succeeds → else `Err` | **Kept**. |
+| Gate (3) — non-empty brief → else `Ok(None)` (silent skip) | **Kept**. |
+| Gate (4) — no `title:` field → else `Ok(None)` (silent skip) | **Kept**. Backend gate stays the FIRST line of idempotence; the CLI verb's `EditOutcome::NoOp` is the SECOND (TOCTOU safety net). See §R5.10. |
+| F4 — UNC `\\?\` prefix strip on the path embedded in the prompt | **Kept** — needed because the prompt still references the absolute path for context. |
+| §R4.2.5 sibling-let shape (`auto_title_was_appended` bound before the move-out match) | **Kept** as the canonical body. |
+| Best-effort failure semantics — warn + fall back to cred-block alone | **Kept** unchanged. |
+| `parse_brief_title` + `find_workgroup_brief_path_for_cwd` helpers from v3 | **Kept** unchanged. |
+
+### §R5.3 What Round 5 removes from Round 4 (and from v3)
+
+| Element | Why it goes |
+|---|---|
+| **§R4.3 — Change B (GOLDEN RULE 4th-zone amendment)** | Superseded by #137. The agent never writes `BRIEF.md`; the binary does. No template change needed. |
+| **`brief_display_path`, `brief_section`, `brief_allowed`, `workgroup_clause` derivations in `default_context`** | Same reason. `session_context.rs` is not touched. |
+| **§R4.6.7 (GOLDEN RULE 4th-zone manual test)** | No 4th zone exists; nothing to verify. |
+| **§R4.6.9 (`default_context_*_when_*_wg_ancestor` unit tests)** | Same. |
+| **§R4.6.8 (combined message obeys 4th zone, 3-family table)** | Replaced by §R5.8.4 (CLI-verb end-to-end test). |
+| **§R4.2.4 step 5 — `snapshot_brief_before_edit` call** | The CLI verb (`brief-set-title`) creates its own atomic timestamped backup before every successful write that had a prior file (`cli/brief_ops.rs:454-492`). A backend-side snapshot is redundant — and worse, it produces TWO backup files per spawn (one from the helper, one from the verb), polluting the workgroup root. |
+| **`bak_path` field in `build_title_prompt_appendage`'s return tuple** (R4.D3 fold) | The backend never produces a backup, so there's nothing to surface to the caller. Helper return type collapses from `Result<Option<(String, PathBuf)>, String>` back to `Result<Option<String>, String>`. |
+| **`snapshot_brief_before_edit` helper itself** (v3 §16; `entity_creation.rs::snapshot_brief_before_edit`) | No remaining caller after the spawn-chain stops calling it. Delete the function and its tests. The only artifact left is a comment in §16 of v3 explaining why it existed — leave the §16 prose for the audit trail. |
+| **§R4.6.12 / R4.D8 — snapshot-collision aborts the appendage unit test** | No snapshot in the appendage anymore; nothing to test. |
+| **F6 / F9 folds — relevant only to `snapshot_brief_before_edit`** | Audit-trail rows in §13 stay (history is whole-file); the helper they apply to is gone. |
+| **v3 §17.2 / §17.3 tests for `snapshot_brief_before_edit`** | Removed alongside the helper. `parse_brief_title` and `build_title_prompt` tests stay. |
+
+### §R5.4 New title-prompt content (the load-bearing change)
+
+#### §R5.4.1 Decisions on prompt shape
+
+Tech-lead's seven decision points from the Round 5 brief (`20260505-025423`):
+
+| Q | Decision | Rationale |
+|---|---|---|
+| Q1 — Form of the new prompt | Reference BRIEF.md by absolute path (for context) + instruct the agent to invoke `brief-set-title`. Constraints (≤8 words, single line) move from "format the YAML directly" to "pass the title text to `--title`". The CLI handles YAML escaping. | Agent never sees a frontmatter template — that's the binary's job. Shorter prompt; clearer agent task. |
+| Q2 — Literal `--token X --root Y` vs agent composes from credentials | **Option 2: agent composes from `# === Session Credentials ===`.** Prompt embeds literal placeholders `<YOUR_TOKEN>`, `<YOUR_ROOT>`, `<YOUR_BINARY_PATH>` and instructs the agent to substitute from the cred block immediately above. | (1) The cred block is in the SAME PTY write as the prompt — values are literally above. (2) The pattern matches the existing `send`/`list-peers` examples in CLAUDE.md (`session_context.rs:577-612`). (3) Embedding the literal token leaks it into the agent's transcript twice (creds + prompt). (4) Shorter prompt. The "more error-prone" risk is real but small — agents already execute the `send` template flawlessly with the same composition pattern. |
+| Q3 — How does the agent know which BinaryPath to use | Same as Q2 — `<YOUR_BINARY_PATH>` placeholder, resolved from creds. | The cred block contains `# BinaryPath: <abs_path>`. Agent reads it; no backend pass-through needed. Backend doesn't even know which binary the user launched — `BinaryPath` is computed by the cred-block builder from `std::env::current_exe()`. Pre-computing it server-side and embedding it in the prompt would duplicate that resolution. |
+| Q4 — CLI failure handling | **Stay best-effort.** Agent invokes the verb; verb prints `Error: ...` to stdout (visible in agent transcript) and exits 1 on failure. Backend does NOT poll BRIEF.md, does NOT verify success, does NOT retry. On next Coordinator spawn, gate (4) sees no `title:` and re-injects the prompt. The agent's natural reporting ("I tried to set the title but the CLI returned an authorization error") is sufficient observability. | Mirrors v3's "best-effort, never retry" philosophy (§2.7). Adds NO new verification machinery. |
+| Q5 — Idempotence post-137 | **Backend gate (4) stays AS-IS.** The CLI verb's NoOp behavior (`EditOutcome::NoOp` when title value matches, `cli/brief_ops.rs:445-449`) is a SECOND idempotence layer for TOCTOU safety, not a replacement for the gate. See §R5.10. | The §2.4 gate "fires only if BRIEF.md ... lacks a `title:` field" is preserved verbatim. The verb's NoOp catches the rare case where a sibling agent or manual edit added a `title:` between gate-check and verb-invocation. |
+| Q6 — End-to-end test | New §R5.8.4 — spawn a real Coordinator with non-empty brief, no title; verify (a) single combined paste lands; (b) agent transcript shows the verb invocation with non-placeholder values; (c) BRIEF.md ends with `title: '...'` matching the agent's chosen text; (d) `BRIEF.<UTC-ts>.bak.md` exists in the workgroup root (created by the verb, not by the backend); (e) no other files modified. | Replaces v3 §12.2 happy-path. |
+| Q7 — Rebase conflicts | **Owned by dev-rust.** The rebase paused at conflicts in `entity_creation.rs`, `settings.rs`, and `src/shared/types.ts`. Round 5's plan ASSUMES those are resolved before Step 6 (implementation). | The rebase is mechanical 3-way merge work; it does not require architectural decisions. Round 5 does not re-litigate any v3 settings or types choices. |
+
+#### §R5.4.2 `build_title_prompt` rewrite
+
+`src-tauri/src/pty/title_prompt.rs::build_title_prompt` is **rewritten** (still at the same file, same function name, same signature `(brief_absolute_path: &str) -> String`). The new body:
+
+```rust
+//! Title-generation prompt builder.
+//!
+//! Produces the one-shot prompt injected into a Coordinator agent's PTY at
+//! spawn (gated by the `auto_generate_brief_title` setting). The agent reads
+//! `BRIEF.md` at the absolute path embedded in the prompt and invokes the
+//! `brief-set-title` CLI verb to update the title field. The agent NEVER
+//! edits `BRIEF.md` directly — the CLI binary writes the file on its
+//! behalf, atomically, with a timestamped backup. See plan
+//! `_plans/107-auto-brief-title.md` Round 5 §R5.4.2.
+//!
+//! No I/O. Pure string format. The agent substitutes `<YOUR_TOKEN>`,
+//! `<YOUR_ROOT>`, and `<YOUR_BINARY_PATH>` from the `# === Session
+//! Credentials ===` block delivered in the same PTY paste (Round 4 §R4.2
+//! combined-write design — preserved in Round 5).
+
+/// Build the title-generation prompt for an agent whose workgroup's BRIEF.md
+/// lives at `brief_absolute_path`.
+///
+/// The path is interpolated verbatim — caller is responsible for passing an
+/// absolute path the agent can resolve, with `\\?\` UNC prefix already
+/// stripped (F4 fold, applied at the call-site in `commands/session.rs`).
+pub fn build_title_prompt(brief_absolute_path: &str) -> String {
+    format!(
+        concat!(
+            "[AgentsCommander auto-title] The workgroup brief lives at `{path}` ",
+            "and has no `title:` field. Read the brief and pick a short summary title ",
+            "(8 words or fewer, single line, no trailing period), then set it by running:\n\n",
+            "  \"<YOUR_BINARY_PATH>\" brief-set-title --token <YOUR_TOKEN> --root \"<YOUR_ROOT>\" --title \"<your title>\"\n\n",
+            "`<YOUR_BINARY_PATH>`, `<YOUR_TOKEN>`, and `<YOUR_ROOT>` are in the ",
+            "`# === Session Credentials ===` block immediately above (fields ",
+            "`BinaryPath`, `Token`, `Root`). The CLI writes BRIEF.md atomically and ",
+            "creates a timestamped `BRIEF.<UTC-ts>.bak.md` backup — do NOT edit ",
+            "BRIEF.md directly.\n\n",
+            "Skip silently (run nothing) if: the brief is empty, or already has a ",
+            "`title:` field. Titles with embedded newlines, NUL, or other control ",
+            "characters (except tab) are rejected by the CLI.\n",
+        ),
+        path = brief_absolute_path,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prompt_contains_path_and_cli_verb_invocation() {
+        let p = build_title_prompt(r"C:\repo\.ac-new\wg-1-foo\BRIEF.md");
+        assert!(p.contains(r"C:\repo\.ac-new\wg-1-foo\BRIEF.md"));
+        assert!(p.contains("brief-set-title"));
+        assert!(p.contains("<YOUR_BINARY_PATH>"));
+        assert!(p.contains("<YOUR_TOKEN>"));
+        assert!(p.contains("<YOUR_ROOT>"));
+        assert!(p.contains("--title \"<your title>\""));
+    }
+
+    #[test]
+    fn prompt_starts_with_marker() {
+        let p = build_title_prompt("/tmp/BRIEF.md");
+        assert!(p.starts_with("[AgentsCommander auto-title]"));
+    }
+
+    #[test]
+    fn prompt_references_credentials_block_for_substitution() {
+        let p = build_title_prompt("/tmp/BRIEF.md");
+        assert!(p.contains("`# === Session Credentials ===`"));
+        assert!(p.contains("immediately above"));
+        assert!(p.contains("`BinaryPath`, `Token`, `Root`"));
+    }
+
+    #[test]
+    fn prompt_forbids_direct_brief_edit() {
+        let p = build_title_prompt("/tmp/BRIEF.md");
+        assert!(p.contains("do NOT edit BRIEF.md directly"));
+    }
+
+    #[test]
+    fn prompt_documents_skip_conditions() {
+        let p = build_title_prompt("/tmp/BRIEF.md");
+        assert!(p.contains("Skip silently"));
+        assert!(p.contains("brief is empty"));
+        assert!(p.contains("`title:` field"));
+    }
+
+    #[test]
+    fn prompt_handles_path_with_spaces() {
+        let p = build_title_prompt(r"C:\Program Files\Stuff\.ac-new\wg-1-x\BRIEF.md");
+        assert!(p.contains(r"C:\Program Files\Stuff\.ac-new\wg-1-x\BRIEF.md"));
+    }
+}
+```
+
+The R2 fold tests for `8 words or fewer` and exact-format `---\ntitle: ...\n---` checks are **removed** — the new prompt does not emit a YAML template (the CLI does that), and the "8 words" guidance is now phrased as part of "(8 words or fewer, single line, no trailing period)" inline. The new test set covers the structural invariants of the rewritten prompt: marker prefix, path interpolation, CLI-verb syntax presence, credentials-block reference, direct-edit prohibition, skip conditions.
+
+The pure-function shape (`(&str) -> String`, no I/O) and module location (`src-tauri/src/pty/title_prompt.rs`) are unchanged. `pty/mod.rs::pub mod title_prompt;` is unchanged.
+
+### §R5.5 Helper changes — `build_title_prompt_appendage` simplification
+
+The helper from Round 4 §R4.2.4 is **simplified**. Final Round 5 shape:
+
+```rust
+/// Issue #107 round 5 — build the title-prompt segment to concat with the
+/// cred-block, OR `Ok(None)` if the auto-title preconditions don't hold.
+///
+/// Synchronous: filesystem reads only, no PTY, no await, no snapshot.
+/// (#137 introduced `brief-set-title` which creates its own atomic backup;
+/// the backend no longer snapshots before injection.)
+///
+/// The caller is the post-spawn task in `create_session_inner`; it
+/// concatenates the returned `Some(prompt)` with the cred-block and issues a
+/// single `inject_text_into_session` call (Round 4 §R4.2.3 — preserved in
+/// Round 5).
+///
+/// Gates layered (in order):
+///   1. workgroup BRIEF.md path resolvable from `cwd` → else `Err`
+///      (config issue, F7 preserved).
+///   2. BRIEF.md exists and read succeeds → else `Err`.
+///   3. BRIEF.md non-empty (after trim) → else `Ok(None)` (silent skip).
+///   4. No `title:` field in existing frontmatter → else `Ok(None)` (silent
+///      skip).
+///   5. Build title prompt with the absolute, UNC-stripped path (F4
+///      preserved). Return `Ok(Some(prompt))`.
+///
+/// (Round 4's gate 5 — `snapshot_brief_before_edit` — is removed in Round 5
+/// per §R5.3.)
+fn build_title_prompt_appendage(cwd: &str) -> Result<Option<String>, String> {
+    use crate::commands::entity_creation::parse_brief_title;
+    use crate::session::session::find_workgroup_brief_path_for_cwd;
+
+    // (1) Resolve workgroup BRIEF.md path. F7 preserved.
+    let brief_path = find_workgroup_brief_path_for_cwd(cwd)
+        .ok_or_else(|| format!("[auto-title:config] no wg- ancestor in cwd '{}'", cwd))?;
+
+    // (2) Read BRIEF.md. Missing/unreadable → Err (warn-and-skip at caller).
+    let content = std::fs::read_to_string(&brief_path)
+        .map_err(|e| format!("read BRIEF.md at {:?}: {}", brief_path, e))?;
+
+    // (3) Empty brief → silent skip.
+    if content.trim().is_empty() {
+        return Ok(None);
+    }
+
+    // (4) Title already present → silent skip.
+    if parse_brief_title(&content).is_some() {
+        return Ok(None);
+    }
+
+    // (5) F4 preserved — strip Windows \\?\ extended-length prefix.
+    let raw = brief_path.to_string_lossy().to_string();
+    let path_str = raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string();
+    let prompt = crate::pty::title_prompt::build_title_prompt(&path_str);
+
+    Ok(Some(prompt))
+}
+```
+
+Net delta vs Round 4 §R4.2.4 helper:
+- Return type: `Result<Option<(String, PathBuf)>, String>` → `Result<Option<String>, String>`. (No PathBuf surfaced.)
+- One `use` line removed (`snapshot_brief_before_edit`).
+- Five lines deleted (the snapshot call + error wrap).
+- Helper body is ~25 lines (down from ~35).
+
+The caller in `commands/session.rs` (Round 4 §R4.2.5 + R4.D2) becomes:
+
+```rust
+            // Issue #107 round 5 — build the optional title-prompt segment
+            // BEFORE the PTY write. Synchronous fs reads only; no async
+            // work, no snapshot, no second idle-wait. See plan §R5.5.
+            let title_appendage = if is_coordinator_clone && auto_title_enabled {
+                match build_title_prompt_appendage(&cwd_clone) {
+                    Ok(Some(prompt)) => {
+                        log::info!(
+                            "[session] Auto-title appendage built for session {}",
+                            session_id
+                        );
+                        Some(prompt)
+                    }
+                    Ok(None) => {
+                        log::info!(
+                            "[session] Auto-title appendage skipped (gate not passed) for session {}",
+                            session_id
+                        );
+                        None
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[session] Auto-title appendage skipped for session {}: {}",
+                            session_id,
+                            e
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            let auto_title_was_appended = title_appendage.is_some();
+            let cred_block = crate::pty::credentials::build_credentials_block(&token, &cwd_clone);
+            let combined = match title_appendage {
+                Some(prompt) => format!("{}\n{}", cred_block, prompt),
+                None => cred_block,
+            };
+
+            match crate::pty::inject::inject_text_into_session(
+                &app_clone,
+                session_id,
+                &combined,
+            )
+            .await
+            {
+                Ok(()) => {
+                    log::info!(
+                        "[session] Bootstrap message injected for session {} (auto-title={})",
+                        session_id,
+                        auto_title_was_appended
+                    );
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[session] Failed to inject bootstrap for {}: {}",
+                        session_id,
+                        e
+                    );
+                }
+            }
+        });
+```
+
+Two adjustments vs Round 4 §R4.2.5:
+
+1. **`Ok(Some(prompt))`** instead of `Ok(Some((prompt, bak_path)))` — matches the simplified helper return.
+2. **`inject_text_into_session(&app_clone, session_id, &combined)`** — three args, NOT four. The current `inject.rs:36-40` signature on `main` is `(app, session_id, text)`; v3 §9.3 and Round 4 §R4.2.5 wrote `(.., true)` four-arg, but that `submit: bool` parameter does not exist in the function. The R4 reviewers did not catch this — it would have failed to compile. Round 5 corrects: 3-arg. The function already submits with two `\r` keystrokes (1500 ms / 500 ms gaps) — see `inject.rs:79-111`; no `submit` flag is needed.
+
+The "appendage built" log line **drops** the Round 4 R4.D3 `(bak={:?})` suffix because there's no backend-side bak path. Operators who want to confirm the backup exists can grep the agent's PTY transcript for `BRIEF.md title updated; backup: <path>` (the verb's success line — `cli/brief_set_title.rs:128`) or list `BRIEF.<UTC-ts>.bak.md` in the workgroup root. See §R5.11.
+
+### §R5.6 Files touched (Round 5 net)
+
+| File | Action | Detail |
+|---|---|---|
+| `src-tauri/src/config/settings.rs` | modify | Add `auto_generate_brief_title: bool` field (UNCHANGED from v3 §4.1; rebase conflict here is owned by dev-rust). |
+| `src-tauri/src/commands/entity_creation.rs` | modify | (a) `build_brief_content` template change (UNCHANGED from v3 §5.1). (b) Add `parse_brief_title` (UNCHANGED from v3 §6.2). (c) **Do NOT add `snapshot_brief_before_edit`** — Round 5 supersedes v3 §16 entirely. If the v3 commit `3f7da00` introduced the helper, **dev-rust deletes it** during rebase resolution: remove the function body, its tests, and the v3 §17.2 unit tests. |
+| `src-tauri/src/session/session.rs` | modify | Add `find_workgroup_brief_path_for_cwd` (UNCHANGED from v3 §7.1). |
+| `src-tauri/src/pty/title_prompt.rs` | **rewrite** | New body per §R5.4.2. Same file, same function signature, new prompt content + new test set. |
+| `src-tauri/src/pty/mod.rs` | modify | Add `pub mod title_prompt;` (UNCHANGED from v3 §8.2). |
+| `src-tauri/src/commands/session.rs` | modify | Add `build_title_prompt_appendage` (Round 5 §R5.5 helper). Replace the single `inject_text_into_session(.., &cred_block)` call at lines 545-565 with the combined-message block (§R5.5 caller code). NO snapshot call, NO `inject_title_prompt_after_idle_static` async helper. |
+| `src/shared/types.ts` | modify | Add `autoGenerateBriefTitle: boolean` (UNCHANGED from v3 §4.2). |
+| `src/sidebar/components/SettingsModal.tsx` | modify | Add checkbox (UNCHANGED from v3 §4.3). |
+| `src-tauri/src/config/session_context.rs` | **NOT TOUCHED** | Reverses Round 4 §R4.3 entirely. The GOLDEN RULE template stays at three zones (replicas) / two zones (matrix roots). |
+
+No new crates. No new modules. No frontend changes beyond the existing v3 setting toggle.
+
+### §R5.7 What's removed from #107 (full audit list, post-Round-5)
+
+Items deleted from the in-flight branch state (commits `807d863` → `3f7da00` → `e458b85` → `d4d4e07`):
+
+| Source | Item | Replacement |
+|---|---|---|
+| `commands/entity_creation.rs` | `snapshot_brief_before_edit` helper (introduced by `3f7da00`) | None — CLI verb's atomic backup. |
+| `commands/entity_creation.rs` | Tests for `snapshot_brief_before_edit` (v3 §17.2) | Removed. |
+| `commands/session.rs` | `inject_title_prompt_after_idle_static` async helper (introduced by `e458b85`) | `build_title_prompt_appendage` synchronous helper (§R5.5). |
+| `commands/session.rs` | Two-write spawn-task body (introduced by `e458b85`) | Single combined-write spawn-task body (§R5.5). |
+| `pty/title_prompt.rs` | Original prompt body (introduced by `3f7da00`) | New prompt body (§R5.4.2). |
+| `_plans/107-auto-brief-title.md` Round 4 §R4.3 | All `session_context.rs` edits | Not implemented. |
+| `_plans/107-auto-brief-title.md` Round 4 §R4.6.7-§R4.6.9, §R4.6.12 | GOLDEN RULE 4th-zone tests, snapshot-collision test | Replaced by §R5.8.4 (CLI-verb end-to-end), §R5.8.6 (backend gate idempotence test). |
+
+These are removals from the **plan's intent**, executed during the rebase (commits get re-shaped) or as the dev-rust implementation pass (Step 6).
+
+### §R5.8 Test plan delta vs Round 4
+
+Most v3 §12 / Round 4 §R4.6 manual scenarios stay in shape; the observable artifacts shift from "BRIEF.md edited by the agent + a `.bak` from `snapshot_brief_before_edit`" to "BRIEF.md edited by the binary + a `BRIEF.<UTC-ts>.bak.md` from the verb".
+
+#### §R5.8.1 §12.2 happy path — single combined message + CLI verb invocation
+
+Replaces v3 §12.2 step 4 (Round 4 §R4.6.1 already replaced step 4 once). Round 5 step 4:
+
+> 4. After the cred block lands and the agent goes idle, observe **a single PTY paste containing both the cred block and the title prompt**, separated by a blank line. Cred block first (`# === Session Credentials ===` ... `# === End Credentials ===`), then immediately a `[AgentsCommander auto-title]` prompt instructing a `brief-set-title` invocation.
+> 5. The agent reads BRIEF.md, picks a title, and runs the `brief-set-title` verb with `--token`, `--root`, `--title` resolved from the cred block. The verb's stdout (`BRIEF.md title updated; backup: <path>`) is visible in the agent's transcript.
+> 6. App log contains:
+>    - `[session] Auto-title appendage built for session <uuid>` (NO `bak=...` suffix vs Round 4).
+>    - `[session] Bootstrap message injected for session <uuid> (auto-title=true)`.
+> 7. BRIEF.md now starts with `---\ntitle: '<the agent's chosen title>'\n---\n` (canonical single-quoted YAML form per `brief_ops::apply_set_title`). Body preserved byte-for-byte modulo line-ending normalisation.
+> 8. A backup file `BRIEF.<YYYYMMDD-HHMMSS>.bak.md` exists in the workgroup root, created by the verb (NOT by the backend). Same wall-clock second as the verb invocation.
+> 9. No other files modified in the workgroup root.
+
+#### §R5.8.2 §12.3 idempotent restart — same as Round 4 §R4.6.2
+
+Unchanged from Round 4. The backend gate (4) short-circuits; helper returns `Ok(None)`; `auto-title=false` in the bootstrap log line.
+
+Additional verification (Round 5-specific): even if the gate misfires (e.g. clock-skew TOCTOU), the CLI verb's `EditOutcome::NoOp` would catch it and print `BRIEF.md unchanged (title value already matches)` to the agent's transcript. The verb does NOT create a backup in NoOp mode (`brief_ops::perform_inner` returns at line 446-448 before the backup branch).
+
+#### §R5.8.3 §12.4 / §12.5 / §12.6 — same shape as Round 4
+
+Empty brief, setting OFF, non-Coordinator agent — all gate at the same points as Round 4. No differences observable except the missing `bak=...` suffix in any "appendage built" log lines (which don't fire in these scenarios anyway).
+
+#### §R5.8.4 NEW §12.16 — End-to-end CLI-verb integration
+
+This is the Round 5 canonical happy-path test. Replaces Round 4's §R4.6.8 (the "combined message obeys 4th zone" 3-family table — superseded entirely by #137).
+
+**Setup**:
+1. Create a fresh workgroup (e.g. `wg-9-test`) with a non-empty user-supplied brief, no `title:`.
+2. Configure a Coordinator agent for the workgroup.
+3. Confirm `auto_generate_brief_title` is true in settings (default).
+
+**Execution**:
+4. Spawn the Coordinator session.
+5. Wait for the agent to receive the combined paste.
+6. Wait for the agent to invoke the verb (visible in PTY transcript).
+
+**Verification**:
+7. App log contains:
+   - `[session] Auto-title appendage built for session <uuid>`.
+   - `[session] Bootstrap message injected for session <uuid> (auto-title=true)`.
+   - `[brief] set-title: sender=<agent_name> wg=<wg-root> pid=<pid> backup=<bak_path>` (emitted by `cli/brief_set_title.rs:121-127` on the binary's success path — visible in the app log because the CLI verb runs a `validate_cli_token` → `load_settings` flow that initialises the same logger; cf. commit `f77aa34` "fix(cli): init logger in CLI path").
+8. `BRIEF.md` byte-content begins with `---\ntitle: '<chosen title>'\n---\n` followed by the verbatim original body. `<chosen title>` is single-quoted (canonical YAML form) and YAML-escapes any single-quote characters in the agent's text.
+9. `BRIEF.<YYYYMMDD-HHMMSS>.bak.md` exists in the workgroup root, byte-identical to the pre-edit BRIEF.md.
+10. No `BRIEF.md.lock` file remains (`brief_ops::LockGuard::Drop` cleans it up).
+11. No `BRIEF.md.tmp.<pid>` file remains (verb's atomic-publish step always cleans up — `brief_ops::perform_inner` at lines 559 and 498).
+
+**Cross-family note**: this scenario should pass on Claude Code. Codex and Gemini should also pass because the agent invokes a CLI verb (a routine "run shell command" operation) rather than directly modifying a file outside its allowed write zones — the family-specific permission models all allow CLI invocations regardless of the GOLDEN RULE wording. Round 5 makes Codex/Gemini compliance a normal-path expectation, not a best-effort fallback.
+
+#### §R5.8.5 NEW §12.17 — CLI authorization failure path
+
+Verifies that a misconfigured agent doesn't silently succeed.
+
+**Setup**:
+1. Same as §12.16, but the agent's `--token` is corrupted before invocation (e.g. user manually typoed it during testing — simulated via a wrapper script that intercepts the agent's command line).
+
+**Verification**:
+2. Verb exits 1 with stdout `Error: invalid token '<prefix>...'. Expected a valid session token (UUID) or root token.` (cf. `cli/mod.rs:124-129`).
+3. Agent observes the failure and reports it back into the session ("I tried to set the title but the CLI rejected my token — see error above").
+4. BRIEF.md is unchanged. No `BRIEF.<UTC-ts>.bak.md` was created (the verb aborts before the backup loop, since `validate_cli_token` runs first — `brief_set_title.rs:50-56`).
+5. Backend log: NO follow-up entries — the backend doesn't poll BRIEF.md and never observes the failure.
+6. Next Coordinator spawn triggers the same prompt (gate (4) still sees no title), and if the token is now valid, the verb succeeds.
+
+This pin is intentionally low-cost — it does not require a fault-injection test harness in `cargo test`. Manual verification at integration time is sufficient for the best-effort surface.
+
+#### §R5.8.6 NEW §17.4 — `build_title_prompt_appendage` idempotence unit test
+
+Add to `src-tauri/src/commands/session.rs` `mod tests` (the helper is co-located).
+
+```rust
+#[test]
+fn build_title_prompt_appendage_returns_none_when_title_already_present() {
+    use std::env;
+    let dir = env::temp_dir().join(format!(
+        "wg-r5-idempotent-{}", std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let brief = dir.join("BRIEF.md");
+    std::fs::write(&brief, b"---\ntitle: 'Pre-existing'\n---\nBody.\n").unwrap();
+    let cwd = dir.to_string_lossy().to_string();
+    let result = build_title_prompt_appendage(&cwd);
+    assert!(matches!(result, Ok(None)), "expected Ok(None), got {:?}", result);
+    let _ = std::fs::remove_file(&brief);
+    let _ = std::fs::remove_dir(&dir);
+}
+
+#[test]
+fn build_title_prompt_appendage_returns_none_when_brief_empty() {
+    use std::env;
+    let dir = env::temp_dir().join(format!(
+        "wg-r5-empty-{}", std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let brief = dir.join("BRIEF.md");
+    std::fs::write(&brief, b"   \n\n\t\n").unwrap();
+    let cwd = dir.to_string_lossy().to_string();
+    let result = build_title_prompt_appendage(&cwd);
+    assert!(matches!(result, Ok(None)), "expected Ok(None), got {:?}", result);
+    let _ = std::fs::remove_file(&brief);
+    let _ = std::fs::remove_dir(&dir);
+}
+
+#[test]
+fn build_title_prompt_appendage_returns_some_when_brief_has_no_title() {
+    use std::env;
+    let dir = env::temp_dir().join(format!(
+        "wg-r5-some-{}", std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let brief = dir.join("BRIEF.md");
+    std::fs::write(&brief, b"# A real brief with body content.\n").unwrap();
+    let cwd = dir.to_string_lossy().to_string();
+    let result = build_title_prompt_appendage(&cwd);
+    let prompt = match result {
+        Ok(Some(p)) => p,
+        other => panic!("expected Ok(Some(_)), got {:?}", other),
+    };
+    assert!(prompt.contains("brief-set-title"));
+    assert!(prompt.contains("<YOUR_BINARY_PATH>"));
+    let brief_str = brief.to_string_lossy().to_string();
+    assert!(prompt.contains(&brief_str));
+    let _ = std::fs::remove_file(&brief);
+    let _ = std::fs::remove_dir(&dir);
+}
+```
+
+Tempdir naming starts with `wg-` so `find_workgroup_brief_path_for_cwd`'s ancestor walk finds the cwd itself as the wg ancestor (mirrors Round 4 §R4.6.12's path-walk workaround note). The three tests pin gates (3), (4), and the happy path. Path-walk gate (1) failure is exercised by the existing v3 §17.1 tests on `find_workgroup_brief_path_for_cwd`. Read-failure gate (2) requires fault-injecting `std::fs::read_to_string`, which is not worth the harness for a thin orchestrator.
+
+### §R5.9 Failure modes — exhaustive matrix for Round 5
+
+| Scenario | Coordinator? | Setting ON? | wg-* ancestor? | Brief state | CLI verb outcome | Net behavior |
+|---|---|---|---|---|---|---|
+| Standard happy path | yes | yes | yes | non-empty, no title | success | Combined message injected. Agent runs verb. Verb writes title + creates `.bak`. |
+| Setting OFF | yes | no | yes | any | not invoked | Cred-block alone. `auto-title=false`. |
+| Non-Coordinator | no | any | yes | any | not invoked | Cred-block alone. |
+| No wg-* ancestor (config issue, F7) | yes | yes | no | n/a | not invoked | Cred-block alone. Helper `Err`. Warn-log. |
+| BRIEF.md missing (read error) | yes | yes | yes | read fails | not invoked | Cred-block alone. Helper `Err`. Warn-log. |
+| BRIEF.md empty | yes | yes | yes | empty | not invoked | Cred-block alone. Helper `Ok(None)`. Info-log "appendage skipped". |
+| Title already present | yes | yes | yes | non-empty, has title | not invoked | Cred-block alone. Helper `Ok(None)`. Idempotent. |
+| Verb succeeds | yes | yes | yes | non-empty, no title | exit 0, `Wrote{Some(bak)}` | Title written, backup created. Agent reports success. |
+| Verb succeeds with NoOp (TOCTOU race — sibling agent set title between gate and verb) | yes | yes | yes | non-empty, no title at gate; has title at verb | exit 0, `NoOp` | No write, no backup. Verb prints `BRIEF.md unchanged (title value already matches)`. Agent reports the no-op. |
+| Verb fails — auth (token rejected, agent not coordinator, etc.) | yes | yes | yes | non-empty, no title | exit 1 | BRIEF.md unchanged. Agent surfaces the error in transcript. Backend doesn't observe. Next spawn retries. |
+| Verb fails — backup collision (100 retries exhausted same-second) | yes | yes | yes | non-empty, no title | exit 1, `BackupExhausted` | BRIEF.md unchanged. Verb prints `Error: 100 collision retries exhausted ...`. Manual cleanup needed if backups accumulate. |
+| Verb fails — lock timeout (concurrent writer holds lock >5 s) | yes | yes | yes | non-empty, no title | exit 1, `LockTimeout` | BRIEF.md unchanged. Verb prints `Error: BRIEF.md is locked by another writer (5s timeout). Try again.` Next spawn retries. |
+| Verb fails — external write detected (sentinel mismatch) | yes | yes | yes | non-empty, no title | exit 1, `ExternalWrite(bak)` | BRIEF.md may or may not be unchanged (depends on the external editor). Verb prints `... aborting. Backup at <path> retains the externally-modified state.` Backup IS still produced (defensively). Agent surfaces error. |
+| Two AC processes spawn the same Coordinator simultaneously | yes | yes | yes | non-empty, no title | first verb exits 0, second exits 0 with NoOp (or LockTimeout, low-probability) | Title set once. Second verb either NoOps or times out on the lock. Idempotent overall. |
+| Setting toggled OFF mid-spawn | yes | (toggle) | yes | any | n/a | F1 captures setting BEFORE `tokio::spawn`; in-flight session uses the captured value. New spawn picks up the toggle. |
+| Agent ignores the prompt | yes | yes | yes | non-empty, no title | not invoked | BRIEF.md unchanged. Backend doesn't observe. Next spawn retries (gate (4) still passes). User can disable `auto_generate_brief_title` if it bothers them. |
+
+Round 4's "Snapshot fails" row is removed (no snapshot in Round 5). Round 4's "GOLDEN RULE refusal returns" row is removed (Round 5 does not depend on the GOLDEN RULE template).
+
+### §R5.10 Idempotence layering
+
+Two layers, in order:
+
+**Layer 1 — Backend gate (4) in `build_title_prompt_appendage`**: `parse_brief_title(&content).is_some() → Ok(None)`. Short-circuits BEFORE the prompt is built. Saves ~28 s of agent processing time + a PTY write + an unnecessary CLI verb invocation. This is the v3 §2.4 contract preserved verbatim.
+
+**Layer 2 — CLI verb's `EditOutcome::NoOp`**: `brief_ops::perform_inner` checks `title_value_of(&new_parsed) == title_value_of(&parsed)` after parse + apply_edit; if equal, returns `NoOp` without writing or backing up. Saves the actual file modification + backup creation in the rare TOCTOU window where a sibling agent or manual edit added a title between gate (4) and the verb invocation.
+
+Layer 1 catches the common case (~99.9%). Layer 2 catches concurrent-coordinator races and clock-skew TOCTOU. Together they make Round 5 strictly more idempotent than v3, which had only Layer 1.
+
+The two layers are **not redundant**: removing Layer 1 would expose every Coordinator spawn to a wasted ~28 s prompt cycle. Removing Layer 2 would risk a duplicate write (with backup) on TOCTOU. Both stay.
+
+### §R5.11 Logging changes vs Round 4
+
+Round 4 §R4.12's table is **superseded** in two cells:
+
+| Old (Round 4) | New (Round 5) |
+|---|---|
+| `[session] Auto-title appendage built for session <uuid> (bak=<path>)` | `[session] Auto-title appendage built for session <uuid>` (no `bak=` suffix — backend doesn't produce a backup) |
+| (no equivalent in Round 4 — the verb didn't exist) | `[brief] set-title: sender=<agent_name> wg=<wg-root> pid=<pid> backup=<bak_path>` (emitted by the binary at the SAME log file via the CLI logger init at commit `f77aa34` — visible to operators querying app.log) |
+
+All other log-line shapes from Round 4 §R4.12 (the `(auto-title=true|false)` boolean, the appendage-skipped lines, the bootstrap-failure warn) remain unchanged.
+
+For ops dashboards counting "auto-title successes": switch from grepping `Auto-title prompt injected for session` (v3) or `Auto-title appendage built for session <uuid> (bak=` (Round 4) to grepping `[brief] set-title:`. The v3/R4 shapes give "we sent the prompt"; the Round 5 shape gives "the binary wrote the file" — strictly stronger. The two correlate by `<uuid>` ↔ `<wg-root>` (look up the session's CWD via `[session] Auto-title appendage built for session <uuid>` line and match the workgroup root in the brief log line).
+
+### §R5.12 Rebase note (informational; dev-rust owns the resolution)
+
+The branch `feature/107-auto-brief-title` is mid-rebase onto `main` HEAD `7115888` (post-#137 merge). State at the time of Round 5 authoring:
+
+```
+Last commands done (2 commands done):
+   pick 807d863 # plans: add design doc for issue #107 auto-brief-title
+   pick 3f7da00 # feat(#107): settings field, BRIEF.md template, and pure helpers + tests
+
+Next commands to do (2 remaining commands):
+   pick e458b85 # feat(#107): wire Coordinator auto-title chain into post-spawn task
+   pick d4d4e07 # docs(plan): #107 Round 4 — document BRIEF.md write failure + proposed fixes
+
+Unmerged paths (conflicts):
+   src-tauri/src/commands/entity_creation.rs
+   src-tauri/src/config/settings.rs
+   src/shared/types.ts
+```
+
+The current on-disk plan (this file) already contains Round 4 — so dev-rust's pick of `d4d4e07` will either no-op or fast-forward, depending on whether the working tree has been committed in between.
+
+Round 5 is **agnostic to the rebase mechanics**. Dev-rust may choose any of:
+- (a) Resolve conflicts → continue rebase → apply Round 5's deltas as additional commits on top.
+- (b) Abort rebase → cherry-pick a fresh sequence (settings/template helpers + Round 5 wiring) atop `main`.
+- (c) Squash the in-flight `e458b85` (Round 4 §R4.5 implementation) into a Round 5-shaped single commit during the rebase via `edit`.
+
+(b) is probably cleanest given how much of `e458b85`'s implementation Round 5 changes (the async helper goes, the spawn-task body goes, the snapshot call goes). Tech-lead's call.
+
+Round 5 does **not** prescribe the rebase strategy. The plan is implementable as written from any post-rebase state where:
+- `src-tauri/src/config/settings.rs` has `auto_generate_brief_title` (v3 §4.1).
+- `src-tauri/src/commands/entity_creation.rs` has the BRIEF template change (v3 §5.1) + `parse_brief_title` (v3 §6.2).
+- `src-tauri/src/session/session.rs` has `find_workgroup_brief_path_for_cwd` (v3 §7.1).
+- `src/shared/types.ts` has `autoGenerateBriefTitle` (v3 §4.2).
+- `src/sidebar/components/SettingsModal.tsx` has the checkbox (v3 §4.3).
+
+`pty/title_prompt.rs` and `commands/session.rs`'s spawn-task body are dev-rust's main code-edit surface for Step 6.
+
+### §R5.13 Net delta vs Round 4
+
+| Surface | Round 4 | Round 5 | Difference |
+|---|---|---|---|
+| Code lines added | ~100 (helper + spawn-task body + Change B edits + tests) | ~50 (helper + spawn-task body + new prompt body + new tests) | ~−50 |
+| Code lines removed | ~145 (`inject_title_prompt_after_idle_static` chain) | ~145 (same) **+** ~30 (`snapshot_brief_before_edit` + its tests) | ~−30 more deletion |
+| Net code change | ~−45 | ~−125 | ~−80 |
+| Files touched | 2 (`commands/session.rs`, `config/session_context.rs`) plus the inherited v3 surface | 2 (`commands/session.rs`, `pty/title_prompt.rs`) plus the inherited v3 surface | `session_context.rs` no longer touched |
+| New tests | 3 (Change B unit tests + snapshot-collision) | 3 (helper idempotence × 2 + helper happy path) + 6 (new `build_title_prompt` invariant tests, replacing v3's 4) | similar count |
+| Cargo deps | 0 | 0 | unchanged |
+| TS / frontend | 0 | 0 | unchanged |
+| Plan delta | This Round 5 section appended; nothing above edited (audit trail preserved). |
+
+Round 5 is **strictly simpler** than Round 4 in code and surface area. The price was paid by #137 — it took the load-bearing complexity out of the auto-title chain entirely.
+
+### §R5.14 Verdict
+
+`READY_FOR_IMPLEMENTATION`.
+
+Rationale:
+- Every code surface in Round 5 has been verified against the actual source on `main` HEAD `7115888` (post-#137) AND against the in-flight `feature/107-auto-brief-title` rebase state.
+- The CLI verb behaviour (`brief-set-title` exit codes, idempotence, backup format, error matrix) is fixed by #137 and well-tested (`cli/brief_set_title.rs::tests` + `cli/brief_ops.rs::tests` + integration test `cli_brief_logger.rs`). Round 5 only consumes the verb's contract; it does not modify it.
+- The seven open questions from tech-lead's brief are all resolved with stated rationale (§R5.4.1).
+- The single notable code surprise — the 3-arg vs 4-arg `inject_text_into_session` signature mismatch in v3/R4 — is documented in §R5.5 and corrected.
+- The rebase is mechanical (§R5.12); resolution does not require new architectural decisions.
+- All v3 review folds (F1, F3, F4, F7) survive Round 5; F2 (Round 4 superseded), F6, F9 (Round 5 superseded — no snapshot helper); audit trail in §13 stays whole.
+
+No items needing another round with dev-rust + grinch. Dev-rust may proceed to Step 6 (implementation) directly with this plan.
