@@ -12,6 +12,22 @@ function extractProjectName(workDir: string): string | null {
   return idx > 0 ? parts[idx - 1] : null;
 }
 
+function extractWorkgroupName(workDir: string): string | null {
+  const parts = workDir.replace(/\\/g, '/').split('/');
+  const idx = parts.indexOf('.ac-new');
+  if (idx < 0 || idx + 1 >= parts.length) return null;
+  const wg = parts[idx + 1];
+  return wg.startsWith('wg-') ? wg.toUpperCase() : null;
+}
+
+function extractAgentName(workDir: string): string | null {
+  const parts = workDir.replace(/\\/g, '/').split('/');
+  const idx = parts.indexOf('.ac-new');
+  if (idx < 0 || idx + 2 >= parts.length) return null;
+  const seg = parts[idx + 2];
+  return seg.startsWith('__agent_') ? seg.slice('__agent_'.length) : null;
+}
+
 interface TitlebarProps {
   detached?: boolean;
   /** Session id this detached window is locked to. Required for Re-attach button. */
@@ -21,6 +37,14 @@ interface TitlebarProps {
 const Titlebar: Component<TitlebarProps> = (props) => {
   const [instanceLabel, setInstanceLabel] = createSignal("");
   const projectName = createMemo(() => extractProjectName(terminalStore.activeWorkingDirectory));
+  const wgName = createMemo(() => extractWorkgroupName(terminalStore.activeWorkingDirectory));
+  const agentName = createMemo(() => extractAgentName(terminalStore.activeWorkingDirectory));
+  const trailingText = createMemo(() => {
+    const proj = projectName();
+    const ag = agentName() ?? terminalStore.activeSessionName;
+    if (proj && ag) return `${ag}@${proj}`;
+    return terminalStore.activeSessionName || null;
+  });
 
   onMount(async () => {
     if (isTauri) {
@@ -81,16 +105,11 @@ const Titlebar: Component<TitlebarProps> = (props) => {
         <Show when={props.detached}>
           <span class="titlebar-detached-badge">DETACHED</span>
         </Show>
-        <Show when={projectName()}>
-          <span class="titlebar-project-badge" data-tauri-drag-region>{projectName()}</span>
+        <Show when={wgName()}>
+          <span class="titlebar-wg-badge" data-tauri-drag-region>{wgName()}</span>
         </Show>
-        <Show
-          when={terminalStore.activeSessionName}
-          fallback={<span>Terminal</span>}
-        >
-          <span class="titlebar-session-name">
-            {terminalStore.activeSessionName}
-          </span>
+        <Show when={trailingText()} fallback={<span>Terminal</span>}>
+          <span class="titlebar-session-name">{trailingText()}</span>
         </Show>
       </div>
       <Show when={isTauri}>
