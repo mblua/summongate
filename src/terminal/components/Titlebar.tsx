@@ -110,7 +110,7 @@ const Titlebar: Component<TitlebarProps> = (props) => {
         <Show when={wgName()}>
           <span class="titlebar-wg-badge" data-tauri-drag-region>{wgName()}</span>
         </Show>
-        <Show when={trailingText()} fallback={<span>Terminal</span>}>
+        <Show when={trailingText()} fallback={<span class="titlebar-session-name">Terminal</span>}>
           <span class="titlebar-session-name">{trailingText()}</span>
         </Show>
       </div>
