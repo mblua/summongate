@@ -420,7 +420,7 @@ async fn inject_title_prompt_after_idle_static(
     let path_str = raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string();
     let prompt = crate::pty::title_prompt::build_title_prompt(&path_str);
 
-    crate::pty::inject::inject_text_into_session(app, session_id, &prompt, true).await?;
+    crate::pty::inject::inject_text_into_session(app, session_id, &prompt).await?;
 
     log::info!(
         "[session] Auto-title prompt injected for session {} (brief={:?}, bak={:?})",
