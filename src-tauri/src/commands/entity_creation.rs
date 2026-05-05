@@ -202,6 +202,7 @@ fn parse_role_frontmatter(content: &str) -> (Option<String>, Option<String>) {
 /// format. See plan `_plans/107-auto-brief-title.md` §6 for why we do not
 /// pull in `serde_yaml`.
 pub(crate) fn parse_brief_title(content: &str) -> Option<String> {
+    let content = content.strip_prefix('\u{FEFF}').unwrap_or(content);
     if !content.starts_with("---") {
         return None;
     }
@@ -2061,6 +2062,24 @@ mod tests {
             parse_brief_title("---\nTitle: MixedCASE Value\n---\n"),
             Some("MixedCASE Value".to_string())
         );
+    }
+
+    // ── parse_brief_title — UTF-8 BOM (grinch MEDIUM) ──
+    // Mirrors `cli/brief_ops.rs::parse_brief` which already strips the BOM.
+    // Without this, BRIEF.md saved as "UTF-8 with BOM" breaks gate-4
+    // idempotency and risks silent overwrite of a user-edited title.
+
+    #[test]
+    fn parse_brief_title_strips_utf8_bom() {
+        assert_eq!(
+            parse_brief_title("\u{FEFF}---\ntitle: Foo\n---\n"),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_returns_none_for_bom_without_frontmatter() {
+        assert_eq!(parse_brief_title("\u{FEFF}# Heading\n\nbody\n"), None);
     }
 
 }
