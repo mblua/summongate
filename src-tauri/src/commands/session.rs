@@ -1914,8 +1914,12 @@ mod tests {
         };
         assert!(prompt.contains("brief-set-title"));
         assert!(prompt.contains("<YOUR_BINARY_PATH>"));
-        let brief_str = brief.to_string_lossy().to_string();
-        assert!(prompt.contains(&brief_str));
+        // Production code strips `\\?\` UNC prefix before embedding the path
+        // (F4 fold). Mirror the strip here so the assertion holds on Windows
+        // setups where `temp_dir()` returns an extended-length path.
+        let brief_raw = brief.to_string_lossy().to_string();
+        let brief_str = brief_raw.strip_prefix(r"\\?\").unwrap_or(&brief_raw);
+        assert!(prompt.contains(brief_str));
         let _ = std::fs::remove_file(&brief);
         let _ = std::fs::remove_dir(&dir);
     }
