@@ -5,6 +5,7 @@ import { AcDiscoveryAPI, SessionAPI, onDiscoveryBranchUpdated } from "../../shar
 import type { SessionRepoInput } from "../../shared/ipc";
 import AgentPickerModal from "./AgentPickerModal";
 import { sessionsStore } from "../stores/sessions";
+import { stripFrontmatter } from "../../shared/markdown";
 
 interface PendingLaunch {
   path: string;
@@ -279,8 +280,8 @@ const AcDiscoveryPanel: Component = () => {
                   <div class="ac-wg-group">
                     <div class="ac-wg-header" title={wg.path}>
                       <span class="ac-wg-name">{wg.name}</span>
-                      <Show when={wg.brief}>
-                        <span class="ac-wg-brief">{wg.brief}</span>
+                      <Show when={stripFrontmatter(wg.brief ?? "").trim()}>
+                        {(brief) => <span class="ac-wg-brief">{brief()}</span>}
                       </Show>
                     </div>
                     <For each={wg.agents}>
