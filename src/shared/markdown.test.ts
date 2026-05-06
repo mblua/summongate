@@ -50,4 +50,16 @@ describe('stripFrontmatter', () => {
     const input = "---\ntitle: x\n---   \n\nBody";
     expect(stripFrontmatter(input)).toBe('Body');
   });
+
+  it('strips_frontmatter_when_text_starts_with_utf8_bom', () => {
+    const bom = String.fromCharCode(0xfeff);
+    const input = `${bom}---\ntitle: 'Foo'\n---\n\nBody text`;
+    expect(stripFrontmatter(input)).toBe('Body text');
+  });
+
+  it('strips_lone_bom_with_no_frontmatter', () => {
+    const bom = String.fromCharCode(0xfeff);
+    const input = `${bom}Hello world`;
+    expect(stripFrontmatter(input)).toBe('Hello world');
+  });
 });
