@@ -2,7 +2,7 @@ import { Component, Show, For, createSignal, createMemo, onMount, onCleanup } fr
 import iconUrl from "../../assets/icon-16.png";
 import { SettingsAPI } from "../../shared/ipc";
 import { isTauri } from "../../shared/platform";
-import { extractProjectName, extractWorkgroupName, extractAgentName } from "../../shared/path-extractors";
+import { extractWorkgroupName, computeTrailingText } from "../../shared/path-extractors";
 import { terminalStore } from "../../terminal/stores/terminal";
 import type { MainSidebarSide } from "../../shared/types";
 
@@ -24,17 +24,10 @@ const Titlebar: Component = () => {
   const [layoutOpen, setLayoutOpen] = createSignal(false);
   const [instanceLabel, setInstanceLabel] = createSignal("");
   const [currentSide, setCurrentSide] = createSignal<MainSidebarSide>("right");
-  const projectName = createMemo(() => extractProjectName(terminalStore.activeWorkingDirectory));
   const wgName = createMemo(() => extractWorkgroupName(terminalStore.activeWorkingDirectory));
-  const agentName = createMemo(() => extractAgentName(terminalStore.activeWorkingDirectory));
-  const trailingText = createMemo(() => {
-    const proj = projectName();
-    const ag = agentName();
-    if (proj && ag) return `${ag}@${proj}`;
-    if (ag) return ag;
-    if (proj && terminalStore.activeSessionName) return `${terminalStore.activeSessionName}@${proj}`;
-    return terminalStore.activeSessionName || null;
-  });
+  const trailingText = createMemo(() =>
+    computeTrailingText(terminalStore.activeWorkingDirectory, terminalStore.activeSessionName),
+  );
 
   const handleMinimize = async () => {
     if (!isTauri) return;

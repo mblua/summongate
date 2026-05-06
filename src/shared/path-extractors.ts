@@ -25,3 +25,17 @@ export function extractAgentName(workDir: string): string | null {
   const name = seg.slice('__agent_'.length);
   return name.length > 0 ? name : null;
 }
+
+/** Trailing label shown in titlebars: "agent@project" when both are derivable
+ *  from the path; falls back through agent-only, sessionName@project, sessionName, null. */
+export function computeTrailingText(
+  workDir: string,
+  sessionName: string | null | undefined,
+): string | null {
+  const proj = extractProjectName(workDir);
+  const ag = extractAgentName(workDir);
+  if (proj && ag) return `${ag}@${proj}`;
+  if (ag) return ag;
+  if (proj && sessionName) return `${sessionName}@${proj}`;
+  return sessionName || null;
+}

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { extractProjectName, extractWorkgroupName, extractAgentName } from './path-extractors';
+import {
+  extractProjectName,
+  extractWorkgroupName,
+  extractAgentName,
+  computeTrailingText,
+} from './path-extractors';
 
 describe('path-extractors', () => {
   it('empty_input_returns_all_null', () => {
@@ -84,5 +89,47 @@ describe('path-extractors', () => {
     expect(extractProjectName(w)).toBe('foo');
     expect(extractWorkgroupName(w)).toBe('WG-1');
     expect(extractAgentName(w)).toBe('x');
+  });
+});
+
+describe('computeTrailingText', () => {
+  it('project_and_agent_returns_agent_at_project', () => {
+    const w = 'C:\\foo\\.ac-new\\wg-19-dev-team\\__agent_alice';
+    expect(computeTrailingText(w, null)).toBe('alice@foo');
+    expect(computeTrailingText(w, 'session-x')).toBe('alice@foo');
+  });
+
+  it('agent_only_returns_agent', () => {
+    const w = '\\.ac-new\\wg-1\\__agent_alice';
+    expect(extractProjectName(w)).toBeNull();
+    expect(extractAgentName(w)).toBe('alice');
+    expect(computeTrailingText(w, null)).toBe('alice');
+    expect(computeTrailingText(w, 'session-x')).toBe('alice');
+  });
+
+  it('project_and_session_no_agent_returns_session_at_project', () => {
+    const w = 'C:\\foo\\.ac-new\\wg-1\\repo-X';
+    expect(extractProjectName(w)).toBe('foo');
+    expect(extractAgentName(w)).toBeNull();
+    expect(computeTrailingText(w, 'my-session')).toBe('my-session@foo');
+  });
+
+  it('session_only_returns_session', () => {
+    const w = 'C:\\unrelated\\path';
+    expect(extractProjectName(w)).toBeNull();
+    expect(extractAgentName(w)).toBeNull();
+    expect(computeTrailingText(w, 'my-session')).toBe('my-session');
+  });
+
+  it('nothing_returns_null', () => {
+    expect(computeTrailingText('', null)).toBeNull();
+    expect(computeTrailingText('', undefined)).toBeNull();
+    expect(computeTrailingText('', '')).toBeNull();
+    expect(computeTrailingText('C:\\nothing', null)).toBeNull();
+  });
+
+  it('nested_ac_new_uses_innermost_for_trailing', () => {
+    const w = 'C:\\proj\\.ac-new\\wg-1-outer\\repo-AC\\.ac-new\\wg-2-inner\\__agent_alice';
+    expect(computeTrailingText(w, null)).toBe('alice@repo-AC');
   });
 });
