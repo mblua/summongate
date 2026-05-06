@@ -552,7 +552,7 @@ Your Session Credentials include a `BinaryPath` field — **always use that path
 
 PowerShell is the default shell for AgentsCommander sessions on Windows. On PowerShell, a quoted path is a string expression, not a command — to actually invoke the binary you must use the **`&` call operator**:
 
-```powershell
+```
 & '<YOUR_BINARY_PATH>' <subcommand> [args]
 ```
 
@@ -664,29 +664,39 @@ mod tests {
     fn default_context_warns_about_rtk_prefix_on_powershell() {
         // Cover BOTH variants: replica-only (None) and replica-with-matrix (Some).
         // A future refactor that splits rendering by branch must keep the warning in both.
-        for out in [
-            default_context("C:/tmp/fake-agent", None),
-            default_context("C:/tmp/fake-agent", Some("C:/tmp/fake-matrix")),
-        ] {
+        // Each case carries a `branch_marker` that only appears in its branch's
+        // rendered output, so each iteration actually proves the right branch ran
+        // (otherwise the loop would be theatrical — the warning text is identical
+        // across branches and would pass even if both calls routed to the same path).
+        let cases: [(Option<&str>, &str); 2] = [
+            (None, "two places"),
+            (Some("C:/tmp/fake-matrix"), "C:/tmp/fake-matrix"),
+        ];
+        for (matrix_root, branch_marker) in cases {
+            let out = default_context("C:/tmp/fake-agent", matrix_root);
+            assert!(
+                out.contains(branch_marker),
+                "fixture broken: rendered output for matrix_root={matrix_root:?} did not contain branch marker {branch_marker:?}"
+            );
             assert!(
                 out.contains("### PowerShell invocation"),
-                "missing PowerShell invocation subsection in rendered agent context"
+                "missing PowerShell invocation subsection for matrix_root={matrix_root:?}"
             );
             assert!(
                 out.contains("> **PowerShell users:**"),
-                "missing reader-order lead-in after the bare-quoted CLI snippet"
+                "missing reader-order lead-in for matrix_root={matrix_root:?}"
             );
             assert!(
                 out.contains("& '<YOUR_BINARY_PATH>'"),
-                "missing PowerShell call-operator example in rendered agent context"
+                "missing PowerShell call-operator example for matrix_root={matrix_root:?}"
             );
             assert!(
                 out.contains("Do **NOT** prefix AC CLI calls with `rtk`"),
-                "missing explicit rtk-prefix warning in rendered agent context"
+                "missing explicit rtk-prefix warning for matrix_root={matrix_root:?}"
             );
             assert!(
                 out.contains("AmpersandNotAllowed"),
-                "missing AmpersandNotAllowed parser-error name in rendered agent context"
+                "missing AmpersandNotAllowed parser-error name for matrix_root={matrix_root:?}"
             );
         }
     }
