@@ -544,7 +544,26 @@ Your Session Credentials include a `BinaryPath` field — **always use that path
 "<YOUR_BINARY_PATH>" <subcommand> [args]
 ```
 
+> **PowerShell users:** the bare quoted-path form above is **not** directly executable in PowerShell — see `### PowerShell invocation` below for the correct call shape. The same caveat applies to **every** other quoted-path snippet in this document (the `--help` examples under `## Self-discovery via --help`, and the `send` / `list-peers` examples under `## Inter-Agent Messaging`).
+
 **RULE:** Never hardcode or guess the binary path. Always read `BinaryPath` from your `# === Session Credentials ===` block and use that exact path.
+
+### PowerShell invocation
+
+PowerShell is the default shell for AgentsCommander sessions on Windows. On PowerShell, a quoted path is a string expression, not a command — to actually invoke the binary you must use the **`&` call operator**:
+
+```powershell
+& '<YOUR_BINARY_PATH>' <subcommand> [args]
+```
+
+This rule applies to **every** quoted-path AC CLI snippet shown elsewhere in this document — including the `--help`, `send`, and `list-peers` examples below. The bare `"<YOUR_BINARY_PATH>" <subcommand>` form fails on PowerShell with `Unexpected token '<subcommand>' in expression or statement` (parser error, before the command runs). The bare-quoted form is kept as the shell-agnostic abstract example; PowerShell sessions must apply `&` themselves.
+
+Do **NOT** prefix AC CLI calls with `rtk` (or any other shell wrapper) on PowerShell. `rtk` is a bash-oriented command-rewrite tool; on PowerShell its rewritten form clashes with PowerShell's `&` call operator and the parser fails with `AmpersandNotAllowed` **before** the command runs:
+
+- BAD:  `rtk & '<YOUR_BINARY_PATH>' list-peers ...`  (PowerShell parser error: AmpersandNotAllowed)
+- GOOD: `& '<YOUR_BINARY_PATH>' list-peers ...`
+
+This applies to **every** AC CLI subcommand (`send`, `list-peers`, `create-agent`, `--help`, etc.). If you see `AmpersandNotAllowed` from PowerShell, drop the `rtk` prefix and any other wrapper — invoke the binary directly with `&`.
 
 ## Self-discovery via --help
 
@@ -639,5 +658,36 @@ mod tests {
         assert!(out.contains("filename ONLY"));
         assert!(out.contains("BAD:"));
         assert!(out.contains("GOOD:"));
+    }
+
+    #[test]
+    fn default_context_warns_about_rtk_prefix_on_powershell() {
+        // Cover BOTH variants: replica-only (None) and replica-with-matrix (Some).
+        // A future refactor that splits rendering by branch must keep the warning in both.
+        for out in [
+            default_context("C:/tmp/fake-agent", None),
+            default_context("C:/tmp/fake-agent", Some("C:/tmp/fake-matrix")),
+        ] {
+            assert!(
+                out.contains("### PowerShell invocation"),
+                "missing PowerShell invocation subsection in rendered agent context"
+            );
+            assert!(
+                out.contains("> **PowerShell users:**"),
+                "missing reader-order lead-in after the bare-quoted CLI snippet"
+            );
+            assert!(
+                out.contains("& '<YOUR_BINARY_PATH>'"),
+                "missing PowerShell call-operator example in rendered agent context"
+            );
+            assert!(
+                out.contains("Do **NOT** prefix AC CLI calls with `rtk`"),
+                "missing explicit rtk-prefix warning in rendered agent context"
+            );
+            assert!(
+                out.contains("AmpersandNotAllowed"),
+                "missing AmpersandNotAllowed parser-error name in rendered agent context"
+            );
+        }
     }
 }

@@ -6,7 +6,8 @@ RTK is a CLI proxy installed on this machine that compresses command outputs to 
 
 - **Repo:** https://github.com/rtk-ai/rtk
 - RTK only compresses output from Bash tool calls, not native Claude Code tools (Read, Grep, Glob)
-- If RTK has a dedicated filter for a command, it compresses the output. If not, it passes through unchanged. This means RTK is always safe to use.
+- If RTK has a dedicated filter for a command, it compresses the output. If not, it passes through unchanged. RTK is safe to apply to commands that run through a bash/zsh shell.
+- **PowerShell + AC CLI caveat:** RTK is bash-oriented. Do **NOT** prefix `rtk` to AgentsCommander CLI invocations made from a PowerShell session — PowerShell parses `rtk & '<BinaryPath>' ...` as `AmpersandNotAllowed` and aborts before the command runs. On PowerShell, invoke the AC CLI directly: `& '<BinaryPath>' <subcommand> <args>`. This carve-out applies only to commands that PowerShell would already execute via the `&` call operator (notably any quoted-path call, including the AC CLI). Bash-tool commands inside Claude Code are unaffected.
 
 ## Setup (two parts, both required)
 
@@ -67,7 +68,7 @@ Add to the project's `CLAUDE.md` as a fallback in case the hook is not present:
 
 `rtk` is a CLI proxy installed on this machine that compresses command outputs to reduce tokens.
 
-**Rule:** ALWAYS prefix Bash commands with `rtk`. If RTK has a filter for that command, it compresses the output. If not, it passes through unchanged. It is always safe to use.
+**Rule:** ALWAYS prefix Bash commands with `rtk`. If RTK has a filter for that command, it compresses the output. If not, it passes through unchanged. Safe for Bash/zsh shells. **Do NOT** apply this to AgentsCommander CLI calls under PowerShell — `rtk & '<BinaryPath>' ...` triggers PowerShell's `AmpersandNotAllowed` parser error. On PowerShell, invoke the AC CLI directly: `& '<BinaryPath>' <subcommand> [args]`.
 
 In command chains with &&, prefix each command:
 rtk git add . && rtk git commit -m "msg" && rtk git push
