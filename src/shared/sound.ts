@@ -4,6 +4,18 @@
 
 let cachedContext: AudioContext | null = null;
 
+// Global app-sound master switch (#158). Single source of truth that every
+// playback function in this module checks at entry. Decoupled from any
+// settings store so this module stays leaf-level (no circular imports);
+// settings code pushes the value via setSoundsEnabled on load/refresh and
+// on toolbar mute toggle. Default true matches the Rust-side default and
+// keeps users audible if the FE settings load fails.
+let soundsEnabled = true;
+
+export function setSoundsEnabled(enabled: boolean): void {
+  soundsEnabled = enabled;
+}
+
 // Coalesce window for back-to-back beep calls. When several workgroups
 // transition to idle in the same effect tick, the watcher fires
 // playTeamIdleBeep() multiple times synchronously; without coalescing,
@@ -51,6 +63,7 @@ export function primeAudio(): void {
  * swallowed — failing to beep must never break the FE.
  */
 export async function playTeamIdleBeep(): Promise<void> {
+  if (!soundsEnabled) return;
   const ctx = getAudioContext();
   if (!ctx) return;
   if (ctx.state === "suspended") {

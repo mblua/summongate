@@ -131,6 +131,7 @@ export interface AppSettings {
   startOnlyCoordinators: boolean;
   sidebarAlwaysOnTop: boolean;
   raiseTerminalOnClick: boolean;
+  soundsEnabled: boolean;
   teamIdleBeepEnabled: boolean;
   voiceToTextEnabled: boolean;
   geminiApiKey: string;
