@@ -6,7 +6,6 @@ import type { UnlistenFn } from "../../shared/transport";
 import { ProjectAPI, GuideAPI, SettingsAPI, emitThemeChanged, onOpenSettings } from "../../shared/ipc";
 import { settingsStore } from "../../shared/stores/settings";
 import { setSoundsEnabled } from "../../shared/sound";
-import type { AppSettings } from "../../shared/types";
 import SettingsModal from "./SettingsModal";
 
 const ActionBar: Component = () => {
@@ -111,14 +110,11 @@ const ActionBar: Component = () => {
   const isSoundsEnabled = (): boolean =>
     settingsStore.current?.soundsEnabled ?? true;
   const handleToggleMute = async () => {
-    const current = settingsStore.current;
-    if (!current) return;
     const previousValue = isSoundsEnabled();
     const newValue = !previousValue;
     setSoundsEnabled(newValue);
-    const next: AppSettings = { ...current, soundsEnabled: newValue };
     try {
-      await SettingsAPI.update(next);
+      await SettingsAPI.setSoundsEnabled(newValue);
       settingsStore.refresh();
     } catch (err) {
       setSoundsEnabled(previousValue);
