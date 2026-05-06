@@ -204,6 +204,25 @@ pub async fn set_rtk_prompt_dismissed(
     Ok(())
 }
 
+/// Narrow setter — flips ONLY `sounds_enabled`. Same lock-held-through-save
+/// pattern as `set_inject_rtk_hook` (issue #158). Replaces the toolbar's
+/// previous full-object `update_settings(next)` call, which could clobber
+/// unrelated fields from a stale `settingsStore.current` snapshot.
+/// The `update_settings` caveat documented on `set_inject_rtk_hook` applies
+/// here too.
+#[tauri::command]
+pub async fn set_sounds_enabled(
+    settings: State<'_, SettingsState>,
+    value: bool,
+) -> Result<(), String> {
+    let mut s = settings.write().await;
+    s.sounds_enabled = value;
+    let snapshot = s.clone();
+    save_settings(&snapshot)?;
+    drop(s); // explicit; lock released AFTER the disk write completes
+    Ok(())
+}
+
 /// Sweep every AC-managed agent directory and apply
 /// `ensure_rtk_pretool_hook(dir, enabled)`. Best-effort per directory:
 /// per-dir failures are logged + appended to `errors` and the sweep
