@@ -41,7 +41,7 @@ const sections: HintSection[] = [
       },
       {
         title: "RTK — Token Optimizer",
-        body: "CLI proxy that compresses command outputs to reduce token consumption. Prefix any command with rtk and it transparently compresses verbose outputs (git, cargo, npm, etc.) while passing through unchanged when no filter applies. Always safe to use.",
+        body: "Bash-oriented CLI proxy that compresses command outputs to reduce token consumption. Prefix Bash commands with rtk and it transparently compresses verbose outputs (git, cargo, npm, etc.). Caveat: do NOT prefix rtk on AgentsCommander CLI invocations from PowerShell — its rewritten form collides with PowerShell's & call operator and trips AmpersandNotAllowed before the command runs. On PowerShell, invoke the AC CLI directly via & '<BinaryPath>'.",
         link: {
           label: "rtk-ai.app",
           url: "https://www.rtk-ai.app/",
