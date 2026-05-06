@@ -2,6 +2,7 @@ import { Component, createSignal, Show, For, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import type { Session, SessionStatus, TelegramBotConfig, RepoMatch } from "../../shared/types";
 import { SessionAPI, TelegramAPI, SettingsAPI, WindowAPI, AgentCreatorAPI, emitOpenSettings } from "../../shared/ipc";
+import { extractProjectName } from "../../shared/path-extractors";
 import { isTauri } from "../../shared/platform";
 import { bridgesStore } from "../stores/bridges";
 import { sessionsStore } from "../stores/sessions";
@@ -244,20 +245,22 @@ const SessionItem: Component<{
   /** Derive short display name from workingDirectory.
    *  .ac-new paths: "agent-name@origin-project" (e.g. "code-reviewer@phi_phibridge")
    *  Other paths: "parentFolder/name" (last 2 segments)
-   */
+   *
+   *  .ac-new parsing is delegated to extractProjectName (innermost wins via
+   *  lastIndexOf — matches the titlebar helpers, fixes nested-.ac-new bug). */
   const displayName = () => {
     const wd = props.session.workingDirectory;
     if (wd) {
-      const normalized = wd.replace(/\\/g, "/").replace(/\/+$/, "");
-      const parts = normalized.split("/");
-      const acIdx = parts.indexOf(".ac-new");
-      if (acIdx >= 1) {
-        // Use origin project from identity resolution; fall back to path-derived project
-        const projectFolder = props.originProject || parts[acIdx - 1];
-        let agentDir = parts[parts.length - 1];
-        agentDir = agentDir.replace(/^__?agent_/, "");
+      const pathProject = extractProjectName(wd);
+      if (pathProject) {
+        const projectFolder = props.originProject || pathProject;
+        const normalized = wd.replace(/\\/g, "/").replace(/\/+$/, "");
+        const parts = normalized.split("/");
+        const agentDir = parts[parts.length - 1].replace(/^__?agent_/, "");
         return `${agentDir}@${projectFolder}`;
       }
+      const normalized = wd.replace(/\\/g, "/").replace(/\/+$/, "");
+      const parts = normalized.split("/");
       if (parts.length >= 2) {
         return parts.slice(-2).join("/");
       }

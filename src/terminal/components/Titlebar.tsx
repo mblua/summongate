@@ -3,7 +3,7 @@ import { terminalStore } from "../stores/terminal";
 import iconUrl from "../../assets/icon-16.png";
 import { isTauri } from "../../shared/platform";
 import { WindowAPI } from "../../shared/ipc";
-import { extractProjectName, extractWorkgroupName, extractAgentName } from "../../shared/path-extractors";
+import { extractWorkgroupName, computeTrailingText } from "../../shared/path-extractors";
 declare const __APP_VERSION__: string;
 const APP_VERSION = __APP_VERSION__;
 
@@ -15,17 +15,10 @@ interface TitlebarProps {
 
 const Titlebar: Component<TitlebarProps> = (props) => {
   const [instanceLabel, setInstanceLabel] = createSignal("");
-  const projectName = createMemo(() => extractProjectName(terminalStore.activeWorkingDirectory));
   const wgName = createMemo(() => extractWorkgroupName(terminalStore.activeWorkingDirectory));
-  const agentName = createMemo(() => extractAgentName(terminalStore.activeWorkingDirectory));
-  const trailingText = createMemo(() => {
-    const proj = projectName();
-    const ag = agentName();
-    if (proj && ag) return `${ag}@${proj}`;
-    if (ag) return ag;
-    if (proj && terminalStore.activeSessionName) return `${terminalStore.activeSessionName}@${proj}`;
-    return terminalStore.activeSessionName || null;
-  });
+  const trailingText = createMemo(() =>
+    computeTrailingText(terminalStore.activeWorkingDirectory, terminalStore.activeSessionName),
+  );
 
   onMount(async () => {
     if (isTauri) {

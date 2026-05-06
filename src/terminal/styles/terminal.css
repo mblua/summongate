@@ -65,6 +65,10 @@ html, body, #root {
   font-weight: 600;
   color: var(--statusbar-accent);
   opacity: 1;
+  max-width: 22em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .titlebar-version {
@@ -82,7 +86,6 @@ html, body, #root {
 .titlebar-dev-badge {
   display: inline-block;
   padding: 1px 5px;
-  margin-left: 6px;
   background: rgba(0, 180, 255, 0.15);
   color: #00b4ff;
   font-size: 8px;
@@ -95,7 +98,6 @@ html, body, #root {
 .titlebar-stage-badge {
   display: inline-block;
   padding: 1px 5px;
-  margin-left: 6px;
   background: rgba(255, 170, 0, 0.18);
   color: #ffaa00;
   font-size: 8px;
@@ -108,7 +110,10 @@ html, body, #root {
 .titlebar-wg-badge {
   display: inline-block;
   padding: 1px 6px;
-  margin-left: 6px;
+  max-width: 12em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   background: rgba(80, 200, 160, 0.15);
   color: #5fd4a8;
   border-radius: 3px;
@@ -120,7 +125,6 @@ html, body, #root {
 .titlebar-detached-badge {
   display: inline-block;
   padding: 1px 5px;
-  margin-right: 6px;
   background: rgba(255, 170, 0, 0.15);
   color: #ffaa00;
   font-size: 8px;
@@ -128,6 +132,28 @@ html, body, #root {
   letter-spacing: 0.5px;
   border-radius: 3px;
   vertical-align: middle;
+}
+
+/* Light-theme overrides — WCAG AA on --titlebar-bg #e8e8ec.
+   Calculated contrast ratios per WCAG 2.1 (luminance formula): */
+html.light-theme .titlebar-wg-badge {
+  /* #0a6e48 on #e8e8ec → 5.14:1 (AA) */
+  color: #0a6e48;
+  background: rgba(10, 110, 72, 0.12);
+}
+
+html.light-theme .titlebar-stage-badge,
+html.light-theme .titlebar-detached-badge {
+  /* #854700 on #e8e8ec → 5.93:1 (AAA) */
+  color: #854700;
+  background: rgba(133, 71, 0, 0.14);
+}
+
+html.light-theme .titlebar-dev-badge,
+html.light-theme .titlebar-version {
+  /* #0a4f9e on #e8e8ec → 6.56:1 (AAA) */
+  color: #0a4f9e;
+  background: rgba(10, 79, 158, 0.12);
 }
 
 .titlebar-controls {

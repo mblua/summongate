@@ -67,7 +67,6 @@ html, body, #root {
 .titlebar-dev-badge {
   display: inline-block;
   padding: 1px 5px;
-  margin-left: 6px;
   background: rgba(0, 180, 255, 0.15);
   color: var(--sidebar-accent);
   font-size: 8px;
@@ -80,7 +79,6 @@ html, body, #root {
 .titlebar-stage-badge {
   display: inline-block;
   padding: 1px 5px;
-  margin-left: 6px;
   background: rgba(255, 170, 0, 0.18);
   color: #ffaa00;
   font-size: 8px;
@@ -90,17 +88,8 @@ html, body, #root {
   vertical-align: middle;
 }
 
-.titlebar-wg-badge {
-  display: inline-block;
-  padding: 1px 6px;
-  margin-left: 6px;
-  background: rgba(80, 200, 160, 0.15);
-  color: #5fd4a8;
-  border-radius: 3px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-}
+/* .titlebar-wg-badge canonical definition lives in terminal.css.
+   Both stylesheets are bundled together, so the badge is styled in both windows. */
 
 .titlebar-controls {
   display: flex;
