@@ -174,6 +174,32 @@ fn resolve_agent_ref(project_folder: &str, agent_ref: &str) -> String {
     }
 }
 
+/// Extract the first content line from a BRIEF.md-style markdown file,
+/// skipping any YAML frontmatter block at the top (delimited by `---` on
+/// its own line). Leading `# ` heading markers are stripped from the result.
+///
+/// Without this, a BRIEF.md that opens with `---` (frontmatter) sends the
+/// literal `---` to the sidebar — the `wg.brief` field then defeats the
+/// frontend's frontmatter-stripping renderer (issue #161).
+fn extract_brief_first_line(content: &str) -> Option<String> {
+    let mut lines = content.lines().peekable();
+
+    // YAML frontmatter: opener `---` on the first line, drain through closer.
+    // If the closer is missing, the for-loop drains the rest and `find` returns None.
+    if lines.peek().map(|l| l.trim()) == Some("---") {
+        lines.next();
+        for line in lines.by_ref() {
+            if line.trim() == "---" {
+                break;
+            }
+        }
+    }
+
+    lines
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim_start_matches("# ").to_string())
+}
+
 /// Detect git branch synchronously for a given directory path.
 fn detect_git_branch_sync(dir: &str) -> Option<String> {
     #[cfg(windows)]
@@ -669,12 +695,7 @@ pub async fn discover_ac_agents(
                         .exists()
                         .then(|| std::fs::read_to_string(path.join("BRIEF.md")).ok())
                         .flatten()
-                        .and_then(|content| {
-                            content
-                                .lines()
-                                .next()
-                                .map(|l| l.trim_start_matches("# ").to_string())
-                        });
+                        .and_then(|content| extract_brief_first_line(&content));
 
                     // Find first repo-* directory for CWD
                     let repo_path = std::fs::read_dir(&path)
@@ -1110,12 +1131,7 @@ pub async fn discover_project(
                 .exists()
                 .then(|| std::fs::read_to_string(entry_path.join("BRIEF.md")).ok())
                 .flatten()
-                .and_then(|content| {
-                    content
-                        .lines()
-                        .next()
-                        .map(|l| l.trim_start_matches("# ").to_string())
-                });
+                .and_then(|content| extract_brief_first_line(&content));
 
             let repo_path = std::fs::read_dir(&entry_path)
                 .ok()
@@ -1426,4 +1442,79 @@ pub async fn set_replica_context_files(path: String, files: Vec<String>) -> Resu
 
     log::info!("Updated context files for replica at {}: {:?}", path, files);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── extract_brief_first_line — issue #161 ──
+
+    #[test]
+    fn brief_no_frontmatter_with_heading() {
+        assert_eq!(
+            extract_brief_first_line("# My Brief\n\nbody"),
+            Some("My Brief".to_string())
+        );
+    }
+
+    #[test]
+    fn brief_no_frontmatter_plain() {
+        assert_eq!(
+            extract_brief_first_line("My Brief\nbody"),
+            Some("My Brief".to_string())
+        );
+    }
+
+    #[test]
+    fn brief_with_yaml_frontmatter() {
+        let content = "---\ntitle: x\nauthor: y\n---\n# Real Title\nbody";
+        assert_eq!(
+            extract_brief_first_line(content),
+            Some("Real Title".to_string())
+        );
+    }
+
+    #[test]
+    fn brief_with_frontmatter_then_blank_lines() {
+        let content = "---\ntitle: x\n---\n\n\n# Real Title";
+        assert_eq!(
+            extract_brief_first_line(content),
+            Some("Real Title".to_string())
+        );
+    }
+
+    #[test]
+    fn brief_empty_file() {
+        assert_eq!(extract_brief_first_line(""), None);
+    }
+
+    #[test]
+    fn brief_only_frontmatter_no_body() {
+        assert_eq!(extract_brief_first_line("---\nfoo: bar\n---\n"), None);
+    }
+
+    #[test]
+    fn brief_unclosed_frontmatter_returns_none() {
+        // Pathological: opener with no closer drains the iterator.
+        assert_eq!(extract_brief_first_line("---\nfoo: bar\nno closer"), None);
+    }
+
+    #[test]
+    fn brief_leading_blank_no_frontmatter() {
+        assert_eq!(
+            extract_brief_first_line("\n\n# Title"),
+            Some("Title".to_string())
+        );
+    }
+
+    #[test]
+    fn brief_frontmatter_delimiter_tolerates_whitespace() {
+        // `---` lines may carry trailing/leading whitespace from editors.
+        let content = "--- \ntitle: x\n  ---  \n# Body";
+        assert_eq!(
+            extract_brief_first_line(content),
+            Some("Body".to_string())
+        );
+    }
 }
