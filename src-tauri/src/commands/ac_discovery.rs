@@ -182,6 +182,12 @@ fn resolve_agent_ref(project_folder: &str, agent_ref: &str) -> String {
 /// literal `---` to the sidebar — the `wg.brief` field then defeats the
 /// frontend's frontmatter-stripping renderer (issue #161).
 fn extract_brief_first_line(content: &str) -> Option<String> {
+    // Strip a UTF-8 BOM if present — `read_to_string` does not, and `str::trim`
+    // does not treat U+FEFF as whitespace, so without this the frontmatter opener
+    // check below sees `\u{FEFF}---` instead of `---` and the heading-strip below
+    // leaves the BOM on the result.
+    let content = content.strip_prefix('\u{FEFF}').unwrap_or(content);
+
     let mut lines = content.lines().peekable();
 
     // YAML frontmatter: opener `---` on the first line, drain through closer.
@@ -1515,6 +1521,28 @@ mod tests {
         assert_eq!(
             extract_brief_first_line(content),
             Some("Body".to_string())
+        );
+    }
+
+    #[test]
+    fn brief_with_bom_no_frontmatter() {
+        // Editors (notably Notepad) save UTF-8 with a BOM. Without the strip,
+        // `trim_start_matches("# ")` leaves the BOM on the heading text.
+        let content = "\u{FEFF}# My Brief\n\nbody";
+        assert_eq!(
+            extract_brief_first_line(content),
+            Some("My Brief".to_string())
+        );
+    }
+
+    #[test]
+    fn brief_with_bom_and_frontmatter() {
+        // BOM in front of the `---` opener used to make the frontmatter check
+        // fail (because `\u{FEFF}---` != `---`), exposing the literal frontmatter.
+        let content = "\u{FEFF}---\ntitle: x\n---\n# Real Title\nbody";
+        assert_eq!(
+            extract_brief_first_line(content),
+            Some("Real Title".to_string())
         );
     }
 }
