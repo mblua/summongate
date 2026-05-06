@@ -445,7 +445,19 @@ const SettingsModal: Component<{ onClose: () => void; section?: string }> = (pro
           <input
             type="checkbox"
             class="settings-checkbox"
+            checked={settings.data!.soundsEnabled}
+            onChange={(e) =>
+              updateField("soundsEnabled", e.currentTarget.checked)
+            }
+          />
+          <span>Enable app sounds (master switch)</span>
+        </label>
+        <label class="settings-checkbox-field">
+          <input
+            type="checkbox"
+            class="settings-checkbox"
             checked={settings.data!.teamIdleBeepEnabled}
+            disabled={!settings.data!.soundsEnabled}
             onChange={(e) =>
               updateField("teamIdleBeepEnabled", e.currentTarget.checked)
             }

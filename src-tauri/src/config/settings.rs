@@ -58,6 +58,11 @@ pub struct AppSettings {
     /// busy→all-idle. The transition is computed in the FE from `waitingForInput`.
     #[serde(default = "default_true")]
     pub team_idle_beep_enabled: bool,
+    /// Master switch for all app-emitted sounds. When false, every current and
+    /// future app-generated playback path must stay silent. Per-feature toggles
+    /// (e.g. `team_idle_beep_enabled`) act as additional gates underneath this one.
+    #[serde(default = "default_true")]
+    pub sounds_enabled: bool,
     /// Raise terminal window when sidebar is clicked
     #[serde(default = "default_true")]
     pub raise_terminal_on_click: bool,
@@ -214,6 +219,7 @@ impl Default for AppSettings {
             start_only_coordinators: true,
             sidebar_always_on_top: false,
             team_idle_beep_enabled: true,
+            sounds_enabled: true,
             raise_terminal_on_click: true,
             voice_to_text_enabled: false,
             gemini_api_key: String::new(),
@@ -618,6 +624,62 @@ mod tests {
         }"#;
         let s: AppSettings = serde_json::from_str(json).expect("deserialize old json");
         assert!(s.team_idle_beep_enabled);
+    }
+
+    #[test]
+    fn sounds_enabled_round_trips_through_serde() {
+        let mut s = AppSettings::default();
+        assert!(s.sounds_enabled);
+        s.sounds_enabled = false;
+        let json = serde_json::to_string(&s).expect("serialize");
+        assert!(json.contains("\"soundsEnabled\":false"));
+        let back: AppSettings = serde_json::from_str(&json).expect("deserialize");
+        assert!(!back.sounds_enabled);
+    }
+
+    #[test]
+    fn sounds_enabled_defaults_true_when_missing_from_json() {
+        // Old settings.json with only team_idle_beep_enabled (and no soundsEnabled
+        // field) must deserialize with sounds_enabled = true so existing users
+        // remain audible until they explicitly mute.
+        let json = r#"{
+            "defaultShell": "bash",
+            "defaultShellArgs": [],
+            "agents": [],
+            "telegramBots": [],
+            "startOnlyCoordinators": true,
+            "sidebarAlwaysOnTop": false,
+            "raiseTerminalOnClick": true,
+            "teamIdleBeepEnabled": false,
+            "voiceToTextEnabled": false,
+            "geminiApiKey": "",
+            "geminiModel": "gemini-2.5-flash",
+            "voiceAutoExecute": true,
+            "voiceAutoExecuteDelay": 15,
+            "sidebarZoom": 1.0,
+            "terminalZoom": 1.0,
+            "mainZoom": 1.0,
+            "guideZoom": 1.0,
+            "darkfactoryZoom": 1.0,
+            "sidebarGeometry": null,
+            "terminalGeometry": null,
+            "mainGeometry": null,
+            "mainSidebarWidth": 280.0,
+            "mainSidebarSide": "right",
+            "mainAlwaysOnTop": false,
+            "webServerEnabled": false,
+            "webServerPort": 7777,
+            "webServerBind": "127.0.0.1",
+            "projectPath": null,
+            "projectPaths": [],
+            "sidebarStyle": "noir-minimal",
+            "onboardingDismissed": false,
+            "coordSortByActivity": false
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("deserialize old json");
+        assert!(s.sounds_enabled);
+        // Existing per-feature toggle is honored as-is.
+        assert!(!s.team_idle_beep_enabled);
     }
 
     #[test]

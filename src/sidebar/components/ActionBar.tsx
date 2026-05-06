@@ -3,7 +3,9 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { projectStore } from "../stores/project";
 import { sessionsStore } from "../stores/sessions";
 import type { UnlistenFn } from "../../shared/transport";
-import { ProjectAPI, GuideAPI, emitThemeChanged, onOpenSettings } from "../../shared/ipc";
+import { ProjectAPI, GuideAPI, SettingsAPI, emitThemeChanged, onOpenSettings } from "../../shared/ipc";
+import { settingsStore } from "../../shared/stores/settings";
+import type { AppSettings } from "../../shared/types";
 import SettingsModal from "./SettingsModal";
 
 const ActionBar: Component = () => {
@@ -98,6 +100,21 @@ const ActionBar: Component = () => {
     }
   };
 
+  // #158 — global app-sound mute. Reads/persists `soundsEnabled` on
+  // AppSettings; back-compat default is true so users with old settings.json
+  // files (no `soundsEnabled` field) stay audible. The full-settings update
+  // pattern matches SettingsModal's Save path. settingsStore.refresh()
+  // propagates the new value to sound.ts via setSoundsEnabled.
+  const isSoundsEnabled = (): boolean =>
+    settingsStore.current?.soundsEnabled ?? true;
+  const handleToggleMute = async () => {
+    const current = settingsStore.current;
+    if (!current) return;
+    const next: AppSettings = { ...current, soundsEnabled: !isSoundsEnabled() };
+    await SettingsAPI.update(next);
+    settingsStore.refresh();
+  };
+
   return (
     <>
       <div class="action-bar">
@@ -131,6 +148,15 @@ const ActionBar: Component = () => {
             title={sessionsStore.coordSortByActivity ? "Show recent coordinators first" : "Show coordinators in default order"}
           >
             &#x1F525;
+          </button>
+          <button
+            class={`toolbar-gear-btn sounds-mute-btn ${isSoundsEnabled() ? "" : "active"}`}
+            disabled={!settingsStore.current}
+            onClick={handleToggleMute}
+            title={isSoundsEnabled() ? "Mute all app sounds" : "Unmute app sounds"}
+            aria-label={isSoundsEnabled() ? "Mute all app sounds" : "Unmute app sounds"}
+          >
+            {isSoundsEnabled() ? "🔊" : "🔇"}
           </button>
           <button
             class={`toolbar-gear-btn show-categories-btn ${sessionsStore.showCategories ? "active" : ""}`}
