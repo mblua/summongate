@@ -8,6 +8,7 @@ import type {
 } from "../../shared/types";
 import { SettingsAPI, TelegramAPI, ReposAPI } from "../../shared/ipc";
 import { settingsStore } from "../../shared/stores/settings";
+import { setSoundsEnabled } from "../../shared/sound";
 import { sessionsStore } from "../stores/sessions";
 import { AGENT_PRESET_MAP, newAgentId } from "../../shared/agent-presets";
 
@@ -232,6 +233,11 @@ const SettingsModal: Component<{ onClose: () => void; section?: string }> = (pro
     setSaveError("");
     setSaving(true);
     await SettingsAPI.update(settings.data);
+    // #158 — push soundsEnabled into sound.ts synchronously so the gate
+    // updates before the settingsStore.refresh() roundtrip below resolves.
+    // Without this, a beep emitted between this point and the next load()
+    // would see the stale gate value.
+    setSoundsEnabled(settings.data.soundsEnabled ?? true);
     if (isTauri) {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       await getCurrentWindow().setAlwaysOnTop(settings.data.sidebarAlwaysOnTop);

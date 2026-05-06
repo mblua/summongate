@@ -5,6 +5,7 @@ import { sessionsStore } from "../stores/sessions";
 import type { UnlistenFn } from "../../shared/transport";
 import { ProjectAPI, GuideAPI, SettingsAPI, emitThemeChanged, onOpenSettings } from "../../shared/ipc";
 import { settingsStore } from "../../shared/stores/settings";
+import { setSoundsEnabled } from "../../shared/sound";
 import type { AppSettings } from "../../shared/types";
 import SettingsModal from "./SettingsModal";
 
@@ -100,19 +101,30 @@ const ActionBar: Component = () => {
     }
   };
 
-  // #158 — global app-sound mute. Reads/persists `soundsEnabled` on
-  // AppSettings; back-compat default is true so users with old settings.json
-  // files (no `soundsEnabled` field) stay audible. The full-settings update
-  // pattern matches SettingsModal's Save path. settingsStore.refresh()
-  // propagates the new value to sound.ts via setSoundsEnabled.
+  // #158 — global app-sound mute. Default true so old settings.json files
+  // (no `soundsEnabled` field) stay audible. setSoundsEnabled is pushed
+  // synchronously BEFORE the persist roundtrip so a beep that fires between
+  // the click and the IPC reply (e.g. team-idle-watcher transitioning during
+  // file IO) sees the new gate value — the user's intent in clicking mute is
+  // exactly to suppress imminent beeps. On persist failure we rollback the
+  // gate and toast.
   const isSoundsEnabled = (): boolean =>
     settingsStore.current?.soundsEnabled ?? true;
   const handleToggleMute = async () => {
     const current = settingsStore.current;
     if (!current) return;
-    const next: AppSettings = { ...current, soundsEnabled: !isSoundsEnabled() };
-    await SettingsAPI.update(next);
-    settingsStore.refresh();
+    const previousValue = isSoundsEnabled();
+    const newValue = !previousValue;
+    setSoundsEnabled(newValue);
+    const next: AppSettings = { ...current, soundsEnabled: newValue };
+    try {
+      await SettingsAPI.update(next);
+      settingsStore.refresh();
+    } catch (err) {
+      setSoundsEnabled(previousValue);
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to ${newValue ? "unmute" : "mute"} sounds: ${msg}`);
+    }
   };
 
   return (
