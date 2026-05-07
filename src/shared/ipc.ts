@@ -326,6 +326,20 @@ export function onDiscoveryBranchUpdated(
   );
 }
 
+export function onAcWorkgroupBriefUpdated(
+  callback: (data: {
+    workgroupPath: string;
+    brief: string | null;
+    briefTitle?: string;
+  }) => void
+): Promise<UnlistenFn> {
+  return transport.listen<{
+    workgroupPath: string;
+    brief: string | null;
+    briefTitle?: string;
+  }>("ac_workgroup_brief_updated", callback);
+}
+
 export function onSessionIdle(
   callback: (data: { id: string }) => void
 ): Promise<UnlistenFn> {

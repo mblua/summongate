@@ -1,7 +1,7 @@
 import { Component, For, Show, createMemo, createSignal, onMount, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import type { AcWorkgroup, AcAgentReplica, AcTeam, Session, TelegramBotConfig, BlockerReport } from "../../shared/types";
-import { SessionAPI, WindowAPI, EntityAPI, TelegramAPI, SettingsAPI, onDiscoveryBranchUpdated, emitOpenSettings } from "../../shared/ipc";
+import { SessionAPI, WindowAPI, EntityAPI, TelegramAPI, SettingsAPI, onDiscoveryBranchUpdated, onAcWorkgroupBriefUpdated, emitOpenSettings } from "../../shared/ipc";
 import type { SessionRepoInput } from "../../shared/ipc";
 import { isTauri } from "../../shared/platform";
 import { projectStore } from "../stores/project";
@@ -78,14 +78,21 @@ function getActiveReplicasForWg(wg: AcWorkgroup): AcAgentReplica[] {
 }
 
 const ProjectPanel: Component = () => {
-  // Listen for replica branch updates from the discovery branch watcher
+  // Listen for replica branch and workgroup BRIEF.md updates from the discovery watcher.
   let unlistenBranch: (() => void) | null = null;
+  let unlistenWgBrief: (() => void) | null = null;
   onMount(async () => {
     unlistenBranch = await onDiscoveryBranchUpdated((data) => {
       projectStore.updateReplicaBranch(data.replicaPath, data.branch);
     });
+    unlistenWgBrief = await onAcWorkgroupBriefUpdated((data) => {
+      projectStore.updateWorkgroupBrief(data.workgroupPath, data.brief, data.briefTitle);
+    });
   });
-  onCleanup(() => unlistenBranch?.());
+  onCleanup(() => {
+    unlistenBranch?.();
+    unlistenWgBrief?.();
+  });
 
   const [pendingLaunch, setPendingLaunch] = createSignal<PendingLaunch | null>(null);
 
@@ -461,7 +468,8 @@ const ProjectPanel: Component = () => {
           replica: AcAgentReplica,
           wg: AcWorkgroup,
           extraBadge?: string,
-          runningPeers?: () => AcAgentReplica[]
+          runningPeers?: () => AcAgentReplica[],
+          briefTitle?: string
         ) => {
           const dotClass = () => replicaDotClass(wg, replica);
           const isCoord = () => replica.isCoordinator;
@@ -556,6 +564,9 @@ const ProjectPanel: Component = () => {
             >
               <div class={`session-item-status ${dotClass()}`} />
               <div class="replica-item-info">
+                <Show when={briefTitle}>
+                  <span class="coord-brief-title" title={briefTitle}>{briefTitle}</span>
+                </Show>
                 <span class="replica-item-name">{replica.originProject ? `${replica.name}@${replica.originProject}` : replica.name}</span>
                 <div class="ac-discovery-badges">
                   <Show when={runningPeers && runningPeers()!.length > 0}>
@@ -767,7 +778,7 @@ const ProjectPanel: Component = () => {
                                 return dot === "running" || dot === "active";
                               })
                             );
-                            return renderReplicaItem(item.replica, item.wg, item.wg.name, runningPeers);
+                            return renderReplicaItem(item.replica, item.wg, item.wg.name, runningPeers, item.wg.briefTitle);
                           }}
                         </For>
                       </div>
