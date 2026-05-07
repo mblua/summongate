@@ -13,9 +13,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
-use crate::cli::brief_ops::{self, BriefOp, EditOutcome};
+use crate::cli::brief_ops::{self, BriefOp};
 use crate::session::manager::SessionManager;
-use crate::session::session::{find_workgroup_brief_path_for_cwd, read_workgroup_brief_for_cwd};
+use crate::session::session::find_workgroup_brief_path_for_cwd;
 
 /// Payload returned to the frontend after a successful brief mutation.
 #[derive(Debug, Clone, Serialize)]
@@ -70,6 +70,13 @@ fn emit_brief_updated(app: &AppHandle, wg_root: &Path, brief: &Option<String>) {
     );
 }
 
+fn read_brief_at(wg_root: &Path) -> Option<String> {
+    std::fs::read_to_string(wg_root.join("BRIEF.md"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Read the current YAML-frontmatter `title:` value of the workgroup
 /// BRIEF.md for the given session. Returns `None` when there is no
 /// frontmatter or no `title:` line.
@@ -119,18 +126,19 @@ pub async fn brief_set_title(
         return Err("title is too long (max 256 characters)".to_string());
     }
     let wg_root = resolve_wg_root(&session_mgr, &session_id).await?;
-    match brief_ops::perform(&wg_root, BriefOp::SetTitle(title)) {
-        Ok(EditOutcome::Wrote { .. }) | Ok(EditOutcome::NoOp) => {
-            let brief = read_workgroup_brief_for_cwd(&wg_root.to_string_lossy());
-            let result = BriefUpdateResult {
-                workgroup_root: strip_unc(&wg_root),
-                brief: brief.clone(),
-            };
-            emit_brief_updated(&app, &wg_root, &brief);
-            Ok(result)
-        }
-        Err(e) => Err(format!("{}", e)),
-    }
+    let outcome = brief_ops::perform(&wg_root, BriefOp::SetTitle(title)).map_err(|e| e.to_string())?;
+    log::info!(
+        "[brief] set_title for session {} -> {:?}",
+        session_id,
+        outcome
+    );
+    let brief = read_brief_at(&wg_root);
+    let result = BriefUpdateResult {
+        workgroup_root: strip_unc(&wg_root),
+        brief: brief.clone(),
+    };
+    emit_brief_updated(&app, &wg_root, &brief);
+    Ok(result)
 }
 
 /// Replace the workgroup BRIEF.md with the canonical Limpio form
@@ -143,16 +151,13 @@ pub async fn brief_clean(
     session_id: String,
 ) -> Result<BriefUpdateResult, String> {
     let wg_root = resolve_wg_root(&session_mgr, &session_id).await?;
-    match brief_ops::perform(&wg_root, BriefOp::Clean) {
-        Ok(EditOutcome::Wrote { .. }) | Ok(EditOutcome::NoOp) => {
-            let brief = read_workgroup_brief_for_cwd(&wg_root.to_string_lossy());
-            let result = BriefUpdateResult {
-                workgroup_root: strip_unc(&wg_root),
-                brief: brief.clone(),
-            };
-            emit_brief_updated(&app, &wg_root, &brief);
-            Ok(result)
-        }
-        Err(e) => Err(format!("{}", e)),
-    }
+    let outcome = brief_ops::perform(&wg_root, BriefOp::Clean).map_err(|e| e.to_string())?;
+    log::info!("[brief] clean for session {} -> {:?}", session_id, outcome);
+    let brief = read_brief_at(&wg_root);
+    let result = BriefUpdateResult {
+        workgroup_root: strip_unc(&wg_root),
+        brief: brief.clone(),
+    };
+    emit_brief_updated(&app, &wg_root, &brief);
+    Ok(result)
 }
