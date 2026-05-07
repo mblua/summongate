@@ -240,6 +240,19 @@ html.light-theme .titlebar-version {
 
 .workgroup-brief-header .workgroup-brief-label {
   margin-bottom: 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workgroup-brief-title {
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: var(--font-size-sm);
+  color: var(--terminal-fg);
 }
 
 .workgroup-brief-actions {

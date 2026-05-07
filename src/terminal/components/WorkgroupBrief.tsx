@@ -4,25 +4,46 @@ import { terminalStore } from "../stores/terminal";
 import { BriefAPI } from "../../shared/ipc";
 import BriefCleanConfirmModal from "./BriefCleanConfirmModal";
 
-function parseBriefTitle(content: string | null): string | null {
-  if (!content) return null;
-  if (!content.startsWith("---")) return null;
-  const closer = content.indexOf("\n---", 3);
-  if (closer < 0) return null;
-  const fm = content.slice(3, closer);
+interface ParsedBrief {
+  title: string | null;
+  body: string;
+}
+
+// Splits BRIEF.md content into a YAML-frontmatter title and the body that
+// follows the closing `---`. If the input lacks a valid frontmatter block,
+// the entire content is returned as the body so we never hide useful text.
+function parseBrief(content: string | null): ParsedBrief {
+  const raw = content ?? "";
+  if (!raw.startsWith("---")) return { title: null, body: raw };
+  const closer = raw.indexOf("\n---", 3);
+  if (closer < 0) return { title: null, body: raw };
+
+  let title: string | null = null;
+  const fm = raw.slice(3, closer);
   for (const line of fm.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed.toLowerCase().startsWith("title:")) continue;
     const after = trimmed.slice(6).trim();
     if (after.startsWith("'") && after.endsWith("'") && after.length >= 2) {
-      return after.slice(1, -1).replace(/''/g, "'");
+      title = after.slice(1, -1).replace(/''/g, "'");
+    } else if (after.startsWith('"') && after.endsWith('"') && after.length >= 2) {
+      title = after.slice(1, -1);
+    } else {
+      title = after;
     }
-    if (after.startsWith('"') && after.endsWith('"') && after.length >= 2) {
-      return after.slice(1, -1);
-    }
-    return after;
+    break;
   }
-  return null;
+
+  // closer points at the `\n` before the closing `---`; skip past the marker
+  // and the trailing line break to land on the first body character.
+  const afterMarker = closer + 4;
+  const bodyNewline = raw.indexOf("\n", afterMarker);
+  const body = bodyNewline < 0 ? "" : raw.slice(bodyNewline + 1);
+  return { title, body };
+}
+
+function parseBriefTitle(content: string | null): string | null {
+  return parseBrief(content).title;
 }
 
 // Backend uses byte-exact `name.starts_with("wg-")` (session/session.rs).
@@ -40,7 +61,11 @@ const WorkgroupBrief: Component = () => {
   const [error, setError] = createSignal<string | null>(null);
   const [capturedSessionId, setCapturedSessionId] = createSignal<string | null>(null);
 
-  const currentBrief = createMemo(() => terminalStore.activeWorkgroupBrief?.trim() ?? "");
+  const parsedBrief = createMemo<ParsedBrief>(() =>
+    parseBrief(terminalStore.activeWorkgroupBrief?.trim() ?? "")
+  );
+  const briefTitle = createMemo(() => parsedBrief().title?.trim() || null);
+  const currentBrief = createMemo(() => parsedBrief().body.trim());
   const sessionId = createMemo(() => terminalStore.activeSessionId);
   const cwd = createMemo(() => terminalStore.activeWorkingDirectory);
   const baseDisabled = createMemo(
@@ -178,7 +203,13 @@ const WorkgroupBrief: Component = () => {
   return (
     <div class="workgroup-brief-panel">
       <div class="workgroup-brief-header">
-        <div class="workgroup-brief-label">BRIEF</div>
+        <div class="workgroup-brief-label">
+          BRIEF
+          <Show when={briefTitle()}>
+            <span class="workgroup-brief-label-sep">: </span>
+            <span class="workgroup-brief-title">{briefTitle()}</span>
+          </Show>
+        </div>
         <div class="workgroup-brief-actions">
           <button
             class="workgroup-brief-action"
