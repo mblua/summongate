@@ -41,9 +41,12 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
   let cleanupZoom: (() => void) | null = null;
   let cleanupGeometry: (() => void) | null = null;
 
-  // Home replaces both the central terminal area AND the BRIEF / LAST PROMPT
-  // context panels above it (#164 follow-up). Detached and locked windows
-  // never render Home — they keep the normal layout.
+  // Home is rendered as an overlay covering the BRIEF/LAST PROMPT panels and
+  // the terminal content area beneath them, while those panels stay mounted
+  // (#164 follow-up). Keeping Brief/LastPrompt mounted preserves the height
+  // of `.terminal-content-area`, so TerminalView's ResizeObserver does not
+  // fire on Home toggle and the PTY does not receive a SIGWINCH. Detached
+  // and locked windows never render Home — they keep the normal layout.
   const isHomeShown = createMemo(
     () => !!(props.embedded && !props.detached && !props.lockedSessionId && homeStore.visible)
   );
@@ -208,10 +211,8 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       <Show when={!props.embedded}>
         <Titlebar detached={props.detached} lockedSessionId={props.lockedSessionId} />
       </Show>
-      <Show when={!isHomeShown()}>
-        <WorkgroupBrief />
-        <LastPrompt sessionId={props.lockedSessionId} />
-      </Show>
+      <WorkgroupBrief />
+      <LastPrompt sessionId={props.lockedSessionId} />
       <div class="terminal-content-area">
         <Show
           when={terminalStore.activeSessionId}
@@ -235,15 +236,19 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
         >
           <TerminalView lockedSessionId={props.lockedSessionId} />
         </Show>
-        {/* Home overlay (issue #164). MUST stay a sibling of the Show above so
-            TerminalView is never unmounted while Home is visible — scrollback,
-            onPtyOutput, and the WebGL context all survive Home toggling.
-            Detached/locked windows never render Home. */}
-        <Show when={isHomeShown()}>
-          <HomeView />
-        </Show>
       </div>
       <StatusBar detached={props.detached} />
+      {/* Home overlay (issue #164). Sibling of WorkgroupBrief/LastPrompt and
+          .terminal-content-area inside .terminal-layout (the positioned
+          containing block). Painted on top so it visually covers BRIEF /
+          LAST PROMPT and the terminal area, but those panels remain mounted
+          underneath — toggling Home must not change the height of
+          .terminal-content-area or trigger TerminalView's ResizeObserver
+          (which would SIGWINCH the PTY). TerminalView is never unmounted
+          while Home is visible. Detached/locked windows never render Home. */}
+      <Show when={isHomeShown()}>
+        <HomeView />
+      </Show>
     </div>
   );
 };

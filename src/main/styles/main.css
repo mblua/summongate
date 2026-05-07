@@ -285,18 +285,29 @@ html.light-theme .rtk-banner-btn-secondary:hover:not(:disabled) {
 }
 
 /* --- Home view overlay (issue #164) --------------------------------------
- * Architectural note: .home-view is rendered as an overlay sibling of the
- * terminal/empty <Show> block (see src/terminal/App.tsx). It is absolutely
- * positioned inside .terminal-content-area (defined in terminal.css) so
- * TerminalView remains mounted underneath — scrollback, onPtyOutput listener,
- * and the WebGL context all survive Home toggling.
+ * Architectural note: .home-view is rendered as a direct child of
+ * .terminal-layout (see src/terminal/App.tsx), which is the positioned
+ * containing block (`position: relative` set in terminal.css). It is
+ * absolutely positioned to cover the WorkgroupBrief / LastPrompt context
+ * panels and the .terminal-content-area beneath them, while those panels
+ * remain mounted underneath. Keeping them mounted preserves the height of
+ * .terminal-content-area, so TerminalView's ResizeObserver does not fire on
+ * Home toggle and the PTY does not receive a SIGWINCH (scrollback,
+ * onPtyOutput listener, and the WebGL context all survive Home toggling).
+ *
+ * `bottom: 22px` matches the `.status-bar { height: 22px }` rule in
+ * terminal.css so the status bar stays visible beneath Home; the two values
+ * must change together.
  *
  * These styles are only loaded in the unified main window. Detached/locked
  * terminal windows never render .home-view (guarded in terminal/App.tsx).
  */
 .home-view {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 22px;
   z-index: 10;
   display: flex;
   flex-direction: column;

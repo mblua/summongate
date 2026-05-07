@@ -16,8 +16,14 @@ html, body, #root {
   background: var(--terminal-bg);
 }
 
-/* Layout */
+/* Layout
+ * `position: relative` makes this the containing block for the Home overlay
+ * (issue #164). Home is rendered as a direct child here and uses
+ * `position: absolute` to cover the BRIEF / LAST PROMPT panels and the
+ * terminal content area without unmounting them — keeping their height
+ * stable so TerminalView's ResizeObserver never fires on Home toggle. */
 .terminal-layout {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -445,11 +451,11 @@ html.light-theme .last-prompt-panel::-webkit-scrollbar-thumb {
   color: #ffaa00;
 }
 
-/* Containing block for the Home overlay (issue #164).
- * Lives between the context panels (WorkgroupBrief/LastPrompt) and StatusBar,
- * and wraps the terminal/empty Show block plus the Home overlay sibling.
- * `position: relative` lets `.home-view { position: absolute; inset: 0 }` (in
- * main.css) cover the terminal content area without unmounting TerminalView. */
+/* Terminal content area. Lives between the context panels
+ * (WorkgroupBrief/LastPrompt) and StatusBar, and wraps the terminal/empty
+ * Show block. The Home overlay (#164) is a sibling of this element inside
+ * `.terminal-layout` — not nested here — so toggling Home does not affect
+ * this element's size and TerminalView's ResizeObserver does not fire. */
 .terminal-content-area {
   position: relative;
   flex: 1;
