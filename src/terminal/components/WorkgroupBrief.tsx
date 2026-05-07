@@ -1,6 +1,7 @@
 import { Component, createMemo, createSignal, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { terminalStore } from "../stores/terminal";
+import { stripFrontmatter } from "../../shared/markdown";
 import { BriefAPI } from "../../shared/ipc";
 import BriefCleanConfirmModal from "./BriefCleanConfirmModal";
 
@@ -40,7 +41,7 @@ const WorkgroupBrief: Component = () => {
   const [error, setError] = createSignal<string | null>(null);
   const [capturedSessionId, setCapturedSessionId] = createSignal<string | null>(null);
 
-  const currentBrief = createMemo(() => terminalStore.activeWorkgroupBrief?.trim() ?? "");
+  const currentBrief = createMemo(() => stripFrontmatter(terminalStore.activeWorkgroupBrief ?? "").trim());
   const sessionId = createMemo(() => terminalStore.activeSessionId);
   const cwd = createMemo(() => terminalStore.activeWorkingDirectory);
   const baseDisabled = createMemo(
@@ -174,6 +175,7 @@ const WorkgroupBrief: Component = () => {
       el.select();
     });
   };
+
 
   return (
     <div class="workgroup-brief-panel">

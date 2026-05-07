@@ -550,6 +550,7 @@ export function onWorkgroupBriefUpdated(
   callback: (data: WorkgroupBriefUpdatedEvent) => void
 ): Promise<UnlistenFn> {
   return transport.listen<WorkgroupBriefUpdatedEvent>(
+
     "workgroup_brief_updated",
     callback
   );
