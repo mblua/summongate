@@ -83,13 +83,10 @@ const WorkgroupBrief: Component = () => {
   const [capturedSessionId, setCapturedSessionId] = createSignal<string | null>(null);
 
   const parsedBrief = createMemo<ParsedBrief>(() =>
-    parseBrief(terminalStore.activeWorkgroupBrief?.trim() ?? "")
+    parseBrief(terminalStore.activeWorkgroupBrief ?? "")
   );
   const briefTitle = createMemo(() => parsedBrief().title?.trim() || null);
-  // Preserve the parsed body verbatim so indented snippets/code blocks keep
-  // their leading whitespace. Trailing whitespace gets stripped to avoid
-  // dangling blank lines below the panel content.
-  const currentBrief = createMemo(() => parsedBrief().body.replace(/\s+$/, ""));
+  const currentBrief = createMemo(() => parsedBrief().body);
   const sessionId = createMemo(() => terminalStore.activeSessionId);
   const cwd = createMemo(() => terminalStore.activeWorkingDirectory);
   const baseDisabled = createMemo(
