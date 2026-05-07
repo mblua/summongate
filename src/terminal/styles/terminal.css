@@ -445,6 +445,19 @@ html.light-theme .last-prompt-panel::-webkit-scrollbar-thumb {
   color: #ffaa00;
 }
 
+/* Containing block for the Home overlay (issue #164).
+ * Lives between the context panels (WorkgroupBrief/LastPrompt) and StatusBar,
+ * and wraps the terminal/empty Show block plus the Home overlay sibling.
+ * `position: relative` lets `.home-view { position: absolute; inset: 0 }` (in
+ * main.css) cover the terminal content area without unmounting TerminalView. */
+.terminal-content-area {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* Empty terminal state */
 .terminal-empty {
   display: flex;

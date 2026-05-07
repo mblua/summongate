@@ -15,11 +15,13 @@ import { initZoom } from "../shared/zoom";
 import { initWindowGeometry, initDetachedWindowGeometry } from "../shared/window-geometry";
 import { settingsStore } from "../shared/stores/settings";
 import { terminalStore } from "./stores/terminal";
+import { homeStore } from "../main/stores/home";
 import Titlebar from "./components/Titlebar";
 import WorkgroupBrief from "./components/WorkgroupBrief";
 import LastPrompt from "./components/LastPrompt";
 import TerminalView from "./components/TerminalView";
 import StatusBar from "./components/StatusBar";
+import HomeView from "../main/components/HomeView";
 import "./styles/terminal.css";
 
 interface TerminalAppProps {
@@ -201,28 +203,37 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       </Show>
       <WorkgroupBrief />
       <LastPrompt sessionId={props.lockedSessionId} />
-      <Show
-        when={terminalStore.activeSessionId}
-        fallback={
-          <div class="terminal-empty">
-            <span>
-              {props.detached
-                ? "Session closed"
-                : "No active session"}
-            </span>
-            <Show when={!props.detached}>
-              <button
-                class="terminal-empty-btn"
-                onClick={() => SessionAPI.create()}
-              >
-                + New Session
-              </button>
-            </Show>
-          </div>
-        }
-      >
-        <TerminalView lockedSessionId={props.lockedSessionId} />
-      </Show>
+      <div class="terminal-content-area">
+        <Show
+          when={terminalStore.activeSessionId}
+          fallback={
+            <div class="terminal-empty">
+              <span>
+                {props.detached
+                  ? "Session closed"
+                  : "No active session"}
+              </span>
+              <Show when={!props.detached}>
+                <button
+                  class="terminal-empty-btn"
+                  onClick={() => SessionAPI.create()}
+                >
+                  + New Session
+                </button>
+              </Show>
+            </div>
+          }
+        >
+          <TerminalView lockedSessionId={props.lockedSessionId} />
+        </Show>
+        {/* Home overlay (issue #164). MUST stay a sibling of the Show above so
+            TerminalView is never unmounted while Home is visible — scrollback,
+            onPtyOutput, and the WebGL context all survive Home toggling.
+            Detached/locked windows never render Home. */}
+        <Show when={props.embedded && !props.detached && !props.lockedSessionId && homeStore.visible}>
+          <HomeView />
+        </Show>
+      </div>
       <StatusBar detached={props.detached} />
     </div>
   );

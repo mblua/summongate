@@ -283,3 +283,119 @@ html.light-theme .rtk-banner-btn-secondary:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.05);
   color: #1a1a1e;
 }
+
+/* --- Home view overlay (issue #164) --------------------------------------
+ * Architectural note: .home-view is rendered as an overlay sibling of the
+ * terminal/empty <Show> block (see src/terminal/App.tsx). It is absolutely
+ * positioned inside .terminal-content-area (defined in terminal.css) so
+ * TerminalView remains mounted underneath — scrollback, onPtyOutput listener,
+ * and the WebGL context all survive Home toggling.
+ *
+ * These styles are only loaded in the unified main window. Detached/locked
+ * terminal windows never render .home-view (guarded in terminal/App.tsx).
+ */
+.home-view {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  background: var(--terminal-bg, #0a0e14);
+  color: var(--statusbar-fg);
+  overflow: hidden;
+}
+
+.home-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-bottom: 1px solid var(--sidebar-border);
+  flex-shrink: 0;
+}
+
+.home-refresh-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--sidebar-fg-dim);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  font-size: 16px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.home-refresh-btn:hover { background: var(--sidebar-hover); color: var(--sidebar-fg); }
+.home-refresh-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.home-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: var(--spacing-md);
+  font-size: var(--font-size-md);
+  padding: var(--spacing-lg);
+  text-align: center;
+}
+.home-status-error { color: #ff6b6b; }
+.home-retry-btn {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  background: rgba(0, 212, 255, 0.08);
+  color: var(--statusbar-accent);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background var(--transition-fast);
+}
+.home-retry-btn:hover { background: rgba(0, 212, 255, 0.15); }
+
+.home-markdown {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-lg) calc(var(--spacing-lg) * 1.5);
+  line-height: 1.55;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-md);
+  color: var(--sidebar-fg);
+}
+.home-markdown h1, .home-markdown h2, .home-markdown h3 {
+  margin-top: 1.4em;
+  margin-bottom: 0.5em;
+  color: var(--sidebar-fg);
+}
+.home-markdown h1 { font-size: 1.6em; border-bottom: 1px solid var(--sidebar-border); padding-bottom: 0.3em; }
+.home-markdown h2 { font-size: 1.3em; }
+.home-markdown h3 { font-size: 1.1em; }
+.home-markdown p, .home-markdown ul, .home-markdown ol { margin: 0.6em 0; }
+.home-markdown ul, .home-markdown ol { padding-left: 1.6em; }
+.home-markdown li { margin: 0.2em 0; }
+.home-markdown a { color: var(--statusbar-accent); text-decoration: underline; }
+.home-markdown a:hover { color: var(--sidebar-accent); }
+.home-markdown code {
+  font-family: var(--font-mono, monospace);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.92em;
+}
+.home-markdown pre {
+  background: rgba(0, 0, 0, 0.4);
+  padding: var(--spacing-md);
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.8em 0;
+}
+.home-markdown pre code { background: transparent; padding: 0; font-size: 0.9em; }
+.home-markdown blockquote {
+  border-left: 3px solid var(--sidebar-border);
+  padding-left: var(--spacing-md);
+  color: var(--sidebar-fg-dim);
+  margin: 0.8em 0;
+}
+.home-markdown img { max-width: 100%; height: auto; }
+
+html.light-theme .home-markdown code { background: rgba(0, 0, 0, 0.06); }
+html.light-theme .home-markdown pre { background: rgba(0, 0, 0, 0.05); }
