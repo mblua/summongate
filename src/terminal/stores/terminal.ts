@@ -49,4 +49,8 @@ export const terminalStore = {
     if (workingDirectory !== undefined) setActiveWorkingDirectory(workingDirectory);
     if (workgroupBrief !== undefined) setActiveWorkgroupBrief(workgroupBrief);
   },
+
+  setActiveWorkgroupBrief(brief: string | null) {
+    setActiveWorkgroupBrief(brief);
+  },
 };

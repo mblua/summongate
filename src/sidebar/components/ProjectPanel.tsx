@@ -1,7 +1,7 @@
 import { Component, For, Show, createMemo, createSignal, onMount, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import type { AcWorkgroup, AcAgentReplica, AcTeam, Session, TelegramBotConfig, BlockerReport } from "../../shared/types";
-import { SessionAPI, WindowAPI, EntityAPI, TelegramAPI, SettingsAPI, onDiscoveryBranchUpdated, onWorkgroupBriefUpdated, emitOpenSettings } from "../../shared/ipc";
+import { SessionAPI, WindowAPI, EntityAPI, TelegramAPI, SettingsAPI, onDiscoveryBranchUpdated, onAcWorkgroupBriefUpdated, emitOpenSettings } from "../../shared/ipc";
 import type { SessionRepoInput } from "../../shared/ipc";
 import { isTauri } from "../../shared/platform";
 import { projectStore } from "../stores/project";
@@ -85,7 +85,7 @@ const ProjectPanel: Component = () => {
     unlistenBranch = await onDiscoveryBranchUpdated((data) => {
       projectStore.updateReplicaBranch(data.replicaPath, data.branch);
     });
-    unlistenWgBrief = await onWorkgroupBriefUpdated((data) => {
+    unlistenWgBrief = await onAcWorkgroupBriefUpdated((data) => {
       projectStore.updateWorkgroupBrief(data.workgroupPath, data.brief, data.briefTitle);
     });
   });
