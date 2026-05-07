@@ -193,7 +193,7 @@ const WorkgroupBrief: Component = () => {
             class="workgroup-brief-action"
             onClick={requestClean}
             disabled={cleanDisabled()}
-            title="Clean BRIEF (reset to Limpio)"
+            title="Clean BRIEF (reset for new topic)"
             type="button"
           >
             &#x1F9F9;

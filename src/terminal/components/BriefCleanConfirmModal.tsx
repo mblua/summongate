@@ -70,9 +70,9 @@ const BriefCleanConfirmModal: Component<BriefCleanConfirmModalProps> = (props) =
         <h2 id="brief-clean-title" class="quit-confirm-title">Clean BRIEF?</h2>
         <p id="brief-clean-body" class="quit-confirm-body">
           This <strong>resets</strong> the workgroup BRIEF.md — all frontmatter fields
-          and body content are replaced with <code>title: 'Limpio'</code> and body
-          <code> Limpio</code>. If a BRIEF.md exists, a timestamped backup is saved
-          alongside. Continue?
+          and body content are replaced with <code>title: 'Clean'</code> and body
+          <code>Ready to start a new topic</code>. If a BRIEF.md exists, a timestamped
+          backup is saved alongside it. Continue?
         </p>
         <div class="quit-confirm-actions">
           <button
