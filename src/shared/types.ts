@@ -254,6 +254,7 @@ export interface AcWorkgroup {
   name: string;
   path: string;
   brief?: string;
+  briefTitle?: string;
   agents: AcAgentReplica[];
   repoPath?: string;
   teamName?: string;
@@ -328,5 +329,6 @@ export interface WorkgroupBriefUpdatedEvent {
   workgroupPath?: string;
   brief: string | null;
   sessionIds?: string[];
+  briefTitle?: string;
 }
 

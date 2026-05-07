@@ -231,7 +231,7 @@ const SidebarApp: Component<SidebarAppProps> = (props) => {
       await onWorkgroupBriefUpdated((data) => {
         const wgPath = data.workgroupPath || data.workgroupRoot;
         if (wgPath) {
-          projectStore.updateWorkgroupBrief(wgPath, briefFirstLine(data.brief));
+          projectStore.updateWorkgroupBrief(wgPath, briefFirstLine(data.brief), data.briefTitle);
         }
       })
     );

@@ -114,6 +114,8 @@ pub struct AcWorkgroup {
     pub path: String,
     /// First line of BRIEF.md (if exists)
     pub brief: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brief_title: Option<String>,
     /// Replica agents inside this workgroup
     pub agents: Vec<AcAgentReplica>,
     /// Absolute path to the first repo-* directory found (for CWD)
@@ -308,36 +310,18 @@ struct StatSentinel {
 
 #[derive(Clone)]
 struct BriefCacheEntry {
-    /// Last stat we observed for this workgroup's BRIEF.md. Drives the
-    /// next-tick equality short-circuit so we skip the read entirely when
-    /// nothing changed. Always refreshed (even on emit failure) so the
-    /// short-circuit stays correct.
     sentinel: Option<StatSentinel>,
-    /// Last content we successfully shipped to the frontend. Updated only
-    /// on a successful `app_handle.emit` (mirrors `GitWatcher::poll`'s
-    /// emit-then-cache ordering). A failed emit leaves this stale so the
-    /// next stat-change retries.
     brief: Option<String>,
+    brief_title: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BriefUpdatedPayload {
-    /// Absolute path of the wg-* directory (NOT the BRIEF.md file). The
-    /// `\\?\` (Windows verbatim) prefix is stripped before emit so
-    /// `discover_project`'s `read_dir`-derived `AcWorkgroup.path` and the
-    /// watcher's path-walk-derived value compare equal under the
-    /// frontend's `normalizePath` lower+forward-slash.
     workgroup_path: String,
-    /// Trimmed file content with UTF-8 BOM stripped (Notepad on Windows
-    /// writes the BOM; `str::trim` does not treat U+FEFF as whitespace).
-    /// `None` means file missing / read-empty / read-failed-after-budget.
     brief: Option<String>,
-    /// UUIDs of active sessions whose `working_directory` walks up to
-    /// this workgroup. The terminal listener checks membership against
-    /// the active (or locked) session id. May be empty when only the
-    /// sidebar's discovery is driving the brief watch (no session in
-    /// this wg) — sidebar updates by `workgroup_path`, not by session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    brief_title: Option<String>,
     session_ids: Vec<String>,
 }
 
@@ -725,7 +709,7 @@ impl DiscoveryBranchWatcher {
         // we don't want it streamed through Tauri IPC every 15s. On overflow
         // we treat the file as effectively missing (None); the frontend
         // already handles `brief: null` (panel falls back to "...").
-        let new_brief = read_brief_capped(&brief_path);
+        let (new_brief, new_title) = read_brief_fields(wg_root.as_path());
 
         // Re-stat. If the file changed during our read window (external
         // editor mid-save — Notepad does CreateFile(OPEN_EXISTING) +
@@ -744,7 +728,7 @@ impl DiscoveryBranchWatcher {
         }
 
         let content_changed = match prev.as_ref() {
-            Some(p) => p.brief != new_brief,
+            Some(p) => p.brief != new_brief || p.brief_title != new_title,
             None => true,
         };
 
@@ -761,6 +745,7 @@ impl DiscoveryBranchWatcher {
                 .or_insert(BriefCacheEntry {
                     sentinel: now_sentinel.clone(),
                     brief: prev.as_ref().and_then(|p| p.brief.clone()),
+                    brief_title: prev.as_ref().and_then(|p| p.brief_title.clone()),
                 });
         }
 
@@ -771,6 +756,7 @@ impl DiscoveryBranchWatcher {
         let payload = BriefUpdatedPayload {
             workgroup_path: wg_root.to_string_lossy().into_owned(),
             brief: new_brief.clone(),
+            brief_title: new_title.clone(),
             session_ids: session_ids.iter().map(|u| u.to_string()).collect(),
         };
         match self.app_handle.emit("workgroup_brief_updated", payload) {
@@ -782,7 +768,10 @@ impl DiscoveryBranchWatcher {
                     .lock()
                     .unwrap()
                     .entry(wg_root.clone())
-                    .and_modify(|e| e.brief = new_brief);
+                    .and_modify(|e| {
+                        e.brief = new_brief;
+                        e.brief_title = new_title;
+                    });
             }
             Err(e) => {
                 log::warn!(
@@ -938,12 +927,7 @@ pub async fn discover_ac_agents(
 
                 // Workgroups: wg-*
                 if dir_name.starts_with("wg-") {
-                    let brief = path
-                        .join("BRIEF.md")
-                        .exists()
-                        .then(|| std::fs::read_to_string(path.join("BRIEF.md")).ok())
-                        .flatten()
-                        .and_then(|content| extract_brief_first_line(&content));
+                    let (brief, brief_title) = read_brief_fields(&path);
 
                     // Find first repo-* directory for CWD
                     let repo_path = std::fs::read_dir(&path)
@@ -1076,7 +1060,8 @@ pub async fn discover_ac_agents(
                         name: dir_name.clone(),
                         path: path.to_string_lossy().to_string(),
                         brief,
-                        agents: wg_agents,
+brief_title,
+agents: wg_agents,
                         repo_path,
                         team_name: None,
                     });
@@ -1374,12 +1359,7 @@ pub async fn discover_project(
 
         // Workgroups: wg-*
         if dir_name.starts_with("wg-") {
-            let brief = entry_path
-                .join("BRIEF.md")
-                .exists()
-                .then(|| std::fs::read_to_string(entry_path.join("BRIEF.md")).ok())
-                .flatten()
-                .and_then(|content| extract_brief_first_line(&content));
+            let (brief, brief_title) = read_brief_fields(&entry_path);
 
             let repo_path = std::fs::read_dir(&entry_path)
                 .ok()
@@ -1504,7 +1484,8 @@ pub async fn discover_project(
                 name: dir_name.clone(),
                 path: entry_path.to_string_lossy().to_string(),
                 brief,
-                agents: wg_agents,
+brief_title,
+agents: wg_agents,
                 repo_path,
                 team_name: None,
             });
@@ -1784,4 +1765,18 @@ mod tests {
             Some("Real Title".to_string())
         );
     }
+}
+
+type BriefFields = (Option<String>, Option<String>);
+fn read_brief_fields(wg_path: &std::path::Path) -> BriefFields {
+    let brief_path = wg_path.join("BRIEF.md");
+    let Ok(content) = std::fs::read_to_string(&brief_path) else {
+        return (None, None);
+    };
+    let brief = content
+        .lines()
+        .next()
+        .map(|l| l.trim_start_matches("# ").to_string());
+    let brief_title = crate::commands::entity_creation::parse_brief_title(&content);
+    (brief, brief_title)
 }

@@ -109,23 +109,21 @@ export const projectStore = {
     );
   },
 
-  /**
-   * Update a workgroup's brief (first line, post-frontmatter) from the
-   * `workgroup_brief_updated` IPC listener. The Rust side strips the
-   * Windows `\\?\` prefix before emit (see ac_discovery.rs::strip_verbatim_prefix),
-   * so `normalizePath` here is defense-in-depth, not load-bearing.
-   * Caller is responsible for deriving the first-line representation
-   * via `briefFirstLine` so the value matches what `discover_project`
-   * would produce.
-   */
-  updateWorkgroupBrief(workgroupPath: string, brief: string | null) {
+  /** Update a workgroup's BRIEF.md fields from the discovery watcher. */
+  updateWorkgroupBrief(
+    workgroupPath: string,
+    brief: string | null,
+    briefTitle: string | undefined
+  ) {
+
     const normalized = normalizePath(workgroupPath);
     setProjects((prev) =>
       prev.map((proj) => ({
         ...proj,
         workgroups: proj.workgroups.map((wg) =>
           normalizePath(wg.path) === normalized
-            ? { ...wg, brief: brief ?? undefined }
+            ? { ...wg, brief: brief ?? undefined, briefTitle }
+
             : wg
         ),
       }))
