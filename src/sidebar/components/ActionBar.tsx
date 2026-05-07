@@ -3,7 +3,9 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { projectStore } from "../stores/project";
 import { sessionsStore } from "../stores/sessions";
 import type { UnlistenFn } from "../../shared/transport";
-import { ProjectAPI, GuideAPI, emitThemeChanged, onOpenSettings } from "../../shared/ipc";
+import { ProjectAPI, GuideAPI, SettingsAPI, emitThemeChanged, onOpenSettings } from "../../shared/ipc";
+import { settingsStore } from "../../shared/stores/settings";
+import { setSoundsEnabled } from "../../shared/sound";
 import SettingsModal from "./SettingsModal";
 
 const ActionBar: Component = () => {
@@ -98,6 +100,29 @@ const ActionBar: Component = () => {
     }
   };
 
+  // #158 — global app-sound mute. Default true so old settings.json files
+  // (no `soundsEnabled` field) stay audible. setSoundsEnabled is pushed
+  // synchronously BEFORE the persist roundtrip so a beep that fires between
+  // the click and the IPC reply (e.g. team-idle-watcher transitioning during
+  // file IO) sees the new gate value — the user's intent in clicking mute is
+  // exactly to suppress imminent beeps. On persist failure we rollback the
+  // gate and toast.
+  const isSoundsEnabled = (): boolean =>
+    settingsStore.current?.soundsEnabled ?? true;
+  const handleToggleMute = async () => {
+    const previousValue = isSoundsEnabled();
+    const newValue = !previousValue;
+    setSoundsEnabled(newValue);
+    try {
+      await SettingsAPI.setSoundsEnabled(newValue);
+      settingsStore.refresh();
+    } catch (err) {
+      setSoundsEnabled(previousValue);
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`Failed to ${newValue ? "unmute" : "mute"} sounds: ${msg}`);
+    }
+  };
+
   return (
     <>
       <div class="action-bar">
@@ -131,6 +156,15 @@ const ActionBar: Component = () => {
             title={sessionsStore.coordSortByActivity ? "Show recent coordinators first" : "Show coordinators in default order"}
           >
             &#x1F525;
+          </button>
+          <button
+            class={`toolbar-gear-btn sounds-mute-btn ${isSoundsEnabled() ? "" : "active"}`}
+            disabled={!settingsStore.current}
+            onClick={handleToggleMute}
+            title={isSoundsEnabled() ? "Mute all app sounds" : "Unmute app sounds"}
+            aria-label={isSoundsEnabled() ? "Mute all app sounds" : "Unmute app sounds"}
+          >
+            {isSoundsEnabled() ? "🔊" : "🔇"}
           </button>
           <button
             class={`toolbar-gear-btn show-categories-btn ${sessionsStore.showCategories ? "active" : ""}`}

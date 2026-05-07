@@ -1,23 +1,12 @@
 {
   "tooling": {
     "codingAgents": {
-      "agent_1775433898536_1": {
-<<<<<<< Updated upstream
-        "acSessionId": "54cc9530-cf5f-45a5-8d47-db2864bb22b1",
-        "app": "Claude Code",
-        "lastUsed": "2026-04-16T17:49:34.582118500+00:00"
-=======
-        "acSessionId": "4c5414cd-7549-427e-960d-5bd13fe3ce32",
-        "app": "Claude Code",
-        "lastUsed": "2026-04-30T17:07:15.209424100+00:00"
->>>>>>> Stashed changes
-      },
-      "agent_1775433917875_2": {
-        "acSessionId": "940b8e03-fcb7-4f2e-bb26-169429bb0c01",
-        "app": "Codex",
-        "lastUsed": "2026-04-18T23:31:41.454055300+00:00"
+      "agent_1775433950146_3": {
+        "acSessionId": "c432657d-1857-4cc1-9ef4-74f7c7485962",
+        "app": "Gemini CLI",
+        "lastUsed": "2026-05-04T03:41:13.156943700+00:00"
       }
     },
-    "lastCodingAgent": "agent_1775433917875_2"
+    "lastCodingAgent": "agent_1775433950146_3"
   }
 }

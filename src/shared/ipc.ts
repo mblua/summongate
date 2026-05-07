@@ -138,6 +138,8 @@ export const SettingsAPI = {
     transport.invoke<void>("set_inject_rtk_hook", { value }),
   setRtkPromptDismissed: (value: boolean) =>
     transport.invoke<void>("set_rtk_prompt_dismissed", { value }),
+  setSoundsEnabled: (value: boolean) =>
+    transport.invoke<void>("set_sounds_enabled", { value }),
   sweepRtkHook: (enabled: boolean) =>
     transport.invoke<RtkSweepResult>("sweep_rtk_hook", { enabled }),
   getRtkStartupStatus: () =>
