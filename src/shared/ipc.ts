@@ -14,6 +14,8 @@ import type {
   AcDiscoveryResult,
   TeamConfigResult,
   WindowGeometry,
+  BriefUpdateResult,
+  WorkgroupBriefUpdatedEvent,
 } from "./types";
 
 export interface SessionRepoInput {
@@ -240,6 +242,18 @@ export const WindowAPI = {
 
   /** @deprecated use focusMain(); back-compat alias, drop at v0.9 */
   ensureTerminal: () => transport.invoke<void>("focus_main_window"),
+};
+
+// Brief API (issue #162)
+export const BriefAPI = {
+  getTitle: (sessionId: string) =>
+    transport.invoke<string | null>("brief_get_title", { sessionId }),
+
+  setTitle: (sessionId: string, title: string) =>
+    transport.invoke<BriefUpdateResult>("brief_set_title", { sessionId, title }),
+
+  clean: (sessionId: string) =>
+    transport.invoke<BriefUpdateResult>("brief_clean", { sessionId }),
 };
 
 // Telegram Bridge API
@@ -502,6 +516,15 @@ export function onTelegramIncoming(
 ): Promise<UnlistenFn> {
   return transport.listen<{ sessionId: string; text: string; from: string }>(
     "telegram_incoming",
+    callback
+  );
+}
+
+export function onWorkgroupBriefUpdated(
+  callback: (data: WorkgroupBriefUpdatedEvent) => void
+): Promise<UnlistenFn> {
+  return transport.listen<WorkgroupBriefUpdatedEvent>(
+    "workgroup_brief_updated",
     callback
   );
 }

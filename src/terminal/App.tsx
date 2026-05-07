@@ -9,6 +9,7 @@ import {
   onSessionDestroyed,
   onSessionRenamed,
   onThemeChanged,
+  onWorkgroupBriefUpdated,
 } from "../shared/ipc";
 import { registerShortcuts, unregisterShortcuts } from "../shared/shortcuts";
 import { initZoom } from "../shared/zoom";
@@ -168,6 +169,31 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       await onSessionRenamed(({ id, name }) => {
         if (id === terminalStore.activeSessionId) {
           terminalStore.setActiveSession(id, name);
+        }
+      })
+    );
+
+    // Issue #162: cross-window brief refresh. When any window in this
+    // workgroup mutates BRIEF.md, the backend emits this event with the
+    // new content; we update the terminal store iff our active session
+    // is under the same wg-root. Both sides of the comparison run through
+    // normalizePathForCompare, which strips Windows `\\?\` UNC prefix
+    // (the backend already strips on emit, but the frontend store's cwd
+    // may still carry it after canonicalize).
+    const normalizePathForCompare = (p: string): string => {
+      let s = p;
+      if (s.startsWith("\\\\?\\")) s = s.slice(4);
+      else if (s.startsWith("//?/")) s = s.slice(4);
+      return s.replace(/\\/g, "/").toLowerCase();
+    };
+    unlisteners.push(
+      await onWorkgroupBriefUpdated(({ workgroupRoot, brief }) => {
+        const cwd = terminalStore.activeWorkingDirectory;
+        if (!cwd) return;
+        const cwdNorm = normalizePathForCompare(cwd);
+        const wgNorm = normalizePathForCompare(workgroupRoot);
+        if (cwdNorm === wgNorm || cwdNorm.startsWith(wgNorm + "/")) {
+          terminalStore.setActiveWorkgroupBrief(brief);
         }
       })
     );
