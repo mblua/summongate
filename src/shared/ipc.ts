@@ -507,3 +507,12 @@ export function onTelegramIncoming(
     callback
   );
 }
+
+export function onWorkgroupBriefUpdated(
+  callback: (data: { workgroupPath: string; brief: string | null; sessionIds: string[] }) => void
+): Promise<UnlistenFn> {
+  return transport.listen<{ workgroupPath: string; brief: string | null; sessionIds: string[] }>(
+    "workgroup_brief_updated",
+    callback
+  );
+}

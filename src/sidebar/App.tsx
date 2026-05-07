@@ -20,7 +20,9 @@ import {
   onTelegramBridgeError,
   onTerminalDetached,
   onTerminalAttached,
+  onWorkgroupBriefUpdated,
 } from "../shared/ipc";
+import { briefFirstLine } from "../shared/markdown";
 import { registerShortcuts, unregisterShortcuts } from "../shared/shortcuts";
 import { initZoom } from "../shared/zoom";
 import { initWindowGeometry } from "../shared/window-geometry";
@@ -222,6 +224,12 @@ const SidebarApp: Component<SidebarAppProps> = (props) => {
     unlisteners.push(
       await onSessionGitRepos(({ sessionId, repos }) => {
         sessionsStore.setGitRepos(sessionId, repos);
+      })
+    );
+
+    unlisteners.push(
+      await onWorkgroupBriefUpdated(({ workgroupPath, brief }) => {
+        projectStore.updateWorkgroupBrief(workgroupPath, briefFirstLine(brief));
       })
     );
 

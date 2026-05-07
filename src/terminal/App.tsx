@@ -9,6 +9,7 @@ import {
   onSessionDestroyed,
   onSessionRenamed,
   onThemeChanged,
+  onWorkgroupBriefUpdated,
 } from "../shared/ipc";
 import { registerShortcuts, unregisterShortcuts } from "../shared/shortcuts";
 import { initZoom } from "../shared/zoom";
@@ -169,6 +170,21 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
         if (id === terminalStore.activeSessionId) {
           terminalStore.setActiveSession(id, name);
         }
+      })
+    );
+
+    // Brief updates from DiscoveryBranchWatcher's Gate C (15s piggyback).
+    // Registered OUTSIDE every conditional — applies to all modes (normal,
+    // detached, embedded). DO NOT hoist above loadActiveSession(): an event
+    // racing with the initial SessionAPI.list() would overwrite the freshly-
+    // loaded brief with a value that's actually older.
+    unlisteners.push(
+      await onWorkgroupBriefUpdated(({ brief, sessionIds }) => {
+        // Normal mode: follow the active session. Detached mode: locked id.
+        const targetId = props.lockedSessionId ?? terminalStore.activeSessionId;
+        if (!targetId) return;
+        if (!sessionIds.includes(targetId)) return;
+        terminalStore.setActiveWorkgroupBriefIfActive(targetId, brief);
       })
     );
 
