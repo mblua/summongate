@@ -254,6 +254,7 @@ export interface AcWorkgroup {
   name: string;
   path: string;
   brief?: string;
+  briefTitle?: string;
   agents: AcAgentReplica[];
   repoPath?: string;
   teamName?: string;
