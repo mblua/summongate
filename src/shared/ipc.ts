@@ -14,6 +14,8 @@ import type {
   AcDiscoveryResult,
   TeamConfigResult,
   WindowGeometry,
+  BriefUpdateResult,
+  WorkgroupBriefUpdatedEvent,
 } from "./types";
 
 export interface SessionRepoInput {
@@ -249,6 +251,18 @@ export const WindowAPI = {
     transport.invoke<void>("open_external_url", { url }),
 };
 
+// Brief API (issue #162)
+export const BriefAPI = {
+  getTitle: (sessionId: string) =>
+    transport.invoke<string | null>("brief_get_title", { sessionId }),
+
+  setTitle: (sessionId: string, title: string) =>
+    transport.invoke<BriefUpdateResult>("brief_set_title", { sessionId, title }),
+
+  clean: (sessionId: string) =>
+    transport.invoke<BriefUpdateResult>("brief_clean", { sessionId }),
+};
+
 // Telegram Bridge API
 export const TelegramAPI = {
   attach: (sessionId: string, botId: string) =>
@@ -315,6 +329,20 @@ export function onDiscoveryBranchUpdated(
     "ac_discovery_branch_updated",
     callback
   );
+}
+
+export function onAcWorkgroupBriefUpdated(
+  callback: (data: {
+    workgroupPath: string;
+    brief: string | null;
+    briefTitle?: string;
+  }) => void
+): Promise<UnlistenFn> {
+  return transport.listen<{
+    workgroupPath: string;
+    brief: string | null;
+    briefTitle?: string;
+  }>("ac_workgroup_brief_updated", callback);
 }
 
 export function onSessionIdle(
@@ -514,6 +542,15 @@ export function onTelegramIncoming(
 ): Promise<UnlistenFn> {
   return transport.listen<{ sessionId: string; text: string; from: string }>(
     "telegram_incoming",
+    callback
+  );
+}
+
+export function onWorkgroupBriefUpdated(
+  callback: (data: WorkgroupBriefUpdatedEvent) => void
+): Promise<UnlistenFn> {
+  return transport.listen<WorkgroupBriefUpdatedEvent>(
+    "workgroup_brief_updated",
     callback
   );
 }

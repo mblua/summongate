@@ -235,6 +235,205 @@ html.light-theme .titlebar-version {
   opacity: 0.85;
 }
 
+/* Issue #162 — BRIEF panel action buttons + inline title editor */
+.workgroup-brief-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-xs);
+  margin-bottom: 4px;
+}
+
+.workgroup-brief-header .workgroup-brief-label {
+  margin-bottom: 0;
+}
+
+.workgroup-brief-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.workgroup-brief-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--statusbar-fg);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+.workgroup-brief-action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--terminal-fg);
+}
+.workgroup-brief-action:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.workgroup-brief-title-edit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.workgroup-brief-title-input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--terminal-fg);
+  font-family: "Cascadia Code", "JetBrains Mono", monospace;
+  font-size: var(--font-size-sm);
+}
+.workgroup-brief-title-btn {
+  padding: 2px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--terminal-fg);
+  font-size: 11px;
+  cursor: pointer;
+}
+.workgroup-brief-title-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.10);
+}
+.workgroup-brief-title-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.workgroup-brief-error {
+  font-size: 11px;
+  color: #ff6b6b;
+  margin-bottom: 4px;
+}
+
+/* Light-theme overrides for #162 controls */
+html.light-theme .workgroup-brief-action {
+  border-color: rgba(0, 0, 0, 0.10);
+}
+html.light-theme .workgroup-brief-action:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.05);
+}
+html.light-theme .workgroup-brief-title-input {
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+html.light-theme .workgroup-brief-title-btn {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.10);
+}
+html.light-theme .workgroup-brief-title-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.10);
+}
+
+/* Issue #162 — modal CSS copied verbatim from src/main/styles/main.css.
+ * Required because the detached terminal window mounts TerminalApp
+ * without main.css. Keep these in sync if main.css's modal rules are
+ * ever revised. */
+.quit-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+.quit-confirm-modal {
+  background: var(--bg-modal, #14141a);
+  color: var(--fg-primary, #e8e8e8);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
+  border-radius: 6px;
+  min-width: 360px;
+  max-width: 480px;
+  padding: 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  font-family: "Geist", "Outfit", "General Sans", sans-serif;
+}
+.quit-confirm-title {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 500;
+}
+.quit-confirm-body {
+  margin: 0 0 20px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-secondary, rgba(255, 255, 255, 0.75));
+}
+.quit-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.quit-confirm-btn {
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out;
+}
+.quit-confirm-btn-cancel {
+  background: var(--btn-primary-bg, rgba(0, 212, 255, 0.2));
+  color: var(--btn-primary-fg, #00d4ff);
+  border-color: var(--btn-primary-border, rgba(0, 212, 255, 0.4));
+}
+.quit-confirm-btn-cancel:hover {
+  background: rgba(0, 212, 255, 0.3);
+}
+.quit-confirm-btn-cancel:focus-visible {
+  outline: 2px solid var(--focus-ring, #00d4ff);
+  outline-offset: 2px;
+}
+.quit-confirm-btn-quit {
+  background: transparent;
+  color: var(--fg-secondary, rgba(255, 255, 255, 0.7));
+  border-color: var(--border-subtle, rgba(255, 255, 255, 0.15));
+}
+.quit-confirm-btn-quit:hover {
+  background: rgba(255, 59, 92, 0.15);
+  color: #ff6b80;
+  border-color: rgba(255, 59, 92, 0.4);
+}
+.quit-confirm-btn-quit:focus-visible {
+  outline: 2px solid #ff6b80;
+  outline-offset: 2px;
+}
+
+html.light-theme .quit-confirm-modal {
+  background: #f7f7f9;
+  color: #1a1a1e;
+  border-color: rgba(0, 0, 0, 0.1);
+}
+html.light-theme .quit-confirm-body {
+  color: rgba(0, 0, 0, 0.7);
+}
+html.light-theme .quit-confirm-btn-quit {
+  background: rgba(196, 38, 61, 0.06);
+  color: #c4263d;
+  border-color: rgba(196, 38, 61, 0.35);
+}
+html.light-theme .quit-confirm-btn-quit:hover {
+  background: rgba(196, 38, 61, 0.12);
+  color: #a01b30;
+  border-color: rgba(196, 38, 61, 0.55);
+}
+html.light-theme .quit-confirm-btn-quit:focus-visible {
+  outline: 2px solid #c4263d;
+}
+
 /* Light-theme overrides for context panels */
 html.light-theme .workgroup-brief-panel,
 html.light-theme .last-prompt-panel {

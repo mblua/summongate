@@ -16,6 +16,8 @@ use crate::session::session::SessionRepo;
 /// `format!`-into-log; `Relaxed` is canonical for an observed-but-not-synchronizing counter.
 static DISCOVERY_CALL_ID: AtomicU64 = AtomicU64::new(0);
 
+type BriefFields = (Option<String>, Option<String>);
+
 /// Resolve the preferred coding agent for a directory by matching the app
 /// label from the agent's config.json against THIS instance's settings.
 ///
@@ -112,6 +114,12 @@ pub struct AcWorkgroup {
     pub path: String,
     /// First line of BRIEF.md (if exists)
     pub brief: Option<String>,
+    /// YAML-frontmatter `title:` value extracted from BRIEF.md, if present.
+    ///
+    /// This intentionally omits the wire key when absent so the frontend sees
+    /// an absent-or-string `briefTitle` contract for the new field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brief_title: Option<String>,
     /// Replica agents inside this workgroup
     pub agents: Vec<AcAgentReplica>,
     /// Absolute path to the first repo-* directory found (for CWD)
@@ -202,6 +210,23 @@ fn detect_git_branch_sync(dir: &str) -> Option<String> {
     }
 }
 
+/// Read BRIEF.md once and derive both the legacy first-line preview and the
+/// structured frontmatter title.
+fn read_brief_fields(wg_path: &Path) -> BriefFields {
+    let brief_path = wg_path.join("BRIEF.md");
+    let Ok(content) = std::fs::read_to_string(&brief_path) else {
+        return (None, None);
+    };
+
+    let brief = content
+        .lines()
+        .next()
+        .map(|l| l.trim_start_matches("# ").to_string());
+    let brief_title = crate::commands::entity_creation::parse_brief_title(&content);
+
+    (brief, brief_title)
+}
+
 // --- Discovery Branch Watcher ---
 
 const BRANCH_POLL_INTERVAL: Duration = Duration::from_secs(15);
@@ -231,6 +256,15 @@ struct SessionGitReposPayload {
     repos: Vec<SessionRepo>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkgroupBriefPayload {
+    workgroup_path: String,
+    brief: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    brief_title: Option<String>,
+}
+
 pub struct DiscoveryBranchWatcher {
     app_handle: AppHandle,
     session_manager: Arc<tokio::sync::RwLock<SessionManager>>,
@@ -246,6 +280,10 @@ pub struct DiscoveryBranchWatcher {
     /// `discovery_cache` so multi-repo replicas re-emit on per-repo drift even when the
     /// single-branch view stays None.
     repos_cache: Mutex<HashMap<String, Vec<SessionRepo>>>,
+    /// Per-project list of workgroup absolute paths to monitor for BRIEF.md changes.
+    workgroup_paths: Mutex<HashMap<String, Vec<String>>>,
+    /// Cache of `(brief, brief_title)` per workgroup absolute path.
+    brief_cache: Mutex<HashMap<String, BriefFields>>,
 }
 
 impl DiscoveryBranchWatcher {
@@ -259,6 +297,8 @@ impl DiscoveryBranchWatcher {
             replicas: Mutex::new(HashMap::new()),
             discovery_cache: Mutex::new(HashMap::new()),
             repos_cache: Mutex::new(HashMap::new()),
+            workgroup_paths: Mutex::new(HashMap::new()),
+            brief_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -325,6 +365,8 @@ impl DiscoveryBranchWatcher {
             }
         }
 
+        let wg_paths: Vec<String> = workgroups.iter().map(|w| w.path.clone()).collect();
+
         log::info!(
             "[DiscoveryBranchWatcher] update_replicas_for_project({}): {} replicas",
             canonical_key,
@@ -333,7 +375,7 @@ impl DiscoveryBranchWatcher {
 
         // Swap in this project's entries; leave other projects alone.
         let mut map = self.replicas.lock().unwrap();
-        map.insert(canonical_key, entries);
+        map.insert(canonical_key.clone(), entries);
 
         // Prune cache entries that no longer belong to ANY project.
         let valid: std::collections::HashSet<String> = map
@@ -350,6 +392,18 @@ impl DiscoveryBranchWatcher {
             .lock()
             .unwrap()
             .retain(|k, _| valid.contains(k));
+
+        {
+            let mut wg_map = self.workgroup_paths.lock().unwrap();
+            wg_map.insert(canonical_key, wg_paths);
+            let valid_wg: std::collections::HashSet<String> =
+                wg_map.values().flatten().cloned().collect();
+            drop(wg_map);
+            self.brief_cache
+                .lock()
+                .unwrap()
+                .retain(|k, _| valid_wg.contains(k));
+        }
     }
 
     /// Remove the specified replicas from `replicas`, `discovery_cache`, and `repos_cache`.
@@ -410,7 +464,11 @@ impl DiscoveryBranchWatcher {
             let map = self.replicas.lock().unwrap();
             map.values().flatten().cloned().collect()
         };
-        if entries.is_empty() {
+        let wg_paths: Vec<String> = {
+            let map = self.workgroup_paths.lock().unwrap();
+            map.values().flatten().cloned().collect()
+        };
+        if entries.is_empty() && wg_paths.is_empty() {
             return;
         }
 
@@ -516,6 +574,31 @@ impl DiscoveryBranchWatcher {
                 }
                 // If no session exists yet (un-instantiated replica), Gate A has already covered
                 // the display surface — no session to push git_repos into.
+            }
+        }
+
+        for wg_path in &wg_paths {
+            let (brief, brief_title) = read_brief_fields(Path::new(wg_path));
+            let changed = {
+                let mut cache = self.brief_cache.lock().unwrap();
+                let curr = (brief.clone(), brief_title.clone());
+                let prev = cache.get(wg_path);
+                if prev != Some(&curr) {
+                    cache.insert(wg_path.clone(), curr);
+                    true
+                } else {
+                    false
+                }
+            };
+            if changed {
+                let _ = self.app_handle.emit(
+                    "ac_workgroup_brief_updated",
+                    WorkgroupBriefPayload {
+                        workgroup_path: wg_path.clone(),
+                        brief,
+                        brief_title,
+                    },
+                );
             }
         }
     }
@@ -664,17 +747,7 @@ pub async fn discover_ac_agents(
 
                 // Workgroups: wg-*
                 if dir_name.starts_with("wg-") {
-                    let brief = path
-                        .join("BRIEF.md")
-                        .exists()
-                        .then(|| std::fs::read_to_string(path.join("BRIEF.md")).ok())
-                        .flatten()
-                        .and_then(|content| {
-                            content
-                                .lines()
-                                .next()
-                                .map(|l| l.trim_start_matches("# ").to_string())
-                        });
+                    let (brief, brief_title) = read_brief_fields(&path);
 
                     // Find first repo-* directory for CWD
                     let repo_path = std::fs::read_dir(&path)
@@ -807,6 +880,7 @@ pub async fn discover_ac_agents(
                         name: dir_name.clone(),
                         path: path.to_string_lossy().to_string(),
                         brief,
+                        brief_title,
                         agents: wg_agents,
                         repo_path,
                         team_name: None,
@@ -1105,17 +1179,7 @@ pub async fn discover_project(
 
         // Workgroups: wg-*
         if dir_name.starts_with("wg-") {
-            let brief = entry_path
-                .join("BRIEF.md")
-                .exists()
-                .then(|| std::fs::read_to_string(entry_path.join("BRIEF.md")).ok())
-                .flatten()
-                .and_then(|content| {
-                    content
-                        .lines()
-                        .next()
-                        .map(|l| l.trim_start_matches("# ").to_string())
-                });
+            let (brief, brief_title) = read_brief_fields(&entry_path);
 
             let repo_path = std::fs::read_dir(&entry_path)
                 .ok()
@@ -1240,6 +1304,7 @@ pub async fn discover_project(
                 name: dir_name.clone(),
                 path: entry_path.to_string_lossy().to_string(),
                 brief,
+                brief_title,
                 agents: wg_agents,
                 repo_path,
                 team_name: None,
@@ -1426,4 +1491,108 @@ pub async fn set_replica_context_files(path: String, files: Vec<String>) -> Resu
 
     log::info!("Updated context files for replica at {}: {:?}", path, files);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_brief_fields_extracts_title_from_frontmatter() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wg_dir = tmp.path().join("wg-1-test");
+        std::fs::create_dir(&wg_dir).expect("mkdir wg");
+        std::fs::write(
+            wg_dir.join("BRIEF.md"),
+            "---\ntitle: Hello world\n---\n\nbody\n",
+        )
+        .expect("write BRIEF.md");
+
+        let (brief, brief_title) = read_brief_fields(&wg_dir);
+        assert_eq!(brief.as_deref(), Some("---"));
+        assert_eq!(brief_title.as_deref(), Some("Hello world"));
+    }
+
+    #[test]
+    fn read_brief_fields_returns_none_title_without_frontmatter() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wg_dir = tmp.path().join("wg-1-test");
+        std::fs::create_dir(&wg_dir).expect("mkdir wg");
+        std::fs::write(wg_dir.join("BRIEF.md"), "# Heading\n\nbody\n").expect("write BRIEF.md");
+
+        let (brief, brief_title) = read_brief_fields(&wg_dir);
+        assert_eq!(brief.as_deref(), Some("Heading"));
+        assert!(brief_title.is_none());
+    }
+
+    #[test]
+    fn read_brief_fields_returns_none_when_brief_md_absent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wg_dir = tmp.path().join("wg-1-test");
+        std::fs::create_dir(&wg_dir).expect("mkdir wg");
+
+        let (brief, brief_title) = read_brief_fields(&wg_dir);
+        assert!(brief.is_none());
+        assert!(brief_title.is_none());
+    }
+
+    #[test]
+    fn read_brief_fields_observes_brief_md_rewrite() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wg_dir = tmp.path().join("wg-1-test");
+        std::fs::create_dir(&wg_dir).expect("mkdir wg");
+        let brief_path = wg_dir.join("BRIEF.md");
+
+        std::fs::write(&brief_path, "---\ntitle: Old\n---\nbody\n").expect("write old");
+        let first = read_brief_fields(&wg_dir);
+        assert_eq!(first.1.as_deref(), Some("Old"));
+
+        std::fs::write(&brief_path, "---\ntitle: New\n---\nbody\n").expect("write new");
+        let second = read_brief_fields(&wg_dir);
+        assert_eq!(second.1.as_deref(), Some("New"));
+        assert_ne!(
+            first, second,
+            "watcher must observe (brief, brief_title) drift"
+        );
+    }
+
+    #[test]
+    fn ac_workgroup_serializes_brief_title_as_camel_case() {
+        let wg = AcWorkgroup {
+            name: "wg-1-test".to_string(),
+            path: "/tmp/wg-1-test".to_string(),
+            brief: Some("---".to_string()),
+            brief_title: Some("Visible title".to_string()),
+            agents: Vec::new(),
+            repo_path: None,
+            team_name: None,
+        };
+
+        let value = serde_json::to_value(&wg).expect("serialize AcWorkgroup");
+        assert_eq!(
+            value.get("briefTitle").and_then(|v| v.as_str()),
+            Some("Visible title")
+        );
+        assert!(value.get("brief_title").is_none());
+    }
+
+    #[test]
+    fn ac_workgroup_omits_brief_title_when_none() {
+        let wg = AcWorkgroup {
+            name: "wg-1-test".to_string(),
+            path: "/tmp/wg-1-test".to_string(),
+            brief: Some("# Heading".to_string()),
+            brief_title: None,
+            agents: Vec::new(),
+            repo_path: None,
+            team_name: None,
+        };
+
+        let value = serde_json::to_value(&wg).expect("serialize AcWorkgroup");
+        assert!(
+            value.get("briefTitle").is_none(),
+            "briefTitle must be absent when brief_title is None; got {:?}",
+            value.get("briefTitle")
+        );
+    }
 }

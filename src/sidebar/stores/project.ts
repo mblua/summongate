@@ -109,6 +109,25 @@ export const projectStore = {
     );
   },
 
+  /** Update a workgroup's BRIEF.md fields from the discovery watcher. */
+  updateWorkgroupBrief(
+    workgroupPath: string,
+    brief: string | null,
+    briefTitle: string | undefined
+  ) {
+    const normalized = normalizePath(workgroupPath);
+    setProjects((prev) =>
+      prev.map((proj) => ({
+        ...proj,
+        workgroups: proj.workgroups.map((wg) =>
+          normalizePath(wg.path) === normalized
+            ? { ...wg, brief: brief ?? undefined, briefTitle }
+            : wg
+        ),
+      }))
+    );
+  },
+
   /** Re-discover a single project and update its data in place */
   async reloadProject(path: string) {
     const normalized = normalizePath(path);
