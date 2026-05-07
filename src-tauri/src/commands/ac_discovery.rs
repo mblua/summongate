@@ -1,11 +1,13 @@
 use futures::future::join_all;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::Path;
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter, State};
+use uuid::Uuid;
 
 use crate::config::settings::SettingsState;
 use crate::session::manager::SessionManager;
@@ -206,6 +208,41 @@ fn extract_brief_first_line(content: &str) -> Option<String> {
         .map(|l| l.trim_start_matches("# ").to_string())
 }
 
+/// Strip the Windows verbatim/UNC `\\?\` prefix if present so the emitted
+/// path matches the form `discover_project` produces (which never has the
+/// prefix because it comes from a `read_dir` walk). The codebase already
+/// applies the same strip downstream when embedding paths into the agent
+/// init prompt — see the `find_workgroup_brief_path_handles_unc_prefix_input`
+/// test note in `session.rs`.
+fn strip_verbatim_prefix(p: &Path) -> PathBuf {
+    let s = p.to_string_lossy();
+    s.strip_prefix(r"\\?\")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| p.to_path_buf())
+}
+
+/// Read BRIEF.md at most 256 KiB, strip a UTF-8 BOM if present, trim, and
+/// return None on empty / read-error / file-missing. Bigger files are
+/// truncated; we do NOT attempt to stream the whole file through Tauri IPC.
+fn read_brief_capped(brief_path: &Path) -> Option<String> {
+    const MAX_BYTES: u64 = 256 * 1024;
+    let file = std::fs::File::open(brief_path).ok()?;
+    let mut buf = String::new();
+    if file.take(MAX_BYTES).read_to_string(&mut buf).is_err() {
+        return None;
+    }
+    let trimmed = buf
+        .strip_prefix('\u{FEFF}')
+        .unwrap_or(&buf)
+        .trim()
+        .to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
 /// Detect git branch synchronously for a given directory path.
 fn detect_git_branch_sync(dir: &str) -> Option<String> {
     #[cfg(windows)]
@@ -263,6 +300,47 @@ struct SessionGitReposPayload {
     repos: Vec<SessionRepo>,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct StatSentinel {
+    len: u64,
+    mtime: Option<SystemTime>,
+}
+
+#[derive(Clone)]
+struct BriefCacheEntry {
+    /// Last stat we observed for this workgroup's BRIEF.md. Drives the
+    /// next-tick equality short-circuit so we skip the read entirely when
+    /// nothing changed. Always refreshed (even on emit failure) so the
+    /// short-circuit stays correct.
+    sentinel: Option<StatSentinel>,
+    /// Last content we successfully shipped to the frontend. Updated only
+    /// on a successful `app_handle.emit` (mirrors `GitWatcher::poll`'s
+    /// emit-then-cache ordering). A failed emit leaves this stale so the
+    /// next stat-change retries.
+    brief: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BriefUpdatedPayload {
+    /// Absolute path of the wg-* directory (NOT the BRIEF.md file). The
+    /// `\\?\` (Windows verbatim) prefix is stripped before emit so
+    /// `discover_project`'s `read_dir`-derived `AcWorkgroup.path` and the
+    /// watcher's path-walk-derived value compare equal under the
+    /// frontend's `normalizePath` lower+forward-slash.
+    workgroup_path: String,
+    /// Trimmed file content with UTF-8 BOM stripped (Notepad on Windows
+    /// writes the BOM; `str::trim` does not treat U+FEFF as whitespace).
+    /// `None` means file missing / read-empty / read-failed-after-budget.
+    brief: Option<String>,
+    /// UUIDs of active sessions whose `working_directory` walks up to
+    /// this workgroup. The terminal listener checks membership against
+    /// the active (or locked) session id. May be empty when only the
+    /// sidebar's discovery is driving the brief watch (no session in
+    /// this wg) — sidebar updates by `workgroup_path`, not by session.
+    session_ids: Vec<String>,
+}
+
 pub struct DiscoveryBranchWatcher {
     app_handle: AppHandle,
     session_manager: Arc<tokio::sync::RwLock<SessionManager>>,
@@ -278,6 +356,13 @@ pub struct DiscoveryBranchWatcher {
     /// `discovery_cache` so multi-repo replicas re-emit on per-repo drift even when the
     /// single-branch view stays None.
     repos_cache: Mutex<HashMap<String, Vec<SessionRepo>>>,
+    /// Per-workgroup-root cache for Gate C (brief detection). Keyed by the
+    /// stripped (no `\\?\`) absolute path of the wg-* directory. Bounded
+    /// implicitly by the union of (loaded-project replicas, active sessions);
+    /// no explicit prune since entries are ~200B each and the upper bound is
+    /// the user's project layout. A stale entry for a wg that no longer has
+    /// sessions or replicas is harmless: next tick will simply not visit it.
+    brief_cache: Mutex<HashMap<PathBuf, BriefCacheEntry>>,
 }
 
 impl DiscoveryBranchWatcher {
@@ -291,6 +376,7 @@ impl DiscoveryBranchWatcher {
             replicas: Mutex::new(HashMap::new()),
             discovery_cache: Mutex::new(HashMap::new()),
             repos_cache: Mutex::new(HashMap::new()),
+            brief_cache: Mutex::new(HashMap::new()),
         })
     }
 
@@ -442,112 +528,268 @@ impl DiscoveryBranchWatcher {
             let map = self.replicas.lock().unwrap();
             map.values().flatten().cloned().collect()
         };
-        if entries.is_empty() {
-            return;
-        }
 
-        for entry in &entries {
-            // Capture the session's git_repos_gen (if a session exists) BEFORE running detections.
-            // Used for CAS on set_git_repos_if_gen (Grinch #14).
-            let (session_id_opt, gen_snapshot) = {
-                let mgr = self.session_manager.read().await;
-                match mgr.find_by_name(&entry.session_name).await {
-                    Some(id) => {
-                        let gen = mgr.get_git_repos_gen(id).await.unwrap_or(0);
-                        (Some(id), gen)
+        // Gate A + Gate B (existing replica-driven git detection). Wrapped so
+        // an empty `entries` (no project loaded) still falls through to Gate C,
+        // which is also driven by active sessions — sessions can exist for
+        // workgroups whose project is not in `settings.projectPaths`.
+        if !entries.is_empty() {
+            for entry in &entries {
+                // Capture the session's git_repos_gen (if a session exists) BEFORE running detections.
+                // Used for CAS on set_git_repos_if_gen (Grinch #14).
+                let (session_id_opt, gen_snapshot) = {
+                    let mgr = self.session_manager.read().await;
+                    match mgr.find_by_name(&entry.session_name).await {
+                        Some(id) => {
+                            let gen = mgr.get_git_repos_gen(id).await.unwrap_or(0);
+                            (Some(id), gen)
+                        }
+                        None => (None, 0),
                     }
-                    None => (None, 0),
-                }
-            };
+                };
 
-            // Parallelize per-repo detection (Grinch #16). Each call individually bounded by
-            // detect_branch_with_timeout (2s). Without join_all this was M*N*2s worst case.
-            let branches: Vec<Option<String>> = join_all(
-                entry
+                // Parallelize per-repo detection (Grinch #16). Each call individually bounded by
+                // detect_branch_with_timeout (2s). Without join_all this was M*N*2s worst case.
+                let branches: Vec<Option<String>> = join_all(
+                    entry
+                        .repos
+                        .iter()
+                        .map(|(_, path)| Self::detect_branch_with_timeout(path)),
+                )
+                .await;
+
+                let refreshed: Vec<SessionRepo> = entry
                     .repos
                     .iter()
-                    .map(|(_, path)| Self::detect_branch_with_timeout(path)),
-            )
-            .await;
+                    .zip(branches.into_iter())
+                    .map(|((label, path), branch)| SessionRepo {
+                        label: label.clone(),
+                        source_path: path.clone(),
+                        branch,
+                    })
+                    .collect();
 
-            let refreshed: Vec<SessionRepo> = entry
-                .repos
-                .iter()
-                .zip(branches.into_iter())
-                .map(|((label, path), branch)| SessionRepo {
-                    label: label.clone(),
-                    source_path: path.clone(),
-                    branch,
-                })
-                .collect();
-
-            // Gate A: emit ac_discovery_branch_updated (single-branch UI for AcDiscoveryPanel).
-            // Only single-repo replicas surface a branch here; multi-repo = None so the panel hides it.
-            let discovery_branch: Option<String> = if entry.repos.len() == 1 {
-                refreshed[0].branch.clone()
-            } else {
-                None
-            };
-            let discovery_changed = {
-                let mut cache = self.discovery_cache.lock().unwrap();
-                let prev = cache.get(&entry.replica_path).cloned();
-                if prev.as_ref() != Some(&discovery_branch) {
-                    cache.insert(entry.replica_path.clone(), discovery_branch.clone());
-                    true
+                // Gate A: emit ac_discovery_branch_updated (single-branch UI for AcDiscoveryPanel).
+                // Only single-repo replicas surface a branch here; multi-repo = None so the panel hides it.
+                let discovery_branch: Option<String> = if entry.repos.len() == 1 {
+                    refreshed[0].branch.clone()
                 } else {
-                    false
-                }
-            };
-            if discovery_changed {
-                let _ = self.app_handle.emit(
-                    "ac_discovery_branch_updated",
-                    DiscoveryBranchPayload {
-                        replica_path: entry.replica_path.clone(),
-                        branch: discovery_branch,
-                    },
-                );
-            }
-
-            // Gate B: emit session_git_repos (full per-repo state for SessionItem).
-            // Independent cache so multi-repo replicas re-emit on per-repo drift even when
-            // Gate A stays None.
-            let repos_changed = {
-                let mut cache = self.repos_cache.lock().unwrap();
-                let prev = cache.get(&entry.replica_path);
-                if prev != Some(&refreshed) {
-                    cache.insert(entry.replica_path.clone(), refreshed.clone());
-                    true
-                } else {
-                    false
-                }
-            };
-            if repos_changed {
-                if let Some(session_id) = session_id_opt {
-                    // CAS write: skip if a refresh bumped gen during our detection window.
-                    let wrote = {
-                        let mgr = self.session_manager.read().await;
-                        mgr.set_git_repos_if_gen(session_id, refreshed.clone(), gen_snapshot)
-                            .await
-                    };
-                    if wrote {
-                        let _ = self.app_handle.emit(
-                            "session_git_repos",
-                            SessionGitReposPayload {
-                                session_id: session_id.to_string(),
-                                repos: refreshed.clone(),
-                            },
-                        );
+                    None
+                };
+                let discovery_changed = {
+                    let mut cache = self.discovery_cache.lock().unwrap();
+                    let prev = cache.get(&entry.replica_path).cloned();
+                    if prev.as_ref() != Some(&discovery_branch) {
+                        cache.insert(entry.replica_path.clone(), discovery_branch.clone());
+                        true
                     } else {
-                        log::debug!(
+                        false
+                    }
+                };
+                if discovery_changed {
+                    let _ = self.app_handle.emit(
+                        "ac_discovery_branch_updated",
+                        DiscoveryBranchPayload {
+                            replica_path: entry.replica_path.clone(),
+                            branch: discovery_branch,
+                        },
+                    );
+                }
+
+                // Gate B: emit session_git_repos (full per-repo state for SessionItem).
+                // Independent cache so multi-repo replicas re-emit on per-repo drift even when
+                // Gate A stays None.
+                let repos_changed = {
+                    let mut cache = self.repos_cache.lock().unwrap();
+                    let prev = cache.get(&entry.replica_path);
+                    if prev != Some(&refreshed) {
+                        cache.insert(entry.replica_path.clone(), refreshed.clone());
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if repos_changed {
+                    if let Some(session_id) = session_id_opt {
+                        // CAS write: skip if a refresh bumped gen during our detection window.
+                        let wrote = {
+                            let mgr = self.session_manager.read().await;
+                            mgr.set_git_repos_if_gen(session_id, refreshed.clone(), gen_snapshot)
+                                .await
+                        };
+                        if wrote {
+                            let _ = self.app_handle.emit(
+                                "session_git_repos",
+                                SessionGitReposPayload {
+                                    session_id: session_id.to_string(),
+                                    repos: refreshed.clone(),
+                                },
+                            );
+                        } else {
+                            log::debug!(
                             "[DiscoveryBranchWatcher] gen mismatch for {} — refresh landed during poll; skipping stale emit",
                             entry.replica_path
                         );
-                        // Clear our own cache entry so next tick re-evaluates against the fresh list.
-                        self.repos_cache.lock().unwrap().remove(&entry.replica_path);
+                            // Clear our own cache entry so next tick re-evaluates against the fresh list.
+                            self.repos_cache.lock().unwrap().remove(&entry.replica_path);
+                        }
                     }
+                    // If no session exists yet (un-instantiated replica), Gate A has already covered
+                    // the display surface — no session to push git_repos into.
                 }
-                // If no session exists yet (un-instantiated replica), Gate A has already covered
-                // the display surface — no session to push git_repos into.
+            }
+        }
+
+        // Gate C: BRIEF.md detection. Runs every tick whether or not Gate A/B
+        // had work to do — sessions in workgroups whose project is not loaded
+        // still need brief updates.
+        self.poll_briefs(&entries).await;
+    }
+
+    /// Gate C: detect BRIEF.md changes per unique workgroup root and emit
+    /// `workgroup_brief_updated` on change. Runs on every existing 15s tick
+    /// of `poll()`; no new thread, no new cadence.
+    async fn poll_briefs(&self, entries: &[ReplicaBranchEntry]) {
+        // Build the union of workgroup roots to watch:
+        //   1. Replicas in loaded projects (from `entries`) — covers the
+        //      sidebar `ProjectPanel` surface.
+        //   2. Active sessions (walked up from cwd via the existing helper)
+        //      — covers the terminal `WorkgroupBrief` surface for sessions
+        //      whose project is NOT loaded.
+        // The map's value is the list of session UUIDs that resolve to this
+        // wg-root (used for the event payload's `sessionIds`).
+        let mut wg_roots: HashMap<PathBuf, Vec<Uuid>> = HashMap::new();
+
+        for entry in entries {
+            // replica.path is `<wg-root>/__agent_<name>` — its parent IS the
+            // wg-root. We do NOT call `find_workgroup_brief_path_for_cwd`
+            // here because the parent is already the answer; calling it
+            // would re-walk and add no information.
+            if let Some(parent) = Path::new(&entry.replica_path).parent() {
+                wg_roots.entry(strip_verbatim_prefix(parent)).or_default();
+            }
+        }
+
+        let sessions: Vec<(Uuid, String)> = {
+            let mgr = self.session_manager.read().await;
+            mgr.get_sessions_working_dirs().await
+        };
+        for (id, cwd) in sessions {
+            if let Some(brief_path) =
+                crate::session::session::find_workgroup_brief_path_for_cwd(&cwd)
+            {
+                if let Some(parent) = brief_path.parent() {
+                    wg_roots
+                        .entry(strip_verbatim_prefix(parent))
+                        .or_default()
+                        .push(id);
+                }
+            }
+        }
+
+        if wg_roots.is_empty() {
+            return;
+        }
+
+        for (wg_root, session_ids) in wg_roots {
+            self.check_workgroup_brief(wg_root, session_ids).await;
+        }
+    }
+
+    /// Per-workgroup brief check. Stat short-circuits unchanged files; on
+    /// stat-change, reads (with size cap), re-stats (defends against torn
+    /// in-place editor saves), and emits if content actually changed.
+    async fn check_workgroup_brief(&self, wg_root: PathBuf, session_ids: Vec<Uuid>) {
+        let brief_path = wg_root.join("BRIEF.md");
+
+        let now_sentinel = std::fs::metadata(&brief_path).ok().map(|m| StatSentinel {
+            len: m.len(),
+            mtime: m.modified().ok(),
+        });
+
+        // Mutex held only for the duration of the get; released before any I/O.
+        // CRITICAL: never hold std::sync::Mutex across an .await — it's not
+        // tokio-aware and would deadlock under load.
+        let prev = self.brief_cache.lock().unwrap().get(&wg_root).cloned();
+
+        // Stat-equality short-circuit — the steady-state path. Cost: one
+        // metadata() call per wg per tick when nothing has changed.
+        if let Some(ref prev_entry) = prev {
+            if prev_entry.sentinel == now_sentinel {
+                return;
+            }
+        }
+
+        // Read with a 256 KiB cap. A bigger BRIEF.md is either accidental
+        // (someone catted /dev/urandom into it) or adversarial; either way,
+        // we don't want it streamed through Tauri IPC every 15s. On overflow
+        // we treat the file as effectively missing (None); the frontend
+        // already handles `brief: null` (panel falls back to "...").
+        let new_brief = read_brief_capped(&brief_path);
+
+        // Re-stat. If the file changed during our read window (external
+        // editor mid-save — Notepad does CreateFile(OPEN_EXISTING) +
+        // SetEndOfFile + write, NOT atomic rename), the read may be torn.
+        // Defer to the next tick when the stat has settled.
+        let post_sentinel = std::fs::metadata(&brief_path).ok().map(|m| StatSentinel {
+            len: m.len(),
+            mtime: m.modified().ok(),
+        });
+        if post_sentinel != now_sentinel {
+            log::debug!(
+                "[DiscoveryBranchWatcher] stat changed during read of {} (likely torn — external editor mid-save); deferring to next tick",
+                brief_path.display()
+            );
+            return;
+        }
+
+        let content_changed = match prev.as_ref() {
+            Some(p) => p.brief != new_brief,
+            None => true,
+        };
+
+        // ALWAYS refresh the sentinel (next-tick short-circuit depends on
+        // it). Insert a placeholder `brief = prev.brief` so a failed emit
+        // below leaves the cache holding the previously-shipped content,
+        // not the new content — that way the next stat-change retries
+        // emission instead of silently accepting the failed state.
+        {
+            let mut cache = self.brief_cache.lock().unwrap();
+            cache
+                .entry(wg_root.clone())
+                .and_modify(|e| e.sentinel = now_sentinel.clone())
+                .or_insert(BriefCacheEntry {
+                    sentinel: now_sentinel.clone(),
+                    brief: prev.as_ref().and_then(|p| p.brief.clone()),
+                });
+        }
+
+        if !content_changed {
+            return;
+        }
+
+        let payload = BriefUpdatedPayload {
+            workgroup_path: wg_root.to_string_lossy().into_owned(),
+            brief: new_brief.clone(),
+            session_ids: session_ids.iter().map(|u| u.to_string()).collect(),
+        };
+        match self.app_handle.emit("workgroup_brief_updated", payload) {
+            Ok(()) => {
+                // Commit shipped content. Mirrors GitWatcher's emit-then-cache
+                // ordering — invariant: the cache's `brief` field is the last
+                // value the FRONTEND has, not the last value we read.
+                self.brief_cache
+                    .lock()
+                    .unwrap()
+                    .entry(wg_root.clone())
+                    .and_modify(|e| e.brief = new_brief);
+            }
+            Err(e) => {
+                log::warn!(
+                    "[DiscoveryBranchWatcher] brief emit failed for {} ({}); leaving cached brief stale so next stat-change retries",
+                    wg_root.display(),
+                    e
+                );
             }
         }
     }
@@ -1518,10 +1760,7 @@ mod tests {
     fn brief_frontmatter_delimiter_tolerates_whitespace() {
         // `---` lines may carry trailing/leading whitespace from editors.
         let content = "--- \ntitle: x\n  ---  \n# Body";
-        assert_eq!(
-            extract_brief_first_line(content),
-            Some("Body".to_string())
-        );
+        assert_eq!(extract_brief_first_line(content), Some("Body".to_string()));
     }
 
     #[test]
