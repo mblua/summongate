@@ -1,7 +1,7 @@
 import { Component, createSignal, onMount, onCleanup, Show } from "solid-js";
 import type { UnlistenFn } from "../shared/transport";
 import type { MainSidebarSide } from "../shared/types";
-import { SettingsAPI } from "../shared/ipc";
+import { SettingsAPI, SessionAPI, onSessionCreated, onSessionDestroyed } from "../shared/ipc";
 import { isTauri } from "../shared/platform";
 import { initZoom } from "../shared/zoom";
 import { initWindowGeometry } from "../shared/window-geometry";
@@ -10,6 +10,7 @@ import TerminalApp from "../terminal/App";
 import Titlebar from "../sidebar/components/Titlebar";
 import QuitConfirmModal from "./components/QuitConfirmModal";
 import RtkBanner from "./components/RtkBanner";
+import { homeStore } from "./stores/home";
 import "./styles/main.css";
 
 const SIDEBAR_MIN_WIDTH = 200;
@@ -163,6 +164,42 @@ const MainApp: Component = () => {
     } catch (e) {
       console.error("Failed to load main-window settings:", e);
     }
+
+    // Home initial visibility (issue #164) — show Home when no active session
+    // at boot. After boot, visibility is user-controlled by the toolbar button
+    // and the auto-hide/auto-show rules below.
+    try {
+      const activeId = await SessionAPI.getActive();
+      homeStore.setInitialVisibility(activeId !== null);
+    } catch (e) {
+      console.error("[home] Failed to read initial active session:", e);
+      homeStore.setInitialVisibility(false);
+    }
+
+    // Auto-hide Home when a session is created (user wants the new session).
+    unlisteners.push(
+      await onSessionCreated(() => {
+        homeStore.hide();
+      })
+    );
+
+    // Auto-show Home when the LAST session is destroyed. Avoids leaving the
+    // user staring at the bare "No active session" empty state. Yield a
+    // microtask so TerminalApp's onSessionDestroyed → loadActiveSession can
+    // settle before we re-query the session list.
+    unlisteners.push(
+      await onSessionDestroyed(async () => {
+        await Promise.resolve();
+        try {
+          const remaining = await SessionAPI.list();
+          if (remaining.length === 0) {
+            homeStore.show();
+          }
+        } catch (e) {
+          console.error("[home] Failed to query session list after destroy:", e);
+        }
+      })
+    );
 
     window.addEventListener("resize", onWindowResize);
     window.addEventListener("main-sidebar-width-change", onSidebarWidthChange);

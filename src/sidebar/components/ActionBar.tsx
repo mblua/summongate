@@ -6,6 +6,7 @@ import type { UnlistenFn } from "../../shared/transport";
 import { ProjectAPI, GuideAPI, SettingsAPI, emitThemeChanged, onOpenSettings } from "../../shared/ipc";
 import { settingsStore } from "../../shared/stores/settings";
 import { setSoundsEnabled } from "../../shared/sound";
+import { homeStore } from "../../main/stores/home";
 import SettingsModal from "./SettingsModal";
 
 const ActionBar: Component = () => {
@@ -149,6 +150,15 @@ const ActionBar: Component = () => {
           </Show>
         </div>
         <div class="action-bar-icons">
+          <button
+            class={`toolbar-gear-btn home-toggle-btn ${homeStore.visible ? "active" : ""}`}
+            onClick={() => homeStore.toggle()}
+            title={homeStore.visible ? "Hide Home" : "Show Home"}
+            aria-label={homeStore.visible ? "Hide Home" : "Show Home"}
+            aria-pressed={homeStore.visible}
+          >
+            &#x1F3E0;
+          </button>
           <button
             class={`toolbar-gear-btn coord-sort-activity-btn ${sessionsStore.coordSortByActivity ? "active" : ""}`}
             disabled={!sessionsStore.hydrated || sessionsStore.toggleInFlight}
