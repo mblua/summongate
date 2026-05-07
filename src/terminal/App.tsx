@@ -1,4 +1,4 @@
-import { Component, onMount, onCleanup, Show } from "solid-js";
+import { Component, onMount, onCleanup, createMemo, Show } from "solid-js";
 import type { UnlistenFn } from "../shared/transport";
 import { isTauri } from "../shared/platform";
 import {
@@ -40,6 +40,13 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
   let shortcutHandler: ((e: KeyboardEvent) => void) | null = null;
   let cleanupZoom: (() => void) | null = null;
   let cleanupGeometry: (() => void) | null = null;
+
+  // Home replaces both the central terminal area AND the BRIEF / LAST PROMPT
+  // context panels above it (#164 follow-up). Detached and locked windows
+  // never render Home — they keep the normal layout.
+  const isHomeShown = createMemo(
+    () => !!(props.embedded && !props.detached && !props.lockedSessionId && homeStore.visible)
+  );
 
   const loadActiveSession = async () => {
     if (props.lockedSessionId) {
@@ -201,8 +208,10 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       <Show when={!props.embedded}>
         <Titlebar detached={props.detached} lockedSessionId={props.lockedSessionId} />
       </Show>
-      <WorkgroupBrief />
-      <LastPrompt sessionId={props.lockedSessionId} />
+      <Show when={!isHomeShown()}>
+        <WorkgroupBrief />
+        <LastPrompt sessionId={props.lockedSessionId} />
+      </Show>
       <div class="terminal-content-area">
         <Show
           when={terminalStore.activeSessionId}
@@ -230,7 +239,7 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
             TerminalView is never unmounted while Home is visible — scrollback,
             onPtyOutput, and the WebGL context all survive Home toggling.
             Detached/locked windows never render Home. */}
-        <Show when={props.embedded && !props.detached && !props.lockedSessionId && homeStore.visible}>
+        <Show when={isHomeShown()}>
           <HomeView />
         </Show>
       </div>
