@@ -414,6 +414,19 @@ html.light-theme .quit-confirm-modal {
 html.light-theme .quit-confirm-body {
   color: rgba(0, 0, 0, 0.7);
 }
+html.light-theme .quit-confirm-btn-quit {
+  background: rgba(196, 38, 61, 0.06);
+  color: #c4263d;
+  border-color: rgba(196, 38, 61, 0.35);
+}
+html.light-theme .quit-confirm-btn-quit:hover {
+  background: rgba(196, 38, 61, 0.12);
+  color: #a01b30;
+  border-color: rgba(196, 38, 61, 0.55);
+}
+html.light-theme .quit-confirm-btn-quit:focus-visible {
+  outline: 2px solid #c4263d;
+}
 
 /* Light-theme overrides for context panels */
 html.light-theme .workgroup-brief-panel,
