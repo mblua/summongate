@@ -313,3 +313,20 @@ export interface BlockerReport {
   processes: BlockerProcess[];
 }
 
+// ---------------------------------------------------------------------------
+// Brief mutation result (issue #162 — BRIEF action buttons)
+// Mirrors src-tauri/src/commands/brief.rs::BriefUpdateResult.
+// ---------------------------------------------------------------------------
+
+export interface BriefUpdateResult {
+  workgroupRoot: string;
+  brief: string | null;
+}
+
+export interface WorkgroupBriefUpdatedEvent {
+  workgroupRoot?: string;
+  workgroupPath?: string;
+  brief: string | null;
+  sessionIds?: string[];
+}
+

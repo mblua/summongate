@@ -173,18 +173,34 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       })
     );
 
-    // Brief updates from DiscoveryBranchWatcher's Gate C (15s piggyback).
-    // Registered OUTSIDE every conditional — applies to all modes (normal,
-    // detached, embedded). DO NOT hoist above loadActiveSession(): an event
-    // racing with the initial SessionAPI.list() would overwrite the freshly-
-    // loaded brief with a value that's actually older.
+
+    // Issue #162 & #163 merged: cross-window brief refresh and polling updates.
+    const normalizePathForCompare = (p: string): string => {
+      let s = p;
+      if (s.startsWith("\\\\?\\")) s = s.slice(4);
+      else if (s.startsWith("//?/")) s = s.slice(4);
+      return s.replace(/\\/g, "/").toLowerCase();
+    };
     unlisteners.push(
-      await onWorkgroupBriefUpdated(({ brief, sessionIds }) => {
-        // Normal mode: follow the active session. Detached mode: locked id.
-        const targetId = props.lockedSessionId ?? terminalStore.activeSessionId;
-        if (!targetId) return;
-        if (!sessionIds.includes(targetId)) return;
-        terminalStore.setActiveWorkgroupBriefIfActive(targetId, brief);
+      await onWorkgroupBriefUpdated((data) => {
+        // #163: Poller (ac_discovery.rs) provides sessionIds
+        if (data.sessionIds) {
+          const targetId = props.lockedSessionId ?? terminalStore.activeSessionId;       
+          if (!targetId) return;
+          if (!data.sessionIds.includes(targetId)) return;
+          terminalStore.setActiveWorkgroupBrief(data.brief);
+        } 
+        // #162: Manual edits (brief.rs) provide workgroupRoot
+        else if (data.workgroupRoot || data.workgroupPath) {
+          const wgRoot = data.workgroupRoot || data.workgroupPath;
+          const cwd = terminalStore.activeWorkingDirectory;
+          if (!cwd || !wgRoot) return;
+          const cwdNorm = normalizePathForCompare(cwd);
+          const wgNorm = normalizePathForCompare(wgRoot);
+          if (cwdNorm === wgNorm || cwdNorm.startsWith(wgNorm + "/")) {
+            terminalStore.setActiveWorkgroupBrief(data.brief);
+          }
+        }
       })
     );
 

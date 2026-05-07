@@ -50,15 +50,8 @@ export const terminalStore = {
     if (workgroupBrief !== undefined) setActiveWorkgroupBrief(workgroupBrief);
   },
 
-  /**
-   * Update only the workgroup-brief field of the active session. Used by
-   * the `workgroup_brief_updated` IPC listener — the rest of the active
-   * session state is untouched. No-op when `id` does not match the
-   * currently-active session id (race guard: the active session may have
-   * switched between event emit and dispatch).
-   */
-  setActiveWorkgroupBriefIfActive(id: string, brief: string | null) {
-    if (activeSessionId() !== id) return;
+  setActiveWorkgroupBrief(brief: string | null) {
+
     setActiveWorkgroupBrief(brief);
   },
 };

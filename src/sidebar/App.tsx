@@ -228,8 +228,11 @@ const SidebarApp: Component<SidebarAppProps> = (props) => {
     );
 
     unlisteners.push(
-      await onWorkgroupBriefUpdated(({ workgroupPath, brief }) => {
-        projectStore.updateWorkgroupBrief(workgroupPath, briefFirstLine(brief));
+      await onWorkgroupBriefUpdated((data) => {
+        const wgPath = data.workgroupPath || data.workgroupRoot;
+        if (wgPath) {
+          projectStore.updateWorkgroupBrief(wgPath, briefFirstLine(data.brief));
+        }
       })
     );
 

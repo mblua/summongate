@@ -652,6 +652,7 @@ const ProjectPanel: Component = () => {
           <div class="project-panel">
             <button
               class="project-header"
+              title={proj.path}
               onClick={() => setCollapsed((c) => !c)}
               onContextMenu={handleProjectContextMenu}
             >
