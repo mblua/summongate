@@ -141,9 +141,9 @@ pub async fn brief_set_title(
     Ok(result)
 }
 
-/// Replace the workgroup BRIEF.md with the canonical Limpio form
-/// (`title: 'Limpio'` + body `Limpio`). Returns the new content and
-/// emits `workgroup_brief_updated`.
+/// Replace the workgroup BRIEF.md with the canonical Clean form
+/// (`title: 'Clean'` + body `Ready to start a new topic`). Returns the
+/// new content and emits `workgroup_brief_updated`.
 #[tauri::command]
 pub async fn brief_clean(
     app: AppHandle,

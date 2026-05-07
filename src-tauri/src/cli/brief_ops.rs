@@ -39,10 +39,10 @@ pub enum BriefOp {
     SetTitle(String),
     /// Append a body paragraph (frontmatter untouched).
     AppendBody(String),
-    /// Replace BOTH frontmatter title AND body with the canonical Limpio form
-    /// (title: 'Limpio', body: "Limpio\n"). Preserves the file's existing BOM
-    /// and dominant line ending. NoOp when the file is already in canonical
-    /// Limpio form.
+    /// Replace BOTH frontmatter title AND body with the canonical Clean form
+    /// (title: 'Clean', body: "Ready to start a new topic\n"). Preserves the
+    /// file's existing BOM and frontmatter line ending; body is always LF
+    /// canonical. NoOp when the file is already in canonical Clean form.
     Clean,
 }
 
@@ -303,18 +303,19 @@ fn apply_append_body(parsed: &ParsedBrief, text: &str) -> ParsedBrief {
     }
 }
 
-/// Replace frontmatter title and body with the canonical Limpio form.
-/// Preserves the file's BOM and dominant line ending. For an empty input
-/// (`parse_brief("")`), `parsed.bom == false` and `parsed.line_ending == "\n"`,
-/// so the output is the canonical LF/no-BOM Limpio form — no special case
-/// needed.
+/// Replace frontmatter title and body with the canonical Clean form.
+/// Preserves the file's BOM and dominant line ending for the frontmatter;
+/// the body is always LF canonical (`"Ready to start a new topic\n"`). For
+/// an empty input (`parse_brief("")`), `parsed.bom == false` and
+/// `parsed.line_ending == "\n"`, so the output is the canonical LF/no-BOM
+/// Clean form — no special case needed.
 fn apply_clean(parsed: &ParsedBrief) -> ParsedBrief {
     ParsedBrief {
         bom: parsed.bom,
         line_ending: parsed.line_ending,
         has_frontmatter: true,
-        frontmatter: vec!["title: 'Limpio'".to_string()],
-        body: "Limpio\n".to_string(),
+        frontmatter: vec!["title: 'Clean'".to_string()],
+        body: "Ready to start a new topic\n".to_string(),
     }
 }
 
@@ -1172,33 +1173,34 @@ mod tests {
     // ── U36-U41: BriefOp::Clean ─────────────────────────────────────────
 
     #[test]
-    fn apply_clean_creates_canonical_limpio_for_empty_file() {
+    fn apply_clean_creates_canonical_clean_for_empty_file() {
         let parsed = parse_brief("");
         let p = apply_clean(&parsed);
         let out = render(&p);
-        assert_eq!(out, "---\ntitle: 'Limpio'\n---\nLimpio\n");
+        assert_eq!(out, "---\ntitle: 'Clean'\n---\nReady to start a new topic\n");
     }
 
     #[test]
     fn apply_clean_replaces_existing_frontmatter_and_body() {
         // Round 2 (dev-rust R1.3): hard-reset semantics also normalize
         // indentation — a coordinator-edited `  title: 'X'` (two-space
-        // indent) becomes unindented `"title: 'Limpio'"`. Idempotence
+        // indent) becomes unindented `"title: 'Clean'"`. Idempotence
         // check in §3.1.4 will treat this as write-worthy.
         let parsed = parse_brief("---\ntitle: 'Old'\nfoo: bar\n---\nold body\n");
         let p = apply_clean(&parsed);
         // Frontmatter is REPLACED entirely (foo: bar is dropped — Clean
         // is a hard reset, not a merge).
-        assert_eq!(p.frontmatter, vec!["title: 'Limpio'".to_string()]);
-        assert_eq!(p.body, "Limpio\n");
+        assert_eq!(p.frontmatter, vec!["title: 'Clean'".to_string()]);
+        assert_eq!(p.body, "Ready to start a new topic\n");
     }
 
     #[test]
     fn apply_clean_preserves_crlf_and_bom() {
-        // Round 2 (dev-rust R1.3): on a Notepad-saved Limpio file with
-        // body `"Limpio\r\n"`, repeated Clean is NOT idempotent — the
-        // CRLF→LF body conversion is treated as a write-worthy diff.
-        // This matches `apply_append_body`'s pinned trade-off (test U34).
+        // Round 2 (dev-rust R1.3): on a Notepad-saved Clean file with
+        // body `"Ready to start a new topic\r\n"`, repeated Clean is NOT
+        // idempotent — the CRLF→LF body conversion is treated as a
+        // write-worthy diff. This matches `apply_append_body`'s pinned
+        // trade-off (test U34).
         let input = "\u{FEFF}---\r\ntitle: old\r\nx: 1\r\n---\r\nbody\r\n";
         let parsed = parse_brief(input);
         let p = apply_clean(&parsed);
@@ -1206,16 +1208,20 @@ mod tests {
         assert_eq!(p.line_ending, "\r\n");
         let out = render(&p);
         // Frontmatter lines use CRLF; body uses LF (see §3.1.3 rationale).
-        assert!(out.starts_with("\u{FEFF}---\r\ntitle: 'Limpio'\r\n---\r\n"));
-        assert!(out.ends_with("Limpio\n"));
+        assert!(out.starts_with("\u{FEFF}---\r\ntitle: 'Clean'\r\n---\r\n"));
+        assert!(out.ends_with("Ready to start a new topic\n"));
     }
 
     #[test]
-    fn perform_clean_idempotent_on_canonical_limpio() {
+    fn perform_clean_idempotent_on_canonical_clean() {
         let fix = FixtureRoot::new("brief-u39");
         let wg = fix.path().join("wg-1");
         std::fs::create_dir_all(&wg).unwrap();
-        std::fs::write(wg.join("BRIEF.md"), "---\ntitle: 'Limpio'\n---\nLimpio\n").unwrap();
+        std::fs::write(
+            wg.join("BRIEF.md"),
+            "---\ntitle: 'Clean'\n---\nReady to start a new topic\n",
+        )
+        .unwrap();
         let now = || fixed_now_at(2026, 1, 1, 0, 0, 0);
         let r = perform_inner(&wg, BriefOp::Clean, now).unwrap();
         match r {
@@ -1234,7 +1240,7 @@ mod tests {
     fn perform_clean_writes_backup_when_file_existed() {
         // Round 2 (Grinch HIGH-2): assert the backup CONTENTS match the
         // pre-clean bytes. The whole point of the backup is recovery; a
-        // regression where the backup file gets the post-clean (Limpio)
+        // regression where the backup file gets the post-clean (Clean)
         // bytes instead of the prior state would be silently shipped
         // without this assertion.
         let fix = FixtureRoot::new("brief-u40");
@@ -1252,7 +1258,10 @@ mod tests {
         let backup_content = std::fs::read_to_string(&backup_path).unwrap();
         assert_eq!(backup_content, pre_clean);
         let final_content = std::fs::read_to_string(wg.join("BRIEF.md")).unwrap();
-        assert_eq!(final_content, "---\ntitle: 'Limpio'\n---\nLimpio\n");
+        assert_eq!(
+            final_content,
+            "---\ntitle: 'Clean'\n---\nReady to start a new topic\n"
+        );
     }
 
     #[test]
@@ -1270,7 +1279,7 @@ mod tests {
         assert!(matches!(r, EditOutcome::Wrote { backup: None }));
         assert_eq!(
             std::fs::read_to_string(wg.join("BRIEF.md")).unwrap(),
-            "---\ntitle: 'Limpio'\n---\nLimpio\n"
+            "---\ntitle: 'Clean'\n---\nReady to start a new topic\n"
         );
         let bak_count = std::fs::read_dir(&wg)
             .unwrap()
