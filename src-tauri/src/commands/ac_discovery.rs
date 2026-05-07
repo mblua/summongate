@@ -1,11 +1,13 @@
 use futures::future::join_all;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::Path;
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter, State};
+use uuid::Uuid;
 
 use crate::config::settings::SettingsState;
 use crate::session::manager::SessionManager;
@@ -15,8 +17,6 @@ use crate::session::session::SessionRepo;
 /// stream. See plan §3 A0 (round-2 G5 + round-3 H1 placement-fix). Consumed only by
 /// `format!`-into-log; `Relaxed` is canonical for an observed-but-not-synchronizing counter.
 static DISCOVERY_CALL_ID: AtomicU64 = AtomicU64::new(0);
-
-type BriefFields = (Option<String>, Option<String>);
 
 /// Resolve the preferred coding agent for a directory by matching the app
 /// label from the agent's config.json against THIS instance's settings.
@@ -114,10 +114,6 @@ pub struct AcWorkgroup {
     pub path: String,
     /// First line of BRIEF.md (if exists)
     pub brief: Option<String>,
-    /// YAML-frontmatter `title:` value extracted from BRIEF.md, if present.
-    ///
-    /// This intentionally omits the wire key when absent so the frontend sees
-    /// an absent-or-string `briefTitle` contract for the new field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub brief_title: Option<String>,
     /// Replica agents inside this workgroup
@@ -182,6 +178,73 @@ fn resolve_agent_ref(project_folder: &str, agent_ref: &str) -> String {
     }
 }
 
+/// Extract the first content line from a BRIEF.md-style markdown file,
+/// skipping any YAML frontmatter block at the top (delimited by `---` on
+/// its own line). Leading `# ` heading markers are stripped from the result.
+///
+/// Without this, a BRIEF.md that opens with `---` (frontmatter) sends the
+/// literal `---` to the sidebar — the `wg.brief` field then defeats the
+/// frontend's frontmatter-stripping renderer (issue #161).
+fn extract_brief_first_line(content: &str) -> Option<String> {
+    // Strip a UTF-8 BOM if present — `read_to_string` does not, and `str::trim`
+    // does not treat U+FEFF as whitespace, so without this the frontmatter opener
+    // check below sees `\u{FEFF}---` instead of `---` and the heading-strip below
+    // leaves the BOM on the result.
+    let content = content.strip_prefix('\u{FEFF}').unwrap_or(content);
+
+    let mut lines = content.lines().peekable();
+
+    // YAML frontmatter: opener `---` on the first line, drain through closer.
+    // If the closer is missing, the for-loop drains the rest and `find` returns None.
+    if lines.peek().map(|l| l.trim()) == Some("---") {
+        lines.next();
+        for line in lines.by_ref() {
+            if line.trim() == "---" {
+                break;
+            }
+        }
+    }
+
+    lines
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim_start_matches("# ").to_string())
+}
+
+/// Strip the Windows verbatim/UNC `\\?\` prefix if present so the emitted
+/// path matches the form `discover_project` produces (which never has the
+/// prefix because it comes from a `read_dir` walk). The codebase already
+/// applies the same strip downstream when embedding paths into the agent
+/// init prompt — see the `find_workgroup_brief_path_handles_unc_prefix_input`
+/// test note in `session.rs`.
+fn strip_verbatim_prefix(p: &Path) -> PathBuf {
+    let s = p.to_string_lossy();
+    s.strip_prefix(r"\\?\")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| p.to_path_buf())
+}
+
+/// Read BRIEF.md at most 256 KiB, strip a UTF-8 BOM if present, trim, and
+/// return None on empty / read-error / file-missing. Bigger files are
+/// truncated; we do NOT attempt to stream the whole file through Tauri IPC.
+fn read_brief_capped(brief_path: &Path) -> Option<String> {
+    const MAX_BYTES: u64 = 256 * 1024;
+    let file = std::fs::File::open(brief_path).ok()?;
+    let mut buf = String::new();
+    if file.take(MAX_BYTES).read_to_string(&mut buf).is_err() {
+        return None;
+    }
+    let trimmed = buf
+        .strip_prefix('\u{FEFF}')
+        .unwrap_or(&buf)
+        .trim()
+        .to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
 /// Detect git branch synchronously for a given directory path.
 fn detect_git_branch_sync(dir: &str) -> Option<String> {
     #[cfg(windows)]
@@ -208,23 +271,6 @@ fn detect_git_branch_sync(dir: &str) -> Option<String> {
         }
         _ => None,
     }
-}
-
-/// Read BRIEF.md once and derive both the legacy first-line preview and the
-/// structured frontmatter title.
-fn read_brief_fields(wg_path: &Path) -> BriefFields {
-    let brief_path = wg_path.join("BRIEF.md");
-    let Ok(content) = std::fs::read_to_string(&brief_path) else {
-        return (None, None);
-    };
-
-    let brief = content
-        .lines()
-        .next()
-        .map(|l| l.trim_start_matches("# ").to_string());
-    let brief_title = crate::commands::entity_creation::parse_brief_title(&content);
-
-    (brief, brief_title)
 }
 
 // --- Discovery Branch Watcher ---
@@ -256,13 +302,27 @@ struct SessionGitReposPayload {
     repos: Vec<SessionRepo>,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+struct StatSentinel {
+    len: u64,
+    mtime: Option<SystemTime>,
+}
+
+#[derive(Clone)]
+struct BriefCacheEntry {
+    sentinel: Option<StatSentinel>,
+    brief: Option<String>,
+    brief_title: Option<String>,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct WorkgroupBriefPayload {
+struct BriefUpdatedPayload {
     workgroup_path: String,
     brief: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     brief_title: Option<String>,
+    session_ids: Vec<String>,
 }
 
 pub struct DiscoveryBranchWatcher {
@@ -280,10 +340,13 @@ pub struct DiscoveryBranchWatcher {
     /// `discovery_cache` so multi-repo replicas re-emit on per-repo drift even when the
     /// single-branch view stays None.
     repos_cache: Mutex<HashMap<String, Vec<SessionRepo>>>,
-    /// Per-project list of workgroup absolute paths to monitor for BRIEF.md changes.
-    workgroup_paths: Mutex<HashMap<String, Vec<String>>>,
-    /// Cache of `(brief, brief_title)` per workgroup absolute path.
-    brief_cache: Mutex<HashMap<String, BriefFields>>,
+    /// Per-workgroup-root cache for Gate C (brief detection). Keyed by the
+    /// stripped (no `\\?\`) absolute path of the wg-* directory. Bounded
+    /// implicitly by the union of (loaded-project replicas, active sessions);
+    /// no explicit prune since entries are ~200B each and the upper bound is
+    /// the user's project layout. A stale entry for a wg that no longer has
+    /// sessions or replicas is harmless: next tick will simply not visit it.
+    brief_cache: Mutex<HashMap<PathBuf, BriefCacheEntry>>,
 }
 
 impl DiscoveryBranchWatcher {
@@ -297,7 +360,6 @@ impl DiscoveryBranchWatcher {
             replicas: Mutex::new(HashMap::new()),
             discovery_cache: Mutex::new(HashMap::new()),
             repos_cache: Mutex::new(HashMap::new()),
-            workgroup_paths: Mutex::new(HashMap::new()),
             brief_cache: Mutex::new(HashMap::new()),
         })
     }
@@ -365,8 +427,6 @@ impl DiscoveryBranchWatcher {
             }
         }
 
-        let wg_paths: Vec<String> = workgroups.iter().map(|w| w.path.clone()).collect();
-
         log::info!(
             "[DiscoveryBranchWatcher] update_replicas_for_project({}): {} replicas",
             canonical_key,
@@ -375,7 +435,7 @@ impl DiscoveryBranchWatcher {
 
         // Swap in this project's entries; leave other projects alone.
         let mut map = self.replicas.lock().unwrap();
-        map.insert(canonical_key.clone(), entries);
+        map.insert(canonical_key, entries);
 
         // Prune cache entries that no longer belong to ANY project.
         let valid: std::collections::HashSet<String> = map
@@ -392,18 +452,6 @@ impl DiscoveryBranchWatcher {
             .lock()
             .unwrap()
             .retain(|k, _| valid.contains(k));
-
-        {
-            let mut wg_map = self.workgroup_paths.lock().unwrap();
-            wg_map.insert(canonical_key, wg_paths);
-            let valid_wg: std::collections::HashSet<String> =
-                wg_map.values().flatten().cloned().collect();
-            drop(wg_map);
-            self.brief_cache
-                .lock()
-                .unwrap()
-                .retain(|k, _| valid_wg.contains(k));
-        }
     }
 
     /// Remove the specified replicas from `replicas`, `discovery_cache`, and `repos_cache`.
@@ -464,140 +512,272 @@ impl DiscoveryBranchWatcher {
             let map = self.replicas.lock().unwrap();
             map.values().flatten().cloned().collect()
         };
-        let wg_paths: Vec<String> = {
-            let map = self.workgroup_paths.lock().unwrap();
-            map.values().flatten().cloned().collect()
-        };
-        if entries.is_empty() && wg_paths.is_empty() {
-            return;
-        }
 
-        for entry in &entries {
-            // Capture the session's git_repos_gen (if a session exists) BEFORE running detections.
-            // Used for CAS on set_git_repos_if_gen (Grinch #14).
-            let (session_id_opt, gen_snapshot) = {
-                let mgr = self.session_manager.read().await;
-                match mgr.find_by_name(&entry.session_name).await {
-                    Some(id) => {
-                        let gen = mgr.get_git_repos_gen(id).await.unwrap_or(0);
-                        (Some(id), gen)
+        // Gate A + Gate B (existing replica-driven git detection). Wrapped so
+        // an empty `entries` (no project loaded) still falls through to Gate C,
+        // which is also driven by active sessions — sessions can exist for
+        // workgroups whose project is not in `settings.projectPaths`.
+        if !entries.is_empty() {
+            for entry in &entries {
+                // Capture the session's git_repos_gen (if a session exists) BEFORE running detections.
+                // Used for CAS on set_git_repos_if_gen (Grinch #14).
+                let (session_id_opt, gen_snapshot) = {
+                    let mgr = self.session_manager.read().await;
+                    match mgr.find_by_name(&entry.session_name).await {
+                        Some(id) => {
+                            let gen = mgr.get_git_repos_gen(id).await.unwrap_or(0);
+                            (Some(id), gen)
+                        }
+                        None => (None, 0),
                     }
-                    None => (None, 0),
-                }
-            };
+                };
 
-            // Parallelize per-repo detection (Grinch #16). Each call individually bounded by
-            // detect_branch_with_timeout (2s). Without join_all this was M*N*2s worst case.
-            let branches: Vec<Option<String>> = join_all(
-                entry
+                // Parallelize per-repo detection (Grinch #16). Each call individually bounded by
+                // detect_branch_with_timeout (2s). Without join_all this was M*N*2s worst case.
+                let branches: Vec<Option<String>> = join_all(
+                    entry
+                        .repos
+                        .iter()
+                        .map(|(_, path)| Self::detect_branch_with_timeout(path)),
+                )
+                .await;
+
+                let refreshed: Vec<SessionRepo> = entry
                     .repos
                     .iter()
-                    .map(|(_, path)| Self::detect_branch_with_timeout(path)),
-            )
-            .await;
+                    .zip(branches.into_iter())
+                    .map(|((label, path), branch)| SessionRepo {
+                        label: label.clone(),
+                        source_path: path.clone(),
+                        branch,
+                    })
+                    .collect();
 
-            let refreshed: Vec<SessionRepo> = entry
-                .repos
-                .iter()
-                .zip(branches.into_iter())
-                .map(|((label, path), branch)| SessionRepo {
-                    label: label.clone(),
-                    source_path: path.clone(),
-                    branch,
-                })
-                .collect();
-
-            // Gate A: emit ac_discovery_branch_updated (single-branch UI for AcDiscoveryPanel).
-            // Only single-repo replicas surface a branch here; multi-repo = None so the panel hides it.
-            let discovery_branch: Option<String> = if entry.repos.len() == 1 {
-                refreshed[0].branch.clone()
-            } else {
-                None
-            };
-            let discovery_changed = {
-                let mut cache = self.discovery_cache.lock().unwrap();
-                let prev = cache.get(&entry.replica_path).cloned();
-                if prev.as_ref() != Some(&discovery_branch) {
-                    cache.insert(entry.replica_path.clone(), discovery_branch.clone());
-                    true
+                // Gate A: emit ac_discovery_branch_updated (single-branch UI for AcDiscoveryPanel).
+                // Only single-repo replicas surface a branch here; multi-repo = None so the panel hides it.
+                let discovery_branch: Option<String> = if entry.repos.len() == 1 {
+                    refreshed[0].branch.clone()
                 } else {
-                    false
-                }
-            };
-            if discovery_changed {
-                let _ = self.app_handle.emit(
-                    "ac_discovery_branch_updated",
-                    DiscoveryBranchPayload {
-                        replica_path: entry.replica_path.clone(),
-                        branch: discovery_branch,
-                    },
-                );
-            }
-
-            // Gate B: emit session_git_repos (full per-repo state for SessionItem).
-            // Independent cache so multi-repo replicas re-emit on per-repo drift even when
-            // Gate A stays None.
-            let repos_changed = {
-                let mut cache = self.repos_cache.lock().unwrap();
-                let prev = cache.get(&entry.replica_path);
-                if prev != Some(&refreshed) {
-                    cache.insert(entry.replica_path.clone(), refreshed.clone());
-                    true
-                } else {
-                    false
-                }
-            };
-            if repos_changed {
-                if let Some(session_id) = session_id_opt {
-                    // CAS write: skip if a refresh bumped gen during our detection window.
-                    let wrote = {
-                        let mgr = self.session_manager.read().await;
-                        mgr.set_git_repos_if_gen(session_id, refreshed.clone(), gen_snapshot)
-                            .await
-                    };
-                    if wrote {
-                        let _ = self.app_handle.emit(
-                            "session_git_repos",
-                            SessionGitReposPayload {
-                                session_id: session_id.to_string(),
-                                repos: refreshed.clone(),
-                            },
-                        );
+                    None
+                };
+                let discovery_changed = {
+                    let mut cache = self.discovery_cache.lock().unwrap();
+                    let prev = cache.get(&entry.replica_path).cloned();
+                    if prev.as_ref() != Some(&discovery_branch) {
+                        cache.insert(entry.replica_path.clone(), discovery_branch.clone());
+                        true
                     } else {
-                        log::debug!(
+                        false
+                    }
+                };
+                if discovery_changed {
+                    let _ = self.app_handle.emit(
+                        "ac_discovery_branch_updated",
+                        DiscoveryBranchPayload {
+                            replica_path: entry.replica_path.clone(),
+                            branch: discovery_branch,
+                        },
+                    );
+                }
+
+                // Gate B: emit session_git_repos (full per-repo state for SessionItem).
+                // Independent cache so multi-repo replicas re-emit on per-repo drift even when
+                // Gate A stays None.
+                let repos_changed = {
+                    let mut cache = self.repos_cache.lock().unwrap();
+                    let prev = cache.get(&entry.replica_path);
+                    if prev != Some(&refreshed) {
+                        cache.insert(entry.replica_path.clone(), refreshed.clone());
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if repos_changed {
+                    if let Some(session_id) = session_id_opt {
+                        // CAS write: skip if a refresh bumped gen during our detection window.
+                        let wrote = {
+                            let mgr = self.session_manager.read().await;
+                            mgr.set_git_repos_if_gen(session_id, refreshed.clone(), gen_snapshot)
+                                .await
+                        };
+                        if wrote {
+                            let _ = self.app_handle.emit(
+                                "session_git_repos",
+                                SessionGitReposPayload {
+                                    session_id: session_id.to_string(),
+                                    repos: refreshed.clone(),
+                                },
+                            );
+                        } else {
+                            log::debug!(
                             "[DiscoveryBranchWatcher] gen mismatch for {} — refresh landed during poll; skipping stale emit",
                             entry.replica_path
                         );
-                        // Clear our own cache entry so next tick re-evaluates against the fresh list.
-                        self.repos_cache.lock().unwrap().remove(&entry.replica_path);
+                            // Clear our own cache entry so next tick re-evaluates against the fresh list.
+                            self.repos_cache.lock().unwrap().remove(&entry.replica_path);
+                        }
                     }
+                    // If no session exists yet (un-instantiated replica), Gate A has already covered
+                    // the display surface — no session to push git_repos into.
                 }
-                // If no session exists yet (un-instantiated replica), Gate A has already covered
-                // the display surface — no session to push git_repos into.
             }
         }
 
-        for wg_path in &wg_paths {
-            let (brief, brief_title) = read_brief_fields(Path::new(wg_path));
-            let changed = {
-                let mut cache = self.brief_cache.lock().unwrap();
-                let curr = (brief.clone(), brief_title.clone());
-                let prev = cache.get(wg_path);
-                if prev != Some(&curr) {
-                    cache.insert(wg_path.clone(), curr);
-                    true
-                } else {
-                    false
+        // Gate C: BRIEF.md detection. Runs every tick whether or not Gate A/B
+        // had work to do — sessions in workgroups whose project is not loaded
+        // still need brief updates.
+        self.poll_briefs(&entries).await;
+    }
+
+    /// Gate C: detect BRIEF.md changes per unique workgroup root and emit
+    /// `workgroup_brief_updated` on change. Runs on every existing 15s tick
+    /// of `poll()`; no new thread, no new cadence.
+    async fn poll_briefs(&self, entries: &[ReplicaBranchEntry]) {
+        // Build the union of workgroup roots to watch:
+        //   1. Replicas in loaded projects (from `entries`) — covers the
+        //      sidebar `ProjectPanel` surface.
+        //   2. Active sessions (walked up from cwd via the existing helper)
+        //      — covers the terminal `WorkgroupBrief` surface for sessions
+        //      whose project is NOT loaded.
+        // The map's value is the list of session UUIDs that resolve to this
+        // wg-root (used for the event payload's `sessionIds`).
+        let mut wg_roots: HashMap<PathBuf, Vec<Uuid>> = HashMap::new();
+
+        for entry in entries {
+            // replica.path is `<wg-root>/__agent_<name>` — its parent IS the
+            // wg-root. We do NOT call `find_workgroup_brief_path_for_cwd`
+            // here because the parent is already the answer; calling it
+            // would re-walk and add no information.
+            if let Some(parent) = Path::new(&entry.replica_path).parent() {
+                wg_roots.entry(strip_verbatim_prefix(parent)).or_default();
+            }
+        }
+
+        let sessions: Vec<(Uuid, String)> = {
+            let mgr = self.session_manager.read().await;
+            mgr.get_sessions_working_dirs().await
+        };
+        for (id, cwd) in sessions {
+            if let Some(brief_path) =
+                crate::session::session::find_workgroup_brief_path_for_cwd(&cwd)
+            {
+                if let Some(parent) = brief_path.parent() {
+                    wg_roots
+                        .entry(strip_verbatim_prefix(parent))
+                        .or_default()
+                        .push(id);
                 }
-            };
-            if changed {
-                let _ = self.app_handle.emit(
-                    "ac_workgroup_brief_updated",
-                    WorkgroupBriefPayload {
-                        workgroup_path: wg_path.clone(),
-                        brief,
-                        brief_title,
-                    },
+            }
+        }
+
+        if wg_roots.is_empty() {
+            return;
+        }
+
+        for (wg_root, session_ids) in wg_roots {
+            self.check_workgroup_brief(wg_root, session_ids).await;
+        }
+    }
+
+    /// Per-workgroup brief check. Stat short-circuits unchanged files; on
+    /// stat-change, reads (with size cap), re-stats (defends against torn
+    /// in-place editor saves), and emits if content actually changed.
+    async fn check_workgroup_brief(&self, wg_root: PathBuf, session_ids: Vec<Uuid>) {
+        let brief_path = wg_root.join("BRIEF.md");
+
+        let now_sentinel = std::fs::metadata(&brief_path).ok().map(|m| StatSentinel {
+            len: m.len(),
+            mtime: m.modified().ok(),
+        });
+
+        // Mutex held only for the duration of the get; released before any I/O.
+        // CRITICAL: never hold std::sync::Mutex across an .await — it's not
+        // tokio-aware and would deadlock under load.
+        let prev = self.brief_cache.lock().unwrap().get(&wg_root).cloned();
+
+        // Stat-equality short-circuit — the steady-state path. Cost: one
+        // metadata() call per wg per tick when nothing has changed.
+        if let Some(ref prev_entry) = prev {
+            if prev_entry.sentinel == now_sentinel {
+                return;
+            }
+        }
+
+        // Read with a 256 KiB cap. A bigger BRIEF.md is either accidental
+        // (someone catted /dev/urandom into it) or adversarial; either way,
+        // we don't want it streamed through Tauri IPC every 15s. On overflow
+        // we treat the file as effectively missing (None); the frontend
+        // already handles `brief: null` (panel falls back to "...").
+        let (new_brief, new_title) = read_brief_fields(wg_root.as_path());
+
+        // Re-stat. If the file changed during our read window (external
+        // editor mid-save — Notepad does CreateFile(OPEN_EXISTING) +
+        // SetEndOfFile + write, NOT atomic rename), the read may be torn.
+        // Defer to the next tick when the stat has settled.
+        let post_sentinel = std::fs::metadata(&brief_path).ok().map(|m| StatSentinel {
+            len: m.len(),
+            mtime: m.modified().ok(),
+        });
+        if post_sentinel != now_sentinel {
+            log::debug!(
+                "[DiscoveryBranchWatcher] stat changed during read of {} (likely torn — external editor mid-save); deferring to next tick",
+                brief_path.display()
+            );
+            return;
+        }
+
+        let content_changed = match prev.as_ref() {
+            Some(p) => p.brief != new_brief || p.brief_title != new_title,
+            None => true,
+        };
+
+        // ALWAYS refresh the sentinel (next-tick short-circuit depends on
+        // it). Insert a placeholder `brief = prev.brief` so a failed emit
+        // below leaves the cache holding the previously-shipped content,
+        // not the new content — that way the next stat-change retries
+        // emission instead of silently accepting the failed state.
+        {
+            let mut cache = self.brief_cache.lock().unwrap();
+            cache
+                .entry(wg_root.clone())
+                .and_modify(|e| e.sentinel = now_sentinel.clone())
+                .or_insert(BriefCacheEntry {
+                    sentinel: now_sentinel.clone(),
+                    brief: prev.as_ref().and_then(|p| p.brief.clone()),
+                    brief_title: prev.as_ref().and_then(|p| p.brief_title.clone()),
+                });
+        }
+
+        if !content_changed {
+            return;
+        }
+
+        let payload = BriefUpdatedPayload {
+            workgroup_path: wg_root.to_string_lossy().into_owned(),
+            brief: new_brief.clone(),
+            brief_title: new_title.clone(),
+            session_ids: session_ids.iter().map(|u| u.to_string()).collect(),
+        };
+        match self.app_handle.emit("workgroup_brief_updated", payload) {
+            Ok(()) => {
+                // Commit shipped content. Mirrors GitWatcher's emit-then-cache
+                // ordering — invariant: the cache's `brief` field is the last
+                // value the FRONTEND has, not the last value we read.
+                self.brief_cache
+                    .lock()
+                    .unwrap()
+                    .entry(wg_root.clone())
+                    .and_modify(|e| {
+                        e.brief = new_brief;
+                        e.brief_title = new_title;
+                    });
+            }
+            Err(e) => {
+                log::warn!(
+                    "[DiscoveryBranchWatcher] brief emit failed for {} ({}); leaving cached brief stale so next stat-change retries",
+                    wg_root.display(),
+                    e
                 );
             }
         }
@@ -880,8 +1060,8 @@ pub async fn discover_ac_agents(
                         name: dir_name.clone(),
                         path: path.to_string_lossy().to_string(),
                         brief,
-                        brief_title,
-                        agents: wg_agents,
+brief_title,
+agents: wg_agents,
                         repo_path,
                         team_name: None,
                     });
@@ -1304,8 +1484,8 @@ pub async fn discover_project(
                 name: dir_name.clone(),
                 path: entry_path.to_string_lossy().to_string(),
                 brief,
-                brief_title,
-                agents: wg_agents,
+brief_title,
+agents: wg_agents,
                 repo_path,
                 team_name: None,
             });
@@ -1497,102 +1677,106 @@ pub async fn set_replica_context_files(path: String, files: Vec<String>) -> Resu
 mod tests {
     use super::*;
 
-    #[test]
-    fn read_brief_fields_extracts_title_from_frontmatter() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let wg_dir = tmp.path().join("wg-1-test");
-        std::fs::create_dir(&wg_dir).expect("mkdir wg");
-        std::fs::write(
-            wg_dir.join("BRIEF.md"),
-            "---\ntitle: Hello world\n---\n\nbody\n",
-        )
-        .expect("write BRIEF.md");
-
-        let (brief, brief_title) = read_brief_fields(&wg_dir);
-        assert_eq!(brief.as_deref(), Some("---"));
-        assert_eq!(brief_title.as_deref(), Some("Hello world"));
-    }
+    // ── extract_brief_first_line — issue #161 ──
 
     #[test]
-    fn read_brief_fields_returns_none_title_without_frontmatter() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let wg_dir = tmp.path().join("wg-1-test");
-        std::fs::create_dir(&wg_dir).expect("mkdir wg");
-        std::fs::write(wg_dir.join("BRIEF.md"), "# Heading\n\nbody\n").expect("write BRIEF.md");
-
-        let (brief, brief_title) = read_brief_fields(&wg_dir);
-        assert_eq!(brief.as_deref(), Some("Heading"));
-        assert!(brief_title.is_none());
-    }
-
-    #[test]
-    fn read_brief_fields_returns_none_when_brief_md_absent() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let wg_dir = tmp.path().join("wg-1-test");
-        std::fs::create_dir(&wg_dir).expect("mkdir wg");
-
-        let (brief, brief_title) = read_brief_fields(&wg_dir);
-        assert!(brief.is_none());
-        assert!(brief_title.is_none());
-    }
-
-    #[test]
-    fn read_brief_fields_observes_brief_md_rewrite() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let wg_dir = tmp.path().join("wg-1-test");
-        std::fs::create_dir(&wg_dir).expect("mkdir wg");
-        let brief_path = wg_dir.join("BRIEF.md");
-
-        std::fs::write(&brief_path, "---\ntitle: Old\n---\nbody\n").expect("write old");
-        let first = read_brief_fields(&wg_dir);
-        assert_eq!(first.1.as_deref(), Some("Old"));
-
-        std::fs::write(&brief_path, "---\ntitle: New\n---\nbody\n").expect("write new");
-        let second = read_brief_fields(&wg_dir);
-        assert_eq!(second.1.as_deref(), Some("New"));
-        assert_ne!(
-            first, second,
-            "watcher must observe (brief, brief_title) drift"
-        );
-    }
-
-    #[test]
-    fn ac_workgroup_serializes_brief_title_as_camel_case() {
-        let wg = AcWorkgroup {
-            name: "wg-1-test".to_string(),
-            path: "/tmp/wg-1-test".to_string(),
-            brief: Some("---".to_string()),
-            brief_title: Some("Visible title".to_string()),
-            agents: Vec::new(),
-            repo_path: None,
-            team_name: None,
-        };
-
-        let value = serde_json::to_value(&wg).expect("serialize AcWorkgroup");
+    fn brief_no_frontmatter_with_heading() {
         assert_eq!(
-            value.get("briefTitle").and_then(|v| v.as_str()),
-            Some("Visible title")
+            extract_brief_first_line("# My Brief\n\nbody"),
+            Some("My Brief".to_string())
         );
-        assert!(value.get("brief_title").is_none());
     }
 
     #[test]
-    fn ac_workgroup_omits_brief_title_when_none() {
-        let wg = AcWorkgroup {
-            name: "wg-1-test".to_string(),
-            path: "/tmp/wg-1-test".to_string(),
-            brief: Some("# Heading".to_string()),
-            brief_title: None,
-            agents: Vec::new(),
-            repo_path: None,
-            team_name: None,
-        };
-
-        let value = serde_json::to_value(&wg).expect("serialize AcWorkgroup");
-        assert!(
-            value.get("briefTitle").is_none(),
-            "briefTitle must be absent when brief_title is None; got {:?}",
-            value.get("briefTitle")
+    fn brief_no_frontmatter_plain() {
+        assert_eq!(
+            extract_brief_first_line("My Brief\nbody"),
+            Some("My Brief".to_string())
         );
     }
+
+    #[test]
+    fn brief_with_yaml_frontmatter() {
+        let content = "---\ntitle: x\nauthor: y\n---\n# Real Title\nbody";
+        assert_eq!(
+            extract_brief_first_line(content),
+            Some("Real Title".to_string())
+        );
+    }
+
+    #[test]
+    fn brief_with_frontmatter_then_blank_lines() {
+        let content = "---\ntitle: x\n---\n\n\n# Real Title";
+        assert_eq!(
+            extract_brief_first_line(content),
+            Some("Real Title".to_string())
+        );
+    }
+
+    #[test]
+    fn brief_empty_file() {
+        assert_eq!(extract_brief_first_line(""), None);
+    }
+
+    #[test]
+    fn brief_only_frontmatter_no_body() {
+        assert_eq!(extract_brief_first_line("---\nfoo: bar\n---\n"), None);
+    }
+
+    #[test]
+    fn brief_unclosed_frontmatter_returns_none() {
+        // Pathological: opener with no closer drains the iterator.
+        assert_eq!(extract_brief_first_line("---\nfoo: bar\nno closer"), None);
+    }
+
+    #[test]
+    fn brief_leading_blank_no_frontmatter() {
+        assert_eq!(
+            extract_brief_first_line("\n\n# Title"),
+            Some("Title".to_string())
+        );
+    }
+
+    #[test]
+    fn brief_frontmatter_delimiter_tolerates_whitespace() {
+        // `---` lines may carry trailing/leading whitespace from editors.
+        let content = "--- \ntitle: x\n  ---  \n# Body";
+        assert_eq!(extract_brief_first_line(content), Some("Body".to_string()));
+    }
+
+    #[test]
+    fn brief_with_bom_no_frontmatter() {
+        // Editors (notably Notepad) save UTF-8 with a BOM. Without the strip,
+        // `trim_start_matches("# ")` leaves the BOM on the heading text.
+        let content = "\u{FEFF}# My Brief\n\nbody";
+        assert_eq!(
+            extract_brief_first_line(content),
+            Some("My Brief".to_string())
+        );
+    }
+
+    #[test]
+    fn brief_with_bom_and_frontmatter() {
+        // BOM in front of the `---` opener used to make the frontmatter check
+        // fail (because `\u{FEFF}---` != `---`), exposing the literal frontmatter.
+        let content = "\u{FEFF}---\ntitle: x\n---\n# Real Title\nbody";
+        assert_eq!(
+            extract_brief_first_line(content),
+            Some("Real Title".to_string())
+        );
+    }
+}
+
+type BriefFields = (Option<String>, Option<String>);
+fn read_brief_fields(wg_path: &std::path::Path) -> BriefFields {
+    let brief_path = wg_path.join("BRIEF.md");
+    let Ok(content) = std::fs::read_to_string(&brief_path) else {
+        return (None, None);
+    };
+    let brief = content
+        .lines()
+        .next()
+        .map(|l| l.trim_start_matches("# ").to_string());
+    let brief_title = crate::commands::entity_creation::parse_brief_title(&content);
+    (brief, brief_title)
 }

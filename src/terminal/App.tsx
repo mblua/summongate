@@ -185,13 +185,8 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       })
     );
 
-    // Issue #162: cross-window brief refresh. When any window in this
-    // workgroup mutates BRIEF.md, the backend emits this event with the
-    // new content; we update the terminal store iff our active session
-    // is under the same wg-root. Both sides of the comparison run through
-    // normalizePathForCompare, which strips Windows `\\?\` UNC prefix
-    // (the backend already strips on emit, but the frontend store's cwd
-    // may still carry it after canonicalize).
+
+    // Issue #162 & #163 merged: cross-window brief refresh and polling updates.
     const normalizePathForCompare = (p: string): string => {
       let s = p;
       if (s.startsWith("\\\\?\\")) s = s.slice(4);
@@ -199,13 +194,24 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       return s.replace(/\\/g, "/").toLowerCase();
     };
     unlisteners.push(
-      await onWorkgroupBriefUpdated(({ workgroupRoot, brief }) => {
-        const cwd = terminalStore.activeWorkingDirectory;
-        if (!cwd) return;
-        const cwdNorm = normalizePathForCompare(cwd);
-        const wgNorm = normalizePathForCompare(workgroupRoot);
-        if (cwdNorm === wgNorm || cwdNorm.startsWith(wgNorm + "/")) {
-          terminalStore.setActiveWorkgroupBrief(brief);
+      await onWorkgroupBriefUpdated((data) => {
+        // #163: Poller (ac_discovery.rs) provides sessionIds
+        if (data.sessionIds) {
+          const targetId = props.lockedSessionId ?? terminalStore.activeSessionId;       
+          if (!targetId) return;
+          if (!data.sessionIds.includes(targetId)) return;
+          terminalStore.setActiveWorkgroupBrief(data.brief);
+        } 
+        // #162: Manual edits (brief.rs) provide workgroupRoot
+        else if (data.workgroupRoot || data.workgroupPath) {
+          const wgRoot = data.workgroupRoot || data.workgroupPath;
+          const cwd = terminalStore.activeWorkingDirectory;
+          if (!cwd || !wgRoot) return;
+          const cwdNorm = normalizePathForCompare(cwd);
+          const wgNorm = normalizePathForCompare(wgRoot);
+          if (cwdNorm === wgNorm || cwdNorm.startsWith(wgNorm + "/")) {
+            terminalStore.setActiveWorkgroupBrief(data.brief);
+          }
         }
       })
     );
