@@ -10,36 +10,57 @@ interface ParsedBrief {
 }
 
 // Splits BRIEF.md content into a YAML-frontmatter title and the body that
-// follows the closing `---`. If the input lacks a valid frontmatter block,
-// the entire content is returned as the body so we never hide useful text.
+// follows the closing `---`. Delimiters must be a line containing exactly
+// `---` (trailing whitespace tolerated). If the input lacks a valid
+// frontmatter block, the entire original content is returned as the body
+// so we never hide useful text behind a malformed delimiter.
 function parseBrief(content: string | null): ParsedBrief {
   const raw = content ?? "";
-  if (!raw.startsWith("---")) return { title: null, body: raw };
-  const closer = raw.indexOf("\n---", 3);
-  if (closer < 0) return { title: null, body: raw };
+  // BOM is stripped only for delimiter/title detection; the fallback body
+  // returns the original content unchanged.
+  const detect = raw.startsWith("\uFEFF") ? raw.slice(1) : raw;
+
+  const firstNl = detect.indexOf("\n");
+  const firstLineEnd = firstNl < 0 ? detect.length : firstNl;
+  const firstLine = detect.slice(0, firstLineEnd).replace(/\s+$/, "");
+  // Reject prefixed openers like `---not`, `--- body`, or `----`.
+  if (firstLine !== "---") return { title: null, body: raw };
 
   let title: string | null = null;
-  const fm = raw.slice(3, closer);
-  for (const line of fm.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed.toLowerCase().startsWith("title:")) continue;
-    const after = trimmed.slice(6).trim();
-    if (after.startsWith("'") && after.endsWith("'") && after.length >= 2) {
-      title = after.slice(1, -1).replace(/''/g, "'");
-    } else if (after.startsWith('"') && after.endsWith('"') && after.length >= 2) {
-      title = after.slice(1, -1);
-    } else {
-      title = after;
+  let pos = firstNl < 0 ? detect.length : firstNl + 1;
+  let bodyStart = -1;
+
+  while (pos < detect.length) {
+    const nl = detect.indexOf("\n", pos);
+    const lineEnd = nl < 0 ? detect.length : nl;
+    const line = detect.slice(pos, lineEnd).replace(/\s+$/, "");
+
+    if (line === "---") {
+      bodyStart = nl < 0 ? detect.length : nl + 1;
+      break;
     }
-    break;
+
+    if (title === null) {
+      const trimmed = detect.slice(pos, lineEnd).trim();
+      if (trimmed.toLowerCase().startsWith("title:")) {
+        const after = trimmed.slice(6).trim();
+        if (after.startsWith("'") && after.endsWith("'") && after.length >= 2) {
+          title = after.slice(1, -1).replace(/''/g, "'");
+        } else if (after.startsWith('"') && after.endsWith('"') && after.length >= 2) {
+          title = after.slice(1, -1);
+        } else {
+          title = after;
+        }
+      }
+    }
+
+    pos = nl < 0 ? detect.length : nl + 1;
   }
 
-  // closer points at the `\n` before the closing `---`; skip past the marker
-  // and the trailing line break to land on the first body character.
-  const afterMarker = closer + 4;
-  const bodyNewline = raw.indexOf("\n", afterMarker);
-  const body = bodyNewline < 0 ? "" : raw.slice(bodyNewline + 1);
-  return { title, body };
+  // Missing closer means malformed frontmatter — fall back to original.
+  if (bodyStart < 0) return { title: null, body: raw };
+
+  return { title, body: detect.slice(bodyStart) };
 }
 
 function parseBriefTitle(content: string | null): string | null {
@@ -65,7 +86,10 @@ const WorkgroupBrief: Component = () => {
     parseBrief(terminalStore.activeWorkgroupBrief?.trim() ?? "")
   );
   const briefTitle = createMemo(() => parsedBrief().title?.trim() || null);
-  const currentBrief = createMemo(() => parsedBrief().body.trim());
+  // Preserve the parsed body verbatim so indented snippets/code blocks keep
+  // their leading whitespace. Trailing whitespace gets stripped to avoid
+  // dangling blank lines below the panel content.
+  const currentBrief = createMemo(() => parsedBrief().body.replace(/\s+$/, ""));
   const sessionId = createMemo(() => terminalStore.activeSessionId);
   const cwd = createMemo(() => terminalStore.activeWorkingDirectory);
   const baseDisabled = createMemo(
@@ -263,7 +287,9 @@ const WorkgroupBrief: Component = () => {
       <Show when={error()}>
         <div class="workgroup-brief-error">{error()}</div>
       </Show>
-      <div class="workgroup-brief-text">{currentBrief() || "..."}</div>
+      <div class="workgroup-brief-text">
+        {currentBrief().trim().length === 0 ? "..." : currentBrief()}
+      </div>
       <Show when={confirmingClean()}>
         <Portal>
           <BriefCleanConfirmModal
