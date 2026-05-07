@@ -10,7 +10,7 @@ use crate::web::broadcast::WsBroadcaster;
 use crate::{RtkStartupModeState, RtkSweepLockState, WebServerHandle};
 
 const HOME_MARKDOWN_URL: &str =
-    "https://raw.githubusercontent.com/mblua/AgentsCommander/main/docs/home.md";
+    "https://raw.githubusercontent.com/mblua/AgentsCommander/main/docs/home-en.md";
 
 const HOME_MARKDOWN_MAX_BYTES: usize = 256 * 1024; // 256 KB
 const HOME_MARKDOWN_TIMEOUT_SECS: u64 = 5;
