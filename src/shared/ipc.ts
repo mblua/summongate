@@ -244,6 +244,11 @@ export const WindowAPI = {
 
   /** @deprecated use focusMain(); back-compat alias, drop at v0.9 */
   ensureTerminal: () => transport.invoke<void>("focus_main_window"),
+
+  // Open an http/https URL in the user's default browser. Backend rejects
+  // non-http(s) schemes (issue #164).
+  openExternal: (url: string) =>
+    transport.invoke<void>("open_external_url", { url }),
 };
 
 // Brief API (issue #162)
@@ -479,6 +484,11 @@ export const GuideAPI = {
   open: () => transport.invoke<void>("open_guide_window"),
 };
 
+// Home content (issue #164)
+export const HomeAPI = {
+  fetchMarkdown: () => transport.invoke<string>("fetch_home_markdown"),
+};
+
 // Theme sync across windows
 export function emitThemeChanged(light: boolean): Promise<void> {
   return transport.emit("theme_changed", { light });
@@ -540,6 +550,7 @@ export function onWorkgroupBriefUpdated(
   callback: (data: WorkgroupBriefUpdatedEvent) => void
 ): Promise<UnlistenFn> {
   return transport.listen<WorkgroupBriefUpdatedEvent>(
+
     "workgroup_brief_updated",
     callback
   );

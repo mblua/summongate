@@ -221,6 +221,7 @@ const WorkgroupBrief: Component = () => {
     });
   };
 
+
   return (
     <div class="workgroup-brief-panel">
       <div class="workgroup-brief-header">

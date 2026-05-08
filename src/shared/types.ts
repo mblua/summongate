@@ -325,7 +325,10 @@ export interface BriefUpdateResult {
 }
 
 export interface WorkgroupBriefUpdatedEvent {
-  workgroupRoot: string;
+  workgroupRoot?: string;
+  workgroupPath?: string;
   brief: string | null;
+  sessionIds?: string[];
+  briefTitle?: string;
 }
 

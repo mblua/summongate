@@ -51,6 +51,7 @@ export const terminalStore = {
   },
 
   setActiveWorkgroupBrief(brief: string | null) {
+
     setActiveWorkgroupBrief(brief);
   },
 };

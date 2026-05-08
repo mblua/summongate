@@ -115,6 +115,7 @@ export const projectStore = {
     brief: string | null,
     briefTitle: string | undefined
   ) {
+
     const normalized = normalizePath(workgroupPath);
     setProjects((prev) =>
       prev.map((proj) => ({
@@ -122,6 +123,7 @@ export const projectStore = {
         workgroups: proj.workgroups.map((wg) =>
           normalizePath(wg.path) === normalized
             ? { ...wg, brief: brief ?? undefined, briefTitle }
+
             : wg
         ),
       }))

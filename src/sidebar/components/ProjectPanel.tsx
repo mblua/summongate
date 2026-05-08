@@ -4,6 +4,7 @@ import type { AcWorkgroup, AcAgentReplica, AcTeam, Session, TelegramBotConfig, B
 import { SessionAPI, WindowAPI, EntityAPI, TelegramAPI, SettingsAPI, onDiscoveryBranchUpdated, onAcWorkgroupBriefUpdated, emitOpenSettings } from "../../shared/ipc";
 import type { SessionRepoInput } from "../../shared/ipc";
 import { isTauri } from "../../shared/platform";
+import { stripFrontmatter } from "../../shared/markdown";
 import { projectStore } from "../stores/project";
 import { sessionsStore } from "../stores/sessions";
 import { bridgesStore } from "../stores/bridges";
@@ -851,8 +852,8 @@ const ProjectPanel: Component = () => {
                                     </span>
                                     <div class="ac-wg-header-text">
                                       <span class="ac-wg-name">{wg.name}</span>
-                                      <Show when={wg.brief}>
-                                        <span class="ac-wg-brief">{wg.brief}</span>
+                                      <Show when={stripFrontmatter(wg.brief ?? "").trim()}>
+                                        {(brief) => <span class="ac-wg-brief">{brief()}</span>}
                                       </Show>
                                     </div>
                                   </div>
