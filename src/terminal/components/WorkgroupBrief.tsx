@@ -1,29 +1,70 @@
 import { Component, createMemo, createSignal, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { terminalStore } from "../stores/terminal";
-import { stripFrontmatter } from "../../shared/markdown";
 import { BriefAPI } from "../../shared/ipc";
 import BriefCleanConfirmModal from "./BriefCleanConfirmModal";
 
-function parseBriefTitle(content: string | null): string | null {
-  if (!content) return null;
-  if (!content.startsWith("---")) return null;
-  const closer = content.indexOf("\n---", 3);
-  if (closer < 0) return null;
-  const fm = content.slice(3, closer);
-  for (const line of fm.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed.toLowerCase().startsWith("title:")) continue;
-    const after = trimmed.slice(6).trim();
-    if (after.startsWith("'") && after.endsWith("'") && after.length >= 2) {
-      return after.slice(1, -1).replace(/''/g, "'");
+interface ParsedBrief {
+  title: string | null;
+  body: string;
+}
+
+// Splits BRIEF.md content into a YAML-frontmatter title and the body that
+// follows the closing `---`. Delimiters must be a line containing exactly
+// `---` (trailing whitespace tolerated). If the input lacks a valid
+// frontmatter block, the entire original content is returned as the body
+// so we never hide useful text behind a malformed delimiter.
+function parseBrief(content: string | null): ParsedBrief {
+  const raw = content ?? "";
+  // BOM is stripped only for delimiter/title detection; the fallback body
+  // returns the original content unchanged.
+  const detect = raw.startsWith("\uFEFF") ? raw.slice(1) : raw;
+
+  const firstNl = detect.indexOf("\n");
+  const firstLineEnd = firstNl < 0 ? detect.length : firstNl;
+  const firstLine = detect.slice(0, firstLineEnd).replace(/\s+$/, "");
+  // Reject prefixed openers like `---not`, `--- body`, or `----`.
+  if (firstLine !== "---") return { title: null, body: raw };
+
+  let title: string | null = null;
+  let pos = firstNl < 0 ? detect.length : firstNl + 1;
+  let bodyStart = -1;
+
+  while (pos < detect.length) {
+    const nl = detect.indexOf("\n", pos);
+    const lineEnd = nl < 0 ? detect.length : nl;
+    const line = detect.slice(pos, lineEnd).replace(/\s+$/, "");
+
+    if (line === "---") {
+      bodyStart = nl < 0 ? detect.length : nl + 1;
+      break;
     }
-    if (after.startsWith('"') && after.endsWith('"') && after.length >= 2) {
-      return after.slice(1, -1);
+
+    if (title === null) {
+      const trimmed = detect.slice(pos, lineEnd).trim();
+      if (trimmed.toLowerCase().startsWith("title:")) {
+        const after = trimmed.slice(6).trim();
+        if (after.startsWith("'") && after.endsWith("'") && after.length >= 2) {
+          title = after.slice(1, -1).replace(/''/g, "'");
+        } else if (after.startsWith('"') && after.endsWith('"') && after.length >= 2) {
+          title = after.slice(1, -1);
+        } else {
+          title = after;
+        }
+      }
     }
-    return after;
+
+    pos = nl < 0 ? detect.length : nl + 1;
   }
-  return null;
+
+  // Missing closer means malformed frontmatter — fall back to original.
+  if (bodyStart < 0) return { title: null, body: raw };
+
+  return { title, body: detect.slice(bodyStart) };
+}
+
+function parseBriefTitle(content: string | null): string | null {
+  return parseBrief(content).title;
 }
 
 // Backend uses byte-exact `name.starts_with("wg-")` (session/session.rs).
@@ -41,7 +82,11 @@ const WorkgroupBrief: Component = () => {
   const [error, setError] = createSignal<string | null>(null);
   const [capturedSessionId, setCapturedSessionId] = createSignal<string | null>(null);
 
-  const currentBrief = createMemo(() => stripFrontmatter(terminalStore.activeWorkgroupBrief ?? "").trim());
+  const parsedBrief = createMemo<ParsedBrief>(() =>
+    parseBrief(terminalStore.activeWorkgroupBrief ?? "")
+  );
+  const briefTitle = createMemo(() => parsedBrief().title?.trim() || null);
+  const currentBrief = createMemo(() => parsedBrief().body);
   const sessionId = createMemo(() => terminalStore.activeSessionId);
   const cwd = createMemo(() => terminalStore.activeWorkingDirectory);
   const baseDisabled = createMemo(
@@ -180,7 +225,13 @@ const WorkgroupBrief: Component = () => {
   return (
     <div class="workgroup-brief-panel">
       <div class="workgroup-brief-header">
-        <div class="workgroup-brief-label">BRIEF</div>
+        <div class="workgroup-brief-label">
+          BRIEF
+          <Show when={briefTitle()}>
+            <span class="workgroup-brief-label-sep">: </span>
+            <span class="workgroup-brief-title">{briefTitle()}</span>
+          </Show>
+        </div>
         <div class="workgroup-brief-actions">
           <button
             class="workgroup-brief-action"
@@ -234,7 +285,9 @@ const WorkgroupBrief: Component = () => {
       <Show when={error()}>
         <div class="workgroup-brief-error">{error()}</div>
       </Show>
-      <div class="workgroup-brief-text">{currentBrief() || "..."}</div>
+      <div class="workgroup-brief-text">
+        {currentBrief().trim().length === 0 ? "..." : currentBrief()}
+      </div>
       <Show when={confirmingClean()}>
         <Portal>
           <BriefCleanConfirmModal
