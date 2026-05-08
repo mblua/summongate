@@ -1623,10 +1623,36 @@ pub(crate) fn is_file_in_use_error(e: &std::io::Error) -> bool {
     }
 }
 
-/// Scan .ac-new/ for existing wg-*-{team_name}/ dirs and return the next N.
+/// Scan `.ac-new/` for existing `wg-<N>-{team_name}/` dirs and return the
+/// **lowest free positive integer** starting at 1.
+///
+/// Issue #177: previously this returned `max(existing) + 1`, which left
+/// permanent gaps after a workgroup was destroyed. The new policy reuses
+/// any freed numbers so the user-facing sequence stays compact.
+///
+/// Filtering rules (unchanged from prior behavior):
+/// - Only directories are considered (regular files are ignored).
+/// - The directory name must match `wg-<digits>-<team_name>` exactly:
+///   prefix `wg-`, suffix `-{team_name}`, numeric middle.
+/// - Non-numeric middles (e.g. `wg-foo-team`) and other team suffixes
+///   are ignored.
+///
+/// Slot 1 is always reachable because the lowest-free search starts at
+/// 1 (see the `find` call below); a stray `wg-0-{team}` directory ends
+/// up in `taken` but is never tested by `find` and so cannot displace
+/// slot 1.
+///
+/// Read-error degradation: if `std::fs::read_dir(ac_new_dir)` fails
+/// (permission denied, transient I/O, broken junction, path-too-long
+/// on Windows), the function returns `1` as a graceful fallback. The
+/// post-allocate `wg_dir.exists()` guard in `create_workgroup` will
+/// surface the real condition as an "already exists" error if a
+/// `wg-1-{team}` is in fact present; otherwise the slot-1 creation
+/// succeeds with stale state. Surfacing the read error is tracked
+/// separately and is out of scope for #177.
 fn determine_next_wg_number(ac_new_dir: &Path, team_name: &str) -> u32 {
     let suffix = format!("-{}", team_name);
-    let mut max_n: u32 = 0;
+    let mut taken: HashSet<u32> = HashSet::new();
 
     if let Ok(entries) = std::fs::read_dir(ac_new_dir) {
         for entry in entries.flatten() {
@@ -1636,18 +1662,31 @@ fn determine_next_wg_number(ac_new_dir: &Path, team_name: &str) -> u32 {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
             if name_str.starts_with("wg-") && name_str.ends_with(&suffix) {
-                // Extract the number between "wg-" and "-{team_name}"
-                let middle = &name_str[3..name_str.len() - suffix.len()];
-                if let Ok(n) = middle.parse::<u32>() {
-                    if n > max_n {
-                        max_n = n;
+                // Extract the number between "wg-" and "-{team_name}".
+                // Use `.get(..)` (checked slicing) — a name like
+                // `wg-{team}` (no number) passes both the prefix and
+                // suffix checks but produces a slice with start > end,
+                // which would panic with `&str[..]`. `.get(..)` returns
+                // `None` instead, so such entries are silently ignored.
+                if let Some(middle) =
+                    name_str.get(3..name_str.len() - suffix.len())
+                {
+                    if let Ok(n) = middle.parse::<u32>() {
+                        taken.insert(n);
                     }
                 }
             }
         }
     }
 
-    max_n + 1
+    // Lowest free positive integer ≥ 1. The bounded `..=u32::MAX` form avoids
+    // any iterator-overflow footgun in debug builds; `find` short-circuits at
+    // the first miss so the actual cost is O(taken.len() + 1) in practice.
+    // A `0` may end up in `taken` (from a stray `wg-0-{team}`) but is never
+    // tested here — the search starts at 1, so slot 1 is always reachable.
+    (1u32..=u32::MAX)
+        .find(|n| !taken.contains(n))
+        .unwrap_or(1)
 }
 
 /// Compute a relative path from the replica dir to the agent matrix.
@@ -2080,6 +2119,160 @@ mod tests {
     #[test]
     fn parse_brief_title_returns_none_for_bom_without_frontmatter() {
         assert_eq!(parse_brief_title("\u{FEFF}# Heading\n\nbody\n"), None);
+    }
+
+    // ── #177 — determine_next_wg_number lowest-free reuse ──
+
+    /// Helper: create an empty directory at `<root>/<name>` for the test.
+    fn touch_dir(root: &Path, name: &str) {
+        std::fs::create_dir(root.join(name))
+            .unwrap_or_else(|e| panic!("create_dir {}: {}", name, e));
+    }
+
+    /// Empty `.ac-new/` returns slot 1 — the lowest positive integer.
+    #[test]
+    fn determine_next_wg_number_returns_one_when_no_wg_dirs_exist() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 1);
+    }
+
+    /// Contiguous allocation: `wg-1`, `wg-2`, `wg-3` already exist for the team
+    /// → next slot is 4 (no internal gap to reuse).
+    #[test]
+    fn determine_next_wg_number_returns_next_after_contiguous_block() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-1-dev-team");
+        touch_dir(tmp.path(), "wg-2-dev-team");
+        touch_dir(tmp.path(), "wg-3-dev-team");
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 4);
+    }
+
+    /// Gap reuse — the load-bearing case from issue #177.
+    /// `wg-1` and `wg-3` exist (someone destroyed `wg-2`) → next slot is 2.
+    #[test]
+    fn determine_next_wg_number_reuses_lowest_internal_gap() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-1-dev-team");
+        touch_dir(tmp.path(), "wg-3-dev-team");
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 2);
+    }
+
+    /// Leading gap — `wg-1` is free even though higher slots are taken.
+    #[test]
+    fn determine_next_wg_number_reuses_slot_one_when_only_higher_slots_exist() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-2-dev-team");
+        touch_dir(tmp.path(), "wg-3-dev-team");
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 1);
+    }
+
+    /// Team scoping: dirs for a different team must not block slot reuse for the
+    /// requested team. `wg-1-dev-team` and `wg-1-qa-team` coexist → for `qa-team`
+    /// only slot 1 is taken (by `wg-1-qa-team`), so next is 2; for `dev-team`
+    /// only slot 1 is taken (by `wg-1-dev-team`), so next is 2.
+    #[test]
+    fn determine_next_wg_number_only_considers_matching_team_suffix() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-1-dev-team");
+        touch_dir(tmp.path(), "wg-1-qa-team");
+        touch_dir(tmp.path(), "wg-3-qa-team");
+        // For dev-team: only wg-1-dev-team counts → next free is 2.
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 2);
+        // For qa-team: wg-1-qa-team and wg-3-qa-team count → next free is 2.
+        assert_eq!(determine_next_wg_number(tmp.path(), "qa-team"), 2);
+    }
+
+    /// Invalid `wg-*` directory names must not occupy any slot.
+    /// - `wg-abc-dev-team`: non-numeric middle → parse fails → ignored.
+    /// - `wg--dev-team`:    empty middle (`[3..3]` slice) → parse fails → ignored.
+    ///
+    /// Only `wg-2-dev-team` is real, so slot 1 is still free.
+    /// (The `wg-dev-team` no-number case is covered by its own test below
+    /// because it specifically exercises the checked-slicing guard.)
+    #[test]
+    fn determine_next_wg_number_ignores_invalid_directory_names() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-abc-dev-team");
+        touch_dir(tmp.path(), "wg--dev-team");
+        touch_dir(tmp.path(), "wg-2-dev-team");
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 1);
+    }
+
+    /// `wg-0-<team>` does not block slot 1. The allocator's lowest-free
+    /// search starts at 1, so any `0` that ends up in `taken` is never
+    /// tested by `find` — slot 1 stays reachable. The allocator only ever
+    /// produces values ≥ 1.
+    #[test]
+    fn determine_next_wg_number_ignores_zero_numbered_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-0-dev-team");
+        touch_dir(tmp.path(), "wg-2-dev-team");
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 1);
+    }
+
+    /// Files (not directories) named like a workgroup must not occupy a slot —
+    /// the allocator only considers real workgroup directories.
+    #[test]
+    fn determine_next_wg_number_ignores_files_named_like_workgroups() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(tmp.path().join("wg-1-dev-team"), b"not a dir")
+            .expect("write file");
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 1);
+    }
+
+    /// Regression for the suffix-overlaps-prefix slice case: a directory
+    /// named `wg-{team}` (no number, e.g. `wg-dev-team`) passes both the
+    /// `starts_with("wg-")` and `ends_with("-{team}")` checks, but the
+    /// digits slice would be `&name_str[3..2]` — invalid. With `&str[..]`
+    /// indexing this panics; with `name_str.get(..)` it returns `None` and
+    /// the entry is silently ignored. This test locks in the no-panic
+    /// behavior so a future refactor cannot reintroduce the bug.
+    #[test]
+    fn determine_next_wg_number_does_not_panic_on_no_number_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-dev-team");
+        // Must return slot 1 (the bogus dir is ignored, not counted as taken).
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 1);
+    }
+
+    /// In-flight `.deleting-wg-N-team-<uuid>` directories must NOT be
+    /// counted as occupying slot N. Locks the contract that #177 relies
+    /// on: the leading `.` of the temp name (set in `try_atomic_delete_wg`
+    /// at line 1535 — `.deleting-{wg_name}-{uuid}`) dodges the
+    /// `starts_with("wg-")` filter, so a freed slot is reusable on the
+    /// very next allocation tick. A future temp-name refactor that drops
+    /// the leading `.` would silently re-introduce the gap-leak this issue
+    /// closes; this test catches that regression.
+    #[test]
+    fn determine_next_wg_number_ignores_deleting_temp_dirs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-1-dev-team");
+        touch_dir(
+            tmp.path(),
+            ".deleting-wg-2-dev-team-00000000-0000-0000-0000-000000000000",
+        );
+        // wg-2 is mid-delete: the `.deleting-…` entry must not block slot 2.
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 2);
+    }
+
+    /// Team `team` is a strict suffix of team `dev-team`. The dir
+    /// `wg-1-dev-team` ends with `-team` but must NOT count toward team
+    /// `team` — its middle `1-dev` fails `parse::<u32>()` and is ignored.
+    /// Test 5 only covered non-overlapping team names; this case locks the
+    /// suffix-overlap disambiguation that edge case §2 argues for. A future
+    /// maintainer who relaxed parsing (hex, leading `+`, trailing-char
+    /// stripping) would silently reintroduce cross-team contamination — and
+    /// none of the existing tests would catch it.
+    #[test]
+    fn determine_next_wg_number_distinguishes_subset_team_suffixes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-1-dev-team");
+        touch_dir(tmp.path(), "wg-1-team");
+        // For team `team`: only `wg-1-team` counts; `wg-1-dev-team`'s
+        // middle `1-dev` is non-numeric and is ignored. Next free is 2.
+        assert_eq!(determine_next_wg_number(tmp.path(), "team"), 2);
+        // For team `dev-team`: only `wg-1-dev-team` counts. Next free is 2.
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 2);
     }
 
 }
