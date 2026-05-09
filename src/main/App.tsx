@@ -1,7 +1,7 @@
 import { Component, createSignal, onMount, onCleanup, Show } from "solid-js";
 import type { UnlistenFn } from "../shared/transport";
 import type { MainSidebarSide } from "../shared/types";
-import { SettingsAPI, SessionAPI, onSessionCreated, onSessionDestroyed, onSessionSwitched } from "../shared/ipc";
+import { SettingsAPI } from "../shared/ipc";
 import { isTauri } from "../shared/platform";
 import { initZoom } from "../shared/zoom";
 import { initWindowGeometry } from "../shared/window-geometry";
@@ -10,7 +10,7 @@ import TerminalApp from "../terminal/App";
 import Titlebar from "../sidebar/components/Titlebar";
 import QuitConfirmModal from "./components/QuitConfirmModal";
 import RtkBanner from "./components/RtkBanner";
-import { homeStore } from "./stores/home";
+import { wireHomeListeners } from "./listeners-home";
 import "./styles/main.css";
 
 const SIDEBAR_MIN_WIDTH = 200;
@@ -165,47 +165,10 @@ const MainApp: Component = () => {
       console.error("Failed to load main-window settings:", e);
     }
 
-    // Home on every app open (issue #183) — Home wins regardless of any
-    // restored active session. After boot, visibility is user-controlled by
-    // the Home button and the auto-hide/auto-show rules below.
-    homeStore.show();
-
-    // Auto-hide Home when a session is created (user wants the new session).
-    unlisteners.push(
-      await onSessionCreated(() => {
-        homeStore.hide();
-      })
-    );
-
-    // Auto-hide Home when the user switches to an existing session (issue
-    // #183). Backend can emit `session_switched` with id=null when no session
-    // is active (see commands/window.rs, commands/session.rs); in that case
-    // keep Home visible.
-    unlisteners.push(
-      await onSessionSwitched(({ id }) => {
-        if (id) {
-          homeStore.hide();
-        }
-      })
-    );
-
-    // Auto-show Home when the LAST session is destroyed. Avoids leaving the
-    // user staring at the bare "No active session" empty state. Yield a
-    // microtask so TerminalApp's onSessionDestroyed → loadActiveSession can
-    // settle before we re-query the session list.
-    unlisteners.push(
-      await onSessionDestroyed(async () => {
-        await Promise.resolve();
-        try {
-          const remaining = await SessionAPI.list();
-          if (remaining.length === 0) {
-            homeStore.show();
-          }
-        } catch (e) {
-          console.error("[home] Failed to query session list after destroy:", e);
-        }
-      })
-    );
+    // Home auto-visibility contract (issue #183 + #164). Wired in a
+    // dedicated helper so the gating logic — especially the userInitiated
+    // discriminator on session_switched — is unit-testable in isolation.
+    unlisteners.push(...(await wireHomeListeners()));
 
     window.addEventListener("resize", onWindowResize);
     window.addEventListener("main-sidebar-width-change", onSidebarWidthChange);

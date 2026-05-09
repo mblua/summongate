@@ -6,6 +6,7 @@ import type { SessionRepoInput } from "../../shared/ipc";
 import AgentPickerModal from "./AgentPickerModal";
 import { sessionsStore } from "../stores/sessions";
 import { stripFrontmatter } from "../../shared/markdown";
+import { homeStore } from "../../main/stores/home";
 
 interface PendingLaunch {
   path: string;
@@ -49,6 +50,7 @@ const AcDiscoveryPanel: Component = () => {
       setPendingLaunch({ path: agent.path, sessionName: agent.name, gitRepos: [] });
       return;
     }
+    homeStore.hide();
     SessionAPI.create({
       cwd: agent.path,
       sessionName: agent.name,
@@ -68,6 +70,7 @@ const AcDiscoveryPanel: Component = () => {
       return;
     }
 
+    homeStore.hide();
     SessionAPI.create({
       cwd: replica.path,
       sessionName: `${wg.name}/${replica.name}`,
@@ -374,6 +377,7 @@ const AcDiscoveryPanel: Component = () => {
             sessionName={pendingLaunch()!.sessionName}
             onSelect={(agent) => {
               const pending = pendingLaunch()!;
+              homeStore.hide();
               SessionAPI.create({
                 cwd: pending.path,
                 sessionName: pending.sessionName,
