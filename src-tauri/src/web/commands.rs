@@ -166,7 +166,7 @@ async fn dispatch_inner(state: &WsState, cmd: &str, args: &Value) -> Result<Valu
                 &state.app_handle,
                 &state.broadcaster,
                 "session_switched",
-                &json!({ "id": id }),
+                &json!({ "id": id, "userInitiated": true }),
             );
 
             Ok(json!(null))

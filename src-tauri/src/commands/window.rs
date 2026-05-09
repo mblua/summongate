@@ -243,7 +243,10 @@ pub async fn attach_terminal(
         "terminal_attached",
         serde_json::json!({ "sessionId": session_id }),
     );
-    let _ = app.emit("session_switched", serde_json::json!({ "id": session_id }));
+    let _ = app.emit(
+        "session_switched",
+        serde_json::json!({ "id": session_id, "userInitiated": true }),
+    );
 
     Ok(())
 }
