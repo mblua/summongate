@@ -1,7 +1,7 @@
 import { Component, createSignal, onMount, onCleanup, Show } from "solid-js";
 import type { UnlistenFn } from "../shared/transport";
 import type { MainSidebarSide } from "../shared/types";
-import { SettingsAPI, SessionAPI, onSessionCreated, onSessionDestroyed } from "../shared/ipc";
+import { SettingsAPI, SessionAPI, onSessionCreated, onSessionDestroyed, onSessionSwitched } from "../shared/ipc";
 import { isTauri } from "../shared/platform";
 import { initZoom } from "../shared/zoom";
 import { initWindowGeometry } from "../shared/window-geometry";
@@ -165,21 +165,27 @@ const MainApp: Component = () => {
       console.error("Failed to load main-window settings:", e);
     }
 
-    // Home initial visibility (issue #164) — show Home when no active session
-    // at boot. After boot, visibility is user-controlled by the toolbar button
-    // and the auto-hide/auto-show rules below.
-    try {
-      const activeId = await SessionAPI.getActive();
-      homeStore.setInitialVisibility(activeId !== null);
-    } catch (e) {
-      console.error("[home] Failed to read initial active session:", e);
-      homeStore.setInitialVisibility(false);
-    }
+    // Home on every app open (issue #183) — Home wins regardless of any
+    // restored active session. After boot, visibility is user-controlled by
+    // the Home button and the auto-hide/auto-show rules below.
+    homeStore.show();
 
     // Auto-hide Home when a session is created (user wants the new session).
     unlisteners.push(
       await onSessionCreated(() => {
         homeStore.hide();
+      })
+    );
+
+    // Auto-hide Home when the user switches to an existing session (issue
+    // #183). Backend can emit `session_switched` with id=null when no session
+    // is active (see commands/window.rs, commands/session.rs); in that case
+    // keep Home visible.
+    unlisteners.push(
+      await onSessionSwitched(({ id }) => {
+        if (id) {
+          homeStore.hide();
+        }
       })
     );
 
