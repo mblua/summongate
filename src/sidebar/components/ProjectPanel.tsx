@@ -223,6 +223,7 @@ const ProjectPanel: Component = () => {
         const [agentCtxMenu, setAgentCtxMenu] = createSignal<{ agent: { name: string; path: string; preferredAgentId?: string }; x: number; y: number } | null>(null);
         const [agentsHeaderCtxMenu, setAgentsHeaderCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
         const [workgroupsHeaderCtxMenu, setWorkgroupsHeaderCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
+        const [teamsHeaderCtxMenu, setTeamsHeaderCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
         const [deletingAgent, setDeletingAgent] = createSignal<{ name: string; path: string } | null>(null);
         const [agentDeleteError, setAgentDeleteError] = createSignal("");
         const [agentDeleteInProgress, setAgentDeleteInProgress] = createSignal(false);
@@ -364,6 +365,7 @@ const ProjectPanel: Component = () => {
           setAgentCtxMenu(null);
           setAgentsHeaderCtxMenu(null);
           setWorkgroupsHeaderCtxMenu(null);
+          setTeamsHeaderCtxMenu(null);
           setReplicaCtxMenu(null);
           setCtxMenuPos({ x: e.clientX, y: e.clientY });
           setShowCtxMenu(true);
@@ -396,6 +398,7 @@ const ProjectPanel: Component = () => {
           setAgentCtxMenu(null);
           setAgentsHeaderCtxMenu(null);
           setWorkgroupsHeaderCtxMenu(null);
+          setTeamsHeaderCtxMenu(null);
           setReplicaCtxMenu(null);
           setTeamCtxMenu({ team, x: e.clientX, y: e.clientY });
           const dismiss = (ev?: Event) => {
@@ -420,6 +423,7 @@ const ProjectPanel: Component = () => {
           setAgentCtxMenu(null);
           setAgentsHeaderCtxMenu(null);
           setWorkgroupsHeaderCtxMenu(null);
+          setTeamsHeaderCtxMenu(null);
           setReplicaCtxMenu(null);
           setWgCtxMenu({ wg, x: e.clientX, y: e.clientY });
           const dismiss = (ev?: Event) => {
@@ -445,6 +449,7 @@ const ProjectPanel: Component = () => {
           setAgentCtxMenu(null);
           setAgentsHeaderCtxMenu(null);
           setWorkgroupsHeaderCtxMenu(null);
+          setTeamsHeaderCtxMenu(null);
           setReplicaCtxMenu({
             sessionId: session.id,
             sessionName: session.name,
@@ -799,6 +804,7 @@ const ProjectPanel: Component = () => {
                     setWgCtxMenu(null);
                     setAgentCtxMenu(null);
                     setAgentsHeaderCtxMenu(null);
+                    setTeamsHeaderCtxMenu(null);
                     setReplicaCtxMenu(null);
                     setWorkgroupsHeaderCtxMenu({ x: e.clientX, y: e.clientY });
                     const dismiss = (ev?: Event) => {
@@ -910,6 +916,7 @@ const ProjectPanel: Component = () => {
                     setWgCtxMenu(null);
                     setAgentsHeaderCtxMenu(null);
                     setWorkgroupsHeaderCtxMenu(null);
+                    setTeamsHeaderCtxMenu(null);
                     setReplicaCtxMenu(null);
                     setAgentCtxMenu({ agent, x: e.clientX, y: e.clientY });
                     const dismiss = (ev?: Event) => {
@@ -934,6 +941,7 @@ const ProjectPanel: Component = () => {
                     setWgCtxMenu(null);
                     setAgentCtxMenu(null);
                     setWorkgroupsHeaderCtxMenu(null);
+                    setTeamsHeaderCtxMenu(null);
                     setReplicaCtxMenu(null);
                     setAgentsHeaderCtxMenu({ x: e.clientX, y: e.clientY });
                     const dismiss = (ev?: Event) => {
@@ -1122,12 +1130,40 @@ const ProjectPanel: Component = () => {
                 {/* Teams */}
                 {(() => {
                   const [teamsCollapsed, setTeamsCollapsed] = createSignal(false);
+
+                  const handleTeamsHeaderContextMenu = (e: MouseEvent) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cleanupCtx();
+                    setShowCtxMenu(false);
+                    setTeamCtxMenu(null);
+                    setWgCtxMenu(null);
+                    setAgentCtxMenu(null);
+                    setAgentsHeaderCtxMenu(null);
+                    setWorkgroupsHeaderCtxMenu(null);
+                    setReplicaCtxMenu(null);
+                    setTeamsHeaderCtxMenu({ x: e.clientX, y: e.clientY });
+                    const dismiss = (ev?: Event) => {
+                      if (ev instanceof KeyboardEvent && ev.key !== "Escape") return;
+                      setTeamsHeaderCtxMenu(null);
+                      cleanupCtx();
+                    };
+                    dismissCtx = dismiss;
+                    setTimeout(() => {
+                      window.addEventListener("click", dismiss);
+                      window.addEventListener("contextmenu", dismiss);
+                      window.addEventListener("keydown", dismiss as any);
+                    });
+                  };
+
                   return (
+                    <>
                     <Show when={sessionsStore.showCategories}>
                     <div class="ac-wg-group">
                       <div
                         class="ac-wg-header ac-wg-header--collapsible"
                         onClick={() => setTeamsCollapsed((c) => !c)}
+                        onContextMenu={handleTeamsHeaderContextMenu}
                       >
                         <span class="ac-discovery-chevron" classList={{ collapsed: teamsCollapsed() }}>
                           &#x25BE;
@@ -1187,6 +1223,28 @@ const ProjectPanel: Component = () => {
                       </Show>
                     </div>
                     </Show>
+
+                    {/* Teams header context menu */}
+                    {teamsHeaderCtxMenu() && (
+                      <Portal>
+                        <div
+                          class="session-context-menu"
+                          style={{ left: `${teamsHeaderCtxMenu()!.x}px`, top: `${teamsHeaderCtxMenu()!.y}px` }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            class="session-context-option"
+                            onClick={() => {
+                              setTeamsHeaderCtxMenu(null);
+                              setShowNewTeam(true);
+                            }}
+                          >
+                            New Team
+                          </button>
+                        </div>
+                      </Portal>
+                    )}
+                    </>
                   );
                 })()}
               </div>
