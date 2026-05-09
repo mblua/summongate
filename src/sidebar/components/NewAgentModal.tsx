@@ -1,6 +1,7 @@
 import { Component, createSignal, createMemo, For, Show, onMount } from "solid-js";
 import type { AgentConfig } from "../../shared/types";
 import { AgentCreatorAPI, SessionAPI, SettingsAPI } from "../../shared/ipc";
+import { homeStore } from "../../main/stores/home";
 
 type Stage = "form" | "launch";
 
@@ -100,6 +101,7 @@ const NewAgentModal: Component<{ onClose: () => void }> = (props) => {
     const parentName = normalized.split("/").pop() || normalized;
     const sessionName = `${parentName}/${agentName().trim()}`;
 
+    homeStore.hide();
     SessionAPI.create({
       shell,
       shellArgs,

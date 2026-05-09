@@ -170,9 +170,12 @@ export function onSessionDestroyed(
 }
 
 export function onSessionSwitched(
-  callback: (data: { id: string }) => void
+  callback: (data: { id: string | null; userInitiated?: boolean }) => void
 ): Promise<UnlistenFn> {
-  return transport.listen<{ id: string }>("session_switched", callback);
+  return transport.listen<{ id: string | null; userInitiated?: boolean }>(
+    "session_switched",
+    callback
+  );
 }
 
 export function onSessionRenamed(

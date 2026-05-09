@@ -258,7 +258,7 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
               <Show when={!props.detached}>
                 <button
                   class="terminal-empty-btn"
-                  onClick={() => SessionAPI.create()}
+                  onClick={() => { homeStore.hide(); SessionAPI.create(); }}
                 >
                   + New Session
                 </button>

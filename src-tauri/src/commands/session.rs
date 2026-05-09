@@ -1026,7 +1026,7 @@ pub async fn restart_session(
     }
     let _ = app.emit(
         "session_switched",
-        serde_json::json!({ "id": session_info.id }),
+        serde_json::json!({ "id": session_info.id, "userInitiated": true }),
     );
 
     // 6. Re-attach Telegram bridge if the repo config has one
@@ -1101,7 +1101,10 @@ pub async fn switch_session(
     // Persist after switch (updates was_active)
     persist_current_state(&mgr).await;
 
-    let _ = app.emit("session_switched", serde_json::json!({ "id": id }));
+    let _ = app.emit(
+        "session_switched",
+        serde_json::json!({ "id": id, "userInitiated": true }),
+    );
 
     Ok(())
 }
