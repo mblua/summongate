@@ -1,6 +1,7 @@
 pub mod agent_config;
 pub mod claude_settings;
 pub mod profile;
+pub mod projects;
 pub mod session_context;
 pub mod sessions_persistence;
 pub mod settings;

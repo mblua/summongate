@@ -15,7 +15,7 @@ const [loading, setLoading] = createSignal(false);
 let loadingCount = 0;
 
 function normalizePath(p: string): string {
-  return p.replace(/\\/g, "/").toLowerCase();
+  return p.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
 }
 
 export const projectStore = {
@@ -33,7 +33,7 @@ export const projectStore = {
     return loading();
   },
 
-  /** Load a project from a path: discover and append to the list (skip if already loaded) */
+  /** Register a project path in settings (via shared backend) and load its discovery data. */
   async loadProject(path: string) {
     const normalized = normalizePath(path);
     if (projects().some((p) => normalizePath(p.path) === normalized)) return;
@@ -41,20 +41,38 @@ export const projectStore = {
     loadingCount++;
     setLoading(true);
     try {
-      const result = await ProjectAPI.discover(path);
-      const folderName = path.replace(/\\/g, "/").split("/").pop() ?? "unknown";
-      setProjects((prev) => [
-        ...prev,
-        {
-          path,
-          folderName,
-          workgroups: result.workgroups,
-          agents: result.agents,
-          teams: result.teams,
-        },
-      ]);
-      await persistProjectPaths();
+      // #191 — backend owns the validation + dedup + persist atomically.
+      // Throws if `.ac-new/` is missing; caller (createAndLoad / pickAndCheck)
+      // is responsible for creating it first via projectStore.createAndLoad
+      // when that case is expected.
+      const reg = await ProjectAPI.open(path);
+      const result = await ProjectAPI.discover(reg.path);
+      const folderName =
+        reg.path.replace(/\\/g, "/").split("/").pop() ?? "unknown";
+      // Round-1 G2: re-check against the BACKEND-absolutised reg.path
+      // (which may differ from the input `path` in case/slashes/`..`),
+      // mirroring the inner dedup pattern in createAndLoad. Closes the
+      // double-render race when two concurrent calls pass differently-
+      // shaped strings that resolve to the same registered entry.
+      const normalizedReg = normalizePath(reg.path);
+      setProjects((prev) => {
+        if (prev.some((p) => normalizePath(p.path) === normalizedReg)) return prev;
+        return [
+          ...prev,
+          {
+            path: reg.path,
+            folderName,
+            workgroups: result.workgroups,
+            agents: result.agents,
+            teams: result.teams,
+          },
+        ];
+      });
     } catch (e) {
+      // Round-1 G11 deferred: surface this to the user via toast/sidebar
+      // chip in a follow-up. For now, preserve the existing swallow-and-log
+      // so behaviour is no worse than today (initFromSettings silently drops
+      // a project whose .ac-new was deleted between sessions — see §6.11).
       console.error("Failed to load project:", e);
     } finally {
       loadingCount--;
@@ -74,10 +92,27 @@ export const projectStore = {
     }
   },
 
-  /** Create .ac-new in path and add as project */
+  /** Create .ac-new in path (if missing) and register/load it. */
   async createAndLoad(path: string) {
-    await ProjectAPI.createAcProject(path);
-    await projectStore.loadProject(path);
+    const reg = await ProjectAPI.new(path);
+    // After ensuring .ac-new exists + persistence is set, run discovery for UI.
+    const result = await ProjectAPI.discover(reg.path);
+    const folderName =
+      reg.path.replace(/\\/g, "/").split("/").pop() ?? "unknown";
+    const normalized = normalizePath(reg.path);
+    setProjects((prev) => {
+      if (prev.some((p) => normalizePath(p.path) === normalized)) return prev;
+      return [
+        ...prev,
+        {
+          path: reg.path,
+          folderName,
+          workgroups: result.workgroups,
+          agents: result.agents,
+          teams: result.teams,
+        },
+      ];
+    });
   },
 
   /** Full open flow: pick folder, check .ac-new, auto-load if found */
