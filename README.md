@@ -333,20 +333,23 @@ The script writes the same version to every checked location:
 The frontend titlebar reads its version from `tauri.conf.json` at build time,
 so bumping that file is enough — no source files need manual edits.
 
-After bumping, commit every file the script touched in a single commit so
-CI sees them together:
+After bumping, verify every location agrees before committing — this
+catches any future regression in the bump script locally instead of in CI:
+
+```bash
+npm run version:check
+```
+
+Then commit every file the script touched in a single commit so CI sees
+them together:
 
 ```bash
 git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
 git commit -m "chore: bump version to X.Y.Z"
 ```
 
-To verify the locations agree (run locally before pushing; CI runs the same
-check on every PR/push that touches a version-relevant file):
-
-```bash
-npm run version:check
-```
+CI runs the same `version:check` on every PR/push that touches a
+version-relevant file.
 
 ## Privacy
 

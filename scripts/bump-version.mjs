@@ -123,16 +123,27 @@ function resolveTarget(arg, current) {
   die(`Argument must be patch|minor|major or X.Y.Z (got "${arg}")`);
 }
 
-function planPatch(patch, target) {
-  const path = join(ROOT, patch.file);
+function planFile(file, patches, target) {
+  const path = join(ROOT, file);
   const before = readFileSync(path, 'utf8');
-  // Anchor-not-matched is a hard fail: it means the file was renamed or
-  // restructured and our regex needs maintenance — do NOT silently skip.
-  if (!patch.re.test(before)) {
-    die(`${patch.file}: anchor for "${patch.label}" did not match — file may have been renamed or restructured. Update PATCHES regexes.`);
+  // Apply every patch sequentially against the in-memory string so a file
+  // with multiple PATCHES entries (e.g. package-lock.json's root version +
+  // packages[""].version) lands all its rewrites in a single write. Each
+  // patch's regex is re-tested against the running buffer so we can never
+  // silently lose an entry.
+  let current = before;
+  const steps = [];
+  for (const p of patches) {
+    // Anchor-not-matched is a hard fail: it means the file was renamed or
+    // restructured and our regex needs maintenance — do NOT silently skip.
+    if (!p.re.test(current)) {
+      die(`${file}: anchor for "${p.label}" did not match — file may have been renamed or restructured. Update PATCHES regexes.`);
+    }
+    const next = current.replace(p.re, (_match, prefix) => `${prefix}"${target}"`);
+    steps.push({ label: p.label, changed: next !== current });
+    current = next;
   }
-  const after = before.replace(patch.re, (_match, prefix) => `${prefix}"${target}"`);
-  return { path, before, after, file: patch.file, label: patch.label };
+  return { path, file, before, after: current, steps };
 }
 
 function main() {
@@ -158,18 +169,39 @@ function main() {
     console.log(`[bump-version] ${current} -> ${target}`);
   }
 
+  // Group PATCHES by file so each target file is read once, mutated
+  // sequentially in memory, and written once. The previous one-plan-per-
+  // entry layout re-read the original file for every entry and then
+  // wrote each plan independently, so the second write to any file
+  // silently clobbered the first — package-lock.json lost its root
+  // version rewrite on every bump.
+  const byFile = new Map();
+  for (const p of PATCHES) {
+    const list = byFile.get(p.file) ?? [];
+    list.push(p);
+    byFile.set(p.file, list);
+  }
+
   // Two-phase to avoid leaving the repo half-updated if a later file fails:
   //   phase 1 — read every file, validate every anchor, compute every new
   //             content. If anything fails, we exit before any writeFileSync.
   //   phase 2 — write the files whose content actually changed.
-  const plans = PATCHES.map((p) => planPatch(p, target));
+  const plans = [];
+  for (const [file, patches] of byFile) {
+    plans.push(planFile(file, patches, target));
+  }
+
   for (const plan of plans) {
-    if (plan.after === plan.before) {
-      console.log(`[bump-version] ${plan.file} (${plan.label}) already at ${target}`);
-      continue;
+    if (plan.after !== plan.before) {
+      writeFileSync(plan.path, plan.after);
     }
-    writeFileSync(plan.path, plan.after);
-    console.log(`[bump-version] ${plan.file} (${plan.label}) -> ${target}`);
+    for (const step of plan.steps) {
+      if (step.changed) {
+        console.log(`[bump-version] ${plan.file} (${step.label}) -> ${target}`);
+      } else {
+        console.log(`[bump-version] ${plan.file} (${step.label}) already at ${target}`);
+      }
+    }
   }
 
   console.log(`[bump-version] OK at ${target}`);
