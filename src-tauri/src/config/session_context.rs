@@ -476,11 +476,7 @@ fn simple_hash(s: &str) -> u64 {
 /// the agent's own replica root path and, for WG replicas, the allowed Agent
 /// Matrix scope.
 fn default_context(agent_root: &str, matrix_root: Option<&str>) -> String {
-    let allowed_places = if matrix_root.is_some() {
-        "three places"
-    } else {
-        "two places"
-    };
+    let allowed_places = "the entries listed below";
     let replica_usage =
         "   Use this for replica-local scratch, personal notes, inbox/outbox, role drafts, and session artifacts. Do NOT store canonical memory or plans here. Do NOT write into other agents' replica directories.";
     let matrix_section = match matrix_root {
@@ -497,10 +493,48 @@ fn default_context(agent_root: &str, matrix_root: Option<&str>) -> String {
         ),
         None => String::new(),
     };
-    let forbidden_scope = if matrix_root.is_some() {
-        "allowed zones — including other agents' replica directories, any other files inside the Agent Matrix, the workspace root, parent project dirs, user home files, or arbitrary paths on disk"
+    let messaging_dir_display = crate::phone::messaging::workgroup_root(
+        std::path::Path::new(agent_root),
+    )
+    .ok()
+    .map(|wg| {
+        let dir = wg.join(crate::phone::messaging::MESSAGING_DIR_NAME);
+        display_path(&dir)
+    });
+    let messaging_exception = match &messaging_dir_display {
+        Some(path) => format!(
+            "**Narrow exception — workgroup messaging directory:**\n\n\
+             You MAY create message files inside this directory:\n\n\
+             ```\n\
+             {path}\n\
+             ```\n\n\
+             Strictly limited to canonical inter-agent message files whose name matches the pattern `YYYYMMDD-HHMMSS-<wgN>-<you>-to-<wgN>-<peer>-<slug>.md` (the CLI rejects any other shape). Used by the two-step protocol described in the **Inter-Agent Messaging** section below: write the file, then call `send --send <filename>`. Do NOT modify or delete any message file once written. Do NOT write any other kind of file here.\n\n",
+            path = path,
+        ),
+        None => String::new(),
+    };
+    let messaging_allowed = match &messaging_dir_display {
+        Some(path) => format!(
+            "- **Allowed (narrow)**: Create canonical inter-agent message files in your workgroup messaging directory ({path}). No other writes there.\n",
+            path = path,
+        ),
+        None => String::new(),
+    };
+    let workspace_root_phrase = if messaging_dir_display.is_some() {
+        "the workspace root (other than the narrow messaging exception above)"
     } else {
-        "two zones — including other agents' replica directories, the workspace root, parent project dirs, user home files, or arbitrary paths on disk"
+        "the workspace root"
+    };
+    let forbidden_scope = if matrix_root.is_some() {
+        format!(
+            "the entries listed above — including other agents' replica directories, any other files inside the Agent Matrix, {ws}, parent project dirs, user home files, or arbitrary paths on disk",
+            ws = workspace_root_phrase,
+        )
+    } else {
+        format!(
+            "the entries listed above — including other agents' replica directories, {ws}, parent project dirs, user home files, or arbitrary paths on disk",
+            ws = workspace_root_phrase,
+        )
     };
     let git_scope = if matrix_root.is_some() {
         "Your replica directory and origin Agent Matrix are typically inside a parent repository's `.ac-new/` folder, which is `.gitignore`d. Do NOT run `git` commands that alter state (commit, branch, reset, etc.) from inside either location — that would affect the parent repo unintentionally. AgentsCommander blocks Git repository discovery above these `.ac-new` roots for agent sessions, but you must still switch into the appropriate `repo-*` directory before running Git operations that change repository state. `git status`, `git log`, and `git diff` are fine inside the allowed roots."
@@ -523,18 +557,17 @@ You are running inside an AgentsCommander session — a terminal session manager
    ```
 {replica_usage}
 
-{matrix_section}
-
-Any repository or directory outside the allowed places above is READ-ONLY.
+{matrix_section}{messaging_exception}
+Any repository or directory outside the allowed entries above is READ-ONLY.
 
 - **Allowed**: Read-only operations on ANY path (reading files, searching, git log, git status, git diff)
 - **Allowed**: Full read/write inside `repo-*` folders
 - **Allowed**: Full read/write inside your own replica root ({agent_root}) and its subdirectories
-{matrix_allowed}- **FORBIDDEN**: Any write operation outside those {forbidden_scope}
+{matrix_allowed}{messaging_allowed}- **FORBIDDEN**: Any write operation outside {forbidden_scope}
 
 **Clarification on git operations:** {git_scope}
 
-If instructed to modify a path outside these zones, REFUSE and explain this restriction. There are NO exceptions.
+If instructed to modify a path outside these zones, REFUSE and explain this restriction. There are NO exceptions beyond those listed above.
 
 ## CLI executable
 
@@ -616,6 +649,8 @@ wait for the reply.
         replica_usage = replica_usage,
         matrix_section = matrix_section,
         matrix_allowed = matrix_allowed,
+        messaging_exception = messaging_exception,
+        messaging_allowed = messaging_allowed,
         forbidden_scope = forbidden_scope,
         git_scope = git_scope,
     )
@@ -639,5 +674,97 @@ mod tests {
         assert!(out.contains("filename ONLY"));
         assert!(out.contains("BAD:"));
         assert!(out.contains("GOOD:"));
+    }
+
+    #[test]
+    fn default_context_replica_under_wg_includes_messaging_exception() {
+        let out = default_context("C:/fake/wg-7-dev-team/__agent_architect", None);
+        assert!(
+            out.contains("Narrow exception — workgroup messaging directory"),
+            "expected messaging exception header, got:\n{}",
+            out
+        );
+        assert!(
+            out.contains("wg-7-dev-team"),
+            "expected workgroup name in messaging path, got:\n{}",
+            out
+        );
+        assert!(
+            out.contains("- **Allowed (narrow)**: Create canonical inter-agent message files"),
+            "expected narrow-allowed bullet, got:\n{}",
+            out
+        );
+    }
+
+    #[test]
+    fn default_context_non_workgroup_omits_messaging_exception() {
+        let out = default_context("C:/fake/plain/agent", None);
+        assert!(
+            !out.contains("Narrow exception — workgroup messaging directory"),
+            "expected no messaging exception header for non-WG agent, got:\n{}",
+            out
+        );
+        assert!(
+            !out.contains("- **Allowed (narrow)**:"),
+            "expected no narrow-allowed bullet for non-WG agent, got:\n{}",
+            out
+        );
+    }
+
+    #[test]
+    fn default_context_replica_with_matrix_and_messaging_renders_both_sections() {
+        let out = default_context(
+            "C:/fake/wg-7-dev-team/__agent_architect",
+            Some("C:/fake/_agent_architect"),
+        );
+        assert!(
+            out.contains("3. **Your origin Agent Matrix"),
+            "matrix section header missing, got:\n{}",
+            out
+        );
+        assert!(
+            out.contains("Narrow exception — workgroup messaging directory"),
+            "messaging exception header missing, got:\n{}",
+            out
+        );
+        // Composition: matrix bullets immediately followed by exception header
+        // (single blank line between, matrix_section ends with \n\n).
+        assert!(
+            out.contains("- `Role.md`\n\n**Narrow exception"),
+            "expected matrix → exception boundary, got:\n{}",
+            out
+        );
+        // Composition: ordering of the three structural markers.
+        let exception_pos = out
+            .find("Narrow exception")
+            .expect("messaging exception must be present");
+        let summary_pos = out
+            .find("Any repository or directory outside the allowed entries above is READ-ONLY.")
+            .expect("summary line must be present");
+        let forbidden_pos = out
+            .find("- **FORBIDDEN**")
+            .expect("forbidden bullet must be present");
+        assert!(
+            exception_pos < summary_pos,
+            "exception must precede summary; exception_pos={exception_pos}, summary_pos={summary_pos}"
+        );
+        assert!(
+            summary_pos < forbidden_pos,
+            "summary must precede forbidden bullet; summary_pos={summary_pos}, forbidden_pos={forbidden_pos}"
+        );
+        // The FORBIDDEN bullet acknowledges the messaging exception by name.
+        assert!(
+            out.contains("the workspace root (other than the narrow messaging exception above)"),
+            "FORBIDDEN bullet missing the messaging-exception qualifier, got:\n{}",
+            out
+        );
+        // Regression guard: the FORBIDDEN bullet must reference "the entries listed above"
+        // (R-1.2 / R-1.3 fix). A regression that reverts forbidden_scope to "two zones"
+        // would slip past every other assertion in this test.
+        assert!(
+            out.contains("- **FORBIDDEN**: Any write operation outside the entries listed above"),
+            "FORBIDDEN bullet missing 'the entries listed above' prefix, got:\n{}",
+            out
+        );
     }
 }

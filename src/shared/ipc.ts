@@ -16,6 +16,7 @@ import type {
   WindowGeometry,
   BriefUpdateResult,
   WorkgroupBriefUpdatedEvent,
+  ProjectRegistration,
 } from "./types";
 
 export interface SessionRepoInput {
@@ -414,6 +415,20 @@ export const ProjectAPI = {
     transport.invoke<void>("create_ac_project", { path }),
   discover: (path: string) =>
     transport.invoke<AcDiscoveryResult>("discover_project", { path }),
+  /**
+   * Validate an existing AC project at `path` and register it in
+   * settings.projectPaths. Wraps the `open_project` Tauri command added in
+   * #191 — same backend logic as the CLI `open-project` verb.
+   */
+  open: (path: string) =>
+    transport.invoke<ProjectRegistration>("open_project", { path }),
+  /**
+   * Ensure an AC project at `path` (mkdir `.ac-new/` if missing) and register
+   * it in settings.projectPaths. Wraps the `new_project` Tauri command added
+   * in #191 — same backend logic as the CLI `new-project` verb.
+   */
+  new: (path: string) =>
+    transport.invoke<ProjectRegistration>("new_project", { path }),
 };
 
 // Entity Creation API (agents, teams, workgroups)

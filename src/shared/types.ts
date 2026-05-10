@@ -332,3 +332,17 @@ export interface WorkgroupBriefUpdatedEvent {
   briefTitle?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Project registration result (#191 — shared open/new project flow)
+// Mirrors src-tauri/src/config/projects.rs::ProjectRegistration.
+// ---------------------------------------------------------------------------
+
+export interface ProjectRegistration {
+  /** Absolute path that was added (or matched) in projectPaths. */
+  path: string;
+  /** True when this call appended a new entry, false when already present. */
+  registered: boolean;
+  /** True when this call created .ac-new/ on disk (always false for openProject). */
+  created: boolean;
+}
+

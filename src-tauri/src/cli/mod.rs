@@ -5,6 +5,8 @@ pub mod close_session;
 pub mod create_agent;
 pub mod list_peers;
 pub mod list_sessions;
+pub mod new_project;
+pub mod open_project;
 pub mod send;
 
 use clap::{Parser, Subcommand};
@@ -42,6 +44,10 @@ pub enum Commands {
     BriefSetTitle(brief_set_title::BriefSetTitleArgs),
     /// Append text to the body of the workgroup BRIEF.md (coordinator-only)
     BriefAppendBody(brief_append_body::BriefAppendBodyArgs),
+    /// Register an existing AC project (.ac-new must already exist) in settings
+    OpenProject(open_project::OpenProjectArgs),
+    /// Create an AC project (mkdir .ac-new if missing) and register it in settings
+    NewProject(new_project::NewProjectArgs),
 }
 
 /// Attach to parent console (or allocate a new one) ONLY if both stdout and stderr
@@ -146,6 +152,8 @@ pub fn handle_cli(cmd: Commands) -> i32 {
         Commands::CloseSession(args) => close_session::execute(args),
         Commands::BriefSetTitle(args) => brief_set_title::execute(args),
         Commands::BriefAppendBody(args) => brief_append_body::execute(args),
+        Commands::OpenProject(args) => open_project::execute(args),
+        Commands::NewProject(args) => new_project::execute(args),
     };
 
     flush_outputs();

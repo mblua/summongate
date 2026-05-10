@@ -832,6 +832,8 @@ pub fn run() {
             commands::ac_discovery::discover_ac_agents,
             commands::ac_discovery::check_project_path,
             commands::ac_discovery::create_ac_project,
+            commands::ac_discovery::open_project,
+            commands::ac_discovery::new_project,
             commands::ac_discovery::discover_project,
             commands::ac_discovery::get_replica_context_files,
             commands::ac_discovery::set_replica_context_files,
