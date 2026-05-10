@@ -455,7 +455,8 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or(t)
-                .eq_ignore_ascii_case("claude")
+                .to_ascii_lowercase()
+                .starts_with("claude")
         });
     let is_codex = std::iter::once(shell)
         .chain(args.iter().flat_map(|s| s.split_whitespace()))
@@ -487,10 +488,9 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
         let mut result = args.to_vec();
 
         if is_claude {
-            if let Some(idx) = result
-                .iter()
-                .position(|arg| crate::commands::session::executable_basename(arg) == "claude")
-            {
+            if let Some(idx) = result.iter().position(|arg| {
+                crate::commands::session::executable_basename(arg).starts_with("claude")
+            }) {
                 strip_claude_tokens(&mut result, idx + 1);
             }
         }
@@ -520,7 +520,7 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
 
             if is_claude {
                 if let Some(idx) = tokens.iter().position(|token| {
-                    crate::commands::session::executable_basename(token) == "claude"
+                    crate::commands::session::executable_basename(token).starts_with("claude")
                 }) {
                     let before = tokens.len();
                     strip_claude_tokens(&mut tokens, idx + 1);
@@ -807,6 +807,74 @@ mod tests {
     fn strip_auto_injected_args_leaves_unrelated_commands_unchanged() {
         let args = vec!["-NoLogo".to_string()];
         assert_eq!(strip_auto_injected_args("powershell.exe", &args), args);
+    }
+
+    // ── Issue #186 — wrapper-basename Claude detection in the stripper ──
+
+    #[test]
+    fn strip_auto_injected_args_strips_continue_for_wrapper_basename() {
+        // claude-mb invoked directly: `--continue` must be stripped from the
+        // saved recipe even though the executable's stem is "claude-mb".
+        let stripped = strip_auto_injected_args(
+            "claude-mb",
+            &[
+                "--dangerously-skip-permissions".to_string(),
+                "--effort".to_string(),
+                "max".to_string(),
+                "--continue".to_string(),
+            ],
+        );
+        assert_eq!(
+            stripped,
+            vec![
+                "--dangerously-skip-permissions".to_string(),
+                "--effort".to_string(),
+                "max".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn strip_auto_injected_args_strips_continue_for_cmd_wrapped_basename() {
+        // cmd.exe /K claude-mb ... --continue → strip --continue.
+        let stripped = strip_auto_injected_args(
+            "cmd.exe",
+            &[
+                "/K".to_string(),
+                "claude-mb".to_string(),
+                "--effort".to_string(),
+                "max".to_string(),
+                "--continue".to_string(),
+            ],
+        );
+        assert_eq!(
+            stripped,
+            vec![
+                "/K".to_string(),
+                "claude-mb".to_string(),
+                "--effort".to_string(),
+                "max".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn strip_auto_injected_args_strips_continue_for_embedded_cmd_wrapped_basename() {
+        // cmd.exe /K "claude-mb --effort max --continue" → strip --continue.
+        let stripped = strip_auto_injected_args(
+            "cmd.exe",
+            &[
+                "/K".to_string(),
+                "claude-mb --effort max --continue".to_string(),
+            ],
+        );
+        assert_eq!(
+            stripped,
+            vec![
+                "/K".to_string(),
+                "claude-mb --effort max".to_string(),
+            ]
+        );
     }
 
     /// Validation #17: single-repo legacy → one SessionRepo; legacy fields cleared.
