@@ -311,6 +311,24 @@ mod tests {
     }
 
     #[test]
+    fn new_creates_parent_directory_when_missing() {
+        // Covers the `create_dir_all(&abs)` branch in register_new_project
+        // for a path whose project folder does NOT yet exist on disk. The
+        // existing `new_creates_ac_new_when_missing` test passes `fix.path()`
+        // which `FixtureRoot::new` already created, so the parent-mkdir
+        // branch was previously unexercised.
+        let fix = FixtureRoot::new("proj-new-parent");
+        let nested = fix.path().join("nested-not-yet-created");
+        let mut s = AppSettings::default();
+        let r = register_new_project(&mut s, nested.to_str().unwrap()).unwrap();
+        assert!(r.created, "should report created=true for fresh path");
+        assert!(r.registered);
+        assert!(nested.is_dir(), "project root should have been created");
+        assert!(nested.join(".ac-new").is_dir());
+        assert!(nested.join(".ac-new").join(".gitignore").is_file());
+    }
+
+    #[test]
     fn new_skips_creation_when_ac_new_already_exists() {
         let fix = FixtureRoot::new("proj-new-existing");
         std::fs::create_dir_all(fix.path().join(".ac-new")).unwrap();

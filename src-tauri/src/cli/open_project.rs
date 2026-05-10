@@ -29,6 +29,7 @@ IDEMPOTENCY: Re-registering the same path is a no-op; the verb prints \
 \"Project already registered\" and exits 0.")]
 pub struct OpenProjectArgs {
     /// Path to an existing AC project folder (must contain `.ac-new/`)
+    #[arg(value_name = "PATH")]
     pub path: String,
 }
 

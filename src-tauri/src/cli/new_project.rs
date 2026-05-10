@@ -22,6 +22,7 @@ gitignore is swept (missing patterns appended), and the registration step \
 deduplicates against any prior entry.")]
 pub struct NewProjectArgs {
     /// Path to make into an AC project (folder created if missing)
+    #[arg(value_name = "PATH")]
     pub path: String,
 }
 
