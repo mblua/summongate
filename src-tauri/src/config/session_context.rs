@@ -485,14 +485,14 @@ fn default_context(agent_root: &str, matrix_root: Option<&str>) -> String {
         "   Use this for replica-local scratch, personal notes, inbox/outbox, role drafts, and session artifacts. Do NOT store canonical memory or plans here. Do NOT write into other agents' replica directories.";
     let matrix_section = match matrix_root {
         Some(matrix_root) => format!(
-            "3. **Your origin Agent Matrix, but only for the canonical agent state listed below:**\n   ```\n   {matrix_root}\n   ```\n   Allowed there:\n   - `memory/`\n   - `plans/`\n   - `Role.md`\n\n",
+            "3. **Your origin Agent Matrix, but only for the canonical agent state listed below:**\n   ```\n   {matrix_root}\n   ```\n   Allowed there:\n   - `memory/`\n   - `plans/`\n   - `skills/`\n   - `Role.md`\n\n",
             matrix_root = matrix_root,
         ),
         None => String::new(),
     };
     let matrix_allowed = match matrix_root {
         Some(matrix_root) => format!(
-            "- **Allowed**: Full read/write inside your origin Agent Matrix's `memory/`, `plans/`, and `Role.md` ({matrix_root})\n",
+            "- **Allowed**: Full read/write inside your origin Agent Matrix's `memory/`, `plans/`, `skills/`, and `Role.md` ({matrix_root})\n",
             matrix_root = matrix_root,
         ),
         None => String::new(),
@@ -639,5 +639,40 @@ mod tests {
         assert!(out.contains("filename ONLY"));
         assert!(out.contains("BAD:"));
         assert!(out.contains("GOOD:"));
+    }
+
+    #[test]
+    fn default_context_matrix_section_lists_skills() {
+        let out = default_context("C:/tmp/fake-agent", Some("C:/tmp/fake-matrix"));
+        assert!(
+            out.contains("- `skills/`"),
+            "expected `skills/` bullet in matrix Allowed-there list, got:\n{}",
+            out
+        );
+        assert!(
+            out.contains("`memory/`, `plans/`, `skills/`, and `Role.md`"),
+            "expected consolidated Allowed line to list `skills/` between `plans/` and `Role.md`, got:\n{}",
+            out
+        );
+    }
+
+    #[test]
+    fn default_context_matrix_does_not_grant_full_matrix_write() {
+        let out = default_context("C:/tmp/fake-agent", Some("C:/tmp/fake-matrix"));
+        assert!(
+            out.contains("any other files inside the Agent Matrix"),
+            "forbidden scope must still keep the rest of the Agent Matrix read-only, got:\n{}",
+            out
+        );
+    }
+
+    #[test]
+    fn default_context_without_matrix_root_omits_skills() {
+        let out = default_context("C:/tmp/fake-agent", None);
+        assert!(
+            !out.contains("`skills/`"),
+            "did not expect `skills/` mention when no matrix_root is supplied, got:\n{}",
+            out
+        );
     }
 }
