@@ -1673,6 +1673,47 @@ pub async fn set_replica_context_files(path: String, files: Vec<String>) -> Resu
     Ok(())
 }
 
+// ── #191 — shared open/new project commands ──────────────────────────────
+
+/// Validate an existing AC project at `path` and register it in
+/// `settings.project_paths`. Mirrors the ActionBar "Open Project" flow at
+/// `src/sidebar/components/ActionBar.tsx:78-94` but performs the dedup +
+/// persist atomically against `SettingsState`.
+///
+/// Holds the SettingsState write lock through `save_settings` — same pattern
+/// as `set_inject_rtk_hook` (`src-tauri/src/commands/config.rs:184-194`) — so
+/// concurrent `update_settings` calls cannot race.
+#[tauri::command]
+pub async fn open_project(
+    settings: State<'_, SettingsState>,
+    path: String,
+) -> Result<crate::config::projects::ProjectRegistration, String> {
+    let mut s = settings.write().await;
+    let result = crate::config::projects::register_existing_project(&mut s, &path)
+        .map_err(|e| e.to_string())?;
+    let snapshot = s.clone();
+    crate::config::settings::save_settings(&snapshot)?;
+    drop(s); // explicit; lock released AFTER the disk write completes
+    Ok(result)
+}
+
+/// Ensure an AC project at `path` (creating `.ac-new/` if missing) and
+/// register it in `settings.project_paths`. Mirrors the ActionBar "New
+/// Project" flow at `src/sidebar/components/ActionBar.tsx:58-71`.
+#[tauri::command]
+pub async fn new_project(
+    settings: State<'_, SettingsState>,
+    path: String,
+) -> Result<crate::config::projects::ProjectRegistration, String> {
+    let mut s = settings.write().await;
+    let result = crate::config::projects::register_new_project(&mut s, &path)
+        .map_err(|e| e.to_string())?;
+    let snapshot = s.clone();
+    crate::config::settings::save_settings(&snapshot)?;
+    drop(s); // explicit; lock released AFTER the disk write completes
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

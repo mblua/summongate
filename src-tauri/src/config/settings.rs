@@ -443,6 +443,74 @@ pub fn load_settings() -> AppSettings {
     settings
 }
 
+/// CLI-only variant of `load_settings`. Reads disk and applies the same
+/// in-memory migrations as `load_settings`, but does NOT auto-generate or
+/// persist a `root_token`. Used by CLI verbs that mutate settings
+/// (`open-project`, `new-project`) so error paths and pre-validation reads
+/// do NOT silently rewrite `settings.json` (Round-1 G5 in #191's plan).
+///
+/// The CLI verbs do not consume the root_token; if a future verb needs it,
+/// `settings.root_token == None` on a brand-new install is fine — the CLI
+/// is read-only with respect to it. The GUI still owns root_token
+/// generation via the next `load_settings()` call when it boots.
+///
+/// **Migration duplication is intentional for this PR.** Extracting an
+/// `apply_in_memory_migrations(&mut AppSettings)` helper that both loaders
+/// share is a clean follow-up, but pulls in scope outside #191 (touches
+/// `load_settings`'s control flow). Keep both copies in lockstep until
+/// then; if you add a new in-memory migration to `load_settings`, mirror
+/// it here too.
+pub fn load_settings_for_cli() -> AppSettings {
+    let path = match settings_path() {
+        Some(p) => p,
+        None => {
+            log::warn!("[cli] Could not determine home directory, using defaults");
+            return AppSettings::default();
+        }
+    };
+
+    let mut settings = if !path.exists() {
+        log::info!("[cli] No settings file found at {:?}, using defaults", path);
+        AppSettings::default()
+    } else {
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => match serde_json::from_str::<AppSettings>(&contents) {
+                Ok(s) => {
+                    log::info!("[cli] Loaded settings from {:?}", path);
+                    s
+                }
+                Err(e) => {
+                    log::error!("[cli] Failed to parse settings file: {}", e);
+                    AppSettings::default()
+                }
+            },
+            Err(e) => {
+                log::error!("[cli] Failed to read settings file: {}", e);
+                AppSettings::default()
+            }
+        }
+    };
+
+    // 0.8.0 unified-window migration — must mirror `load_settings` exactly,
+    // EXCEPT for the root_token auto-gen + save_settings call.
+    if settings.main_geometry.is_none() {
+        if let Some(ref g) = settings.terminal_geometry {
+            settings.main_geometry = Some(g.clone());
+        }
+    }
+    if (settings.main_zoom - default_zoom()).abs() < f64::EPSILON
+        && (settings.sidebar_zoom - default_zoom()).abs() > f64::EPSILON
+    {
+        settings.main_zoom = settings.sidebar_zoom;
+    }
+    if !settings.main_always_on_top && settings.sidebar_always_on_top {
+        settings.main_always_on_top = true;
+    }
+
+    // NO root_token auto-gen, NO save_settings call.
+    settings
+}
+
 /// Read only the `logLevel` field from `settings.json` without triggering migrations,
 /// auto-token-gen, or any in-memory mutation. Used by `lib.rs` at logger-init time so
 /// the full `load_settings` flow can run post-init with log calls captured.

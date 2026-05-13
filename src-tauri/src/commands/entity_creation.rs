@@ -601,6 +601,8 @@ pub async fn create_workgroup(
     }
     std::fs::create_dir_all(&wg_dir)
         .map_err(|e| format!("Failed to create workgroup directory: {}", e))?;
+    std::fs::create_dir_all(wg_dir.join(crate::phone::messaging::MESSAGING_DIR_NAME))
+        .map_err(|e| format!("Failed to create messaging directory: {}", e))?;
 
     // BRIEF.md: use the user-provided brief when present, otherwise seed a template.
     let brief_content = build_brief_content(&wg_name, brief);
