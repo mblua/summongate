@@ -6,9 +6,13 @@ use crate::config::{self, agent_creation};
 #[derive(Args)]
 #[command(after_help = "\
 WHAT IT DOES:\n  \
-  1. Creates <parent>/<name>/ directory\n  \
-  2. Writes CLAUDE.md with: \"You are the agent <parentFolder>/<name>\"\n  \
-  3. If --launch is given, writes a session request that the running app picks up (~3s)\n\n\
+  1. Uses the same backend folder + CLAUDE.md creation helper as the UI modal\n  \
+  2. Creates <parent>/<trimmed name>/ directory\n  \
+  3. Writes CLAUDE.md with: \"You are the agent <parentFolder>/<trimmed name>\"\n  \
+  4. If --launch is given, after folder creation writes a session request that the running app picks up (~3s)\n\n\
+VALIDATION:\n  \
+  --name is trimmed before use. It must not be empty after trim, and it must not contain path separators (/ or \\) or NUL.\n  \
+  The target folder must not already exist; existing folders are not overwritten.\n\n\
 OUTPUT: JSON object with fields: agentPath, agentName, claudeMd, launched, launchAgent.\n\n\
 The agent name is derived as \"<last component of parent>/<name>\" (e.g., parent=\"C:\\repos\" + \
 name=\"MyBot\" → \"repos/MyBot\"). This is the name other agents will use with `send --to`.")]
