@@ -12,10 +12,11 @@ WHAT IT DOES:\n  \
   4. If --launch is given, after folder creation writes a session request that the running app picks up (~3s)\n\n\
 VALIDATION:\n  \
   --name is trimmed before use. It must not be empty after trim, and it must not contain path separators (/ or \\) or NUL.\n  \
+  --parent must already exist; it is not created automatically.\n  \
   The target folder must not already exist; existing folders are not overwritten.\n\n\
 OUTPUT: JSON object with fields: agentPath, agentName, claudeMd, launched, launchAgent.\n\n\
-The agent name is derived as \"<last component of parent>/<name>\" (e.g., parent=\"C:\\repos\" + \
-name=\"MyBot\" → \"repos/MyBot\"). This is the name other agents will use with `send --to`.")]
+The agent name is derived as \"<last component of parent>/<trimmed name>\" (e.g., parent=\"C:\\repos\" + \
+name=\" MyBot \" -> \"repos/MyBot\"). This is the name other agents will use with `send --to`.")]
 pub struct CreateAgentArgs {
     /// Parent directory where the agent folder will be created
     #[arg(long)]

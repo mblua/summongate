@@ -243,15 +243,15 @@ Creates a folder with a `CLAUDE.md` role prompt using the same backend creation 
 
 ```bash
 # Create only
-agentscommander create-agent --parent "C:\path\to\folder" --name "MyAgent"
+agentscommander create-agent --parent "C:\path\to\folder" --name " MyAgent "
 
 # Create and launch with Claude Code
-agentscommander create-agent --parent "C:\path\to\folder" --name "MyAgent" --launch claude
+agentscommander create-agent --parent "C:\path\to\folder" --name " MyAgent " --launch claude
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--parent` | Yes | Parent directory where the agent folder will be created |
+| `--parent` | Yes | Existing parent directory where the agent folder will be created |
 | `--name` | Yes | Agent name, trimmed before use (becomes a subfolder inside `--parent`) |
 | `--launch` | No | Coding agent id to launch after creation (e.g., `claude`, `codex`) |
 | `--root` | No | Caller's root directory (for context) |
@@ -267,9 +267,12 @@ agentscommander create-agent --parent "C:\path\to\folder" --name "MyAgent" --lau
 - `--name` is trimmed before use.
 - `--name` must not be empty after trimming.
 - `--name` must not contain path separators (`/` or `\`) or NUL.
+- `--parent` must already exist; it is not created automatically.
 - The target folder must not already exist; existing folders are not overwritten.
 
 **Output** (stdout, JSON):
+The `agentName` field is derived from the parent folder name and the trimmed `--name`; for example, `--name " MyAgent "` produces `folder/MyAgent`.
+
 ```json
 {
   "agentPath": "C:\\path\\to\\folder\\MyAgent",
