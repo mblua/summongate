@@ -478,7 +478,7 @@ fn simple_hash(s: &str) -> u64 {
 fn default_context(agent_root: &str, matrix_root: Option<&str>) -> String {
     let allowed_places = "the entries listed below";
     let replica_usage =
-        "   Use this for replica-local scratch, personal notes, inbox/outbox, role drafts, and session artifacts. Do NOT store canonical memory or plans here. Do NOT write into other agents' replica directories.";
+        "   Use this for replica-local scratch, personal notes, inbox/outbox, role drafts, and session artifacts. Do NOT store canonical memory, plans, or skills here. Do NOT write into other agents' replica directories.";
     let matrix_section = match matrix_root {
         Some(matrix_root) => format!(
             "3. **Your origin Agent Matrix, but only for the canonical agent state listed below:**\n   ```\n   {matrix_root}\n   ```\n   Allowed there:\n   - `memory/`\n   - `plans/`\n   - `skills/`\n   - `Role.md`\n\n",
@@ -493,14 +493,13 @@ fn default_context(agent_root: &str, matrix_root: Option<&str>) -> String {
         ),
         None => String::new(),
     };
-    let messaging_dir_display = crate::phone::messaging::workgroup_root(
-        std::path::Path::new(agent_root),
-    )
-    .ok()
-    .map(|wg| {
-        let dir = wg.join(crate::phone::messaging::MESSAGING_DIR_NAME);
-        display_path(&dir)
-    });
+    let messaging_dir_display =
+        crate::phone::messaging::workgroup_root(std::path::Path::new(agent_root))
+            .ok()
+            .map(|wg| {
+                let dir = wg.join(crate::phone::messaging::MESSAGING_DIR_NAME);
+                display_path(&dir)
+            });
     let messaging_exception = match &messaging_dir_display {
         Some(path) => format!(
             "**Narrow exception — workgroup messaging directory:**\n\n\
@@ -706,6 +705,11 @@ mod tests {
         assert!(
             out.contains("`memory/`, `plans/`, `skills/`, and `Role.md`"),
             "expected consolidated Allowed line to list `skills/` between `plans/` and `Role.md`, got:\n{}",
+            out
+        );
+        assert!(
+            out.contains("Do NOT store canonical memory, plans, or skills here."),
+            "expected replica usage warning to include skills, got:\n{}",
             out
         );
     }
