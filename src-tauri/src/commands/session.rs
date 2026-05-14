@@ -251,9 +251,284 @@ fn inject_codex_resume(shell: &str, shell_args: &mut Vec<String>) -> bool {
     }
 }
 
+/// Resolve the directory where Claude Code stores its project transcripts for
+/// `cwd`, taking `CLAUDE_CONFIG_DIR` overrides set by `.cmd`/`.bat`/`.ps1`/`.sh`
+/// wrapper scripts into account.
+///
+/// Background: a user can put a wrapper like `claude-mb.cmd` on `%PATH%`:
+///
+/// ```bat
+/// @echo off
+/// set CLAUDE_CONFIG_DIR=C:\Users\maria\.claude-mb
+/// claude %*
+/// ```
+///
+/// Real Claude then writes project transcripts under
+/// `C:\Users\maria\.claude-mb\projects\<mangled-cwd>`, NOT
+/// `~/.claude/projects/<mangled-cwd>`. This helper finds the right base.
+///
+/// Returns `Some(<base>/projects/<mangled-cwd>)` when a Claude-family token
+/// exists in the launch command, else `None`. Falls back to `~/.claude/...`
+/// whenever the wrapper cannot be resolved or parsed; this preserves the
+/// pre-#186 default-install behavior exactly.
+///
+/// Visibility: `pub(crate)` so the Telegram JSONL watcher follow-up can reuse
+/// the same resolver without a private→pub(crate) refactor (see plan §6.3).
+pub(crate) fn resolve_claude_projects_dir(
+    shell: &str,
+    shell_args: &[String],
+    cwd: &str,
+) -> Option<std::path::PathBuf> {
+    use std::path::{Path, PathBuf};
+
+    fn default_base() -> Option<PathBuf> {
+        dirs::home_dir().map(|h| h.join(".claude"))
+    }
+
+    fn strip_ascii_prefix_ci<'a>(haystack: &'a str, needle: &str) -> Option<&'a str> {
+        if haystack.len() < needle.len() {
+            return None;
+        }
+        if haystack.as_bytes()[..needle.len()].eq_ignore_ascii_case(needle.as_bytes()) {
+            Some(&haystack[needle.len()..])
+        } else {
+            None
+        }
+    }
+
+    /// Single-pass expansion of `%NAME%` (cmd) and `$env:NAME` (PowerShell)
+    /// environment-variable references against `std::env::var`. Unknown names
+    /// are preserved literally, so a downstream `is_dir()` check returns
+    /// false rather than silently mis-resolving. Names must be ASCII
+    /// alphanumeric or `_`; anything else terminates the name.
+    ///
+    /// Limitations (acceptable for real-world wrappers):
+    ///   - No nested expansion: `%A%` whose value contains `%B%` is not re-expanded.
+    ///   - No escape syntax (cmd's `^%`, PowerShell's backtick) — wrappers don't use these.
+    fn expand_env_vars(input: &str) -> String {
+        // Pass 1: %NAME% (cmd-style).
+        let mut buf = String::with_capacity(input.len());
+        let mut rest = input;
+        while let Some(start) = rest.find('%') {
+            buf.push_str(&rest[..start]);
+            let after = &rest[start + 1..];
+            match after.find('%') {
+                Some(end) => {
+                    let name = &after[..end];
+                    let valid = !name.is_empty()
+                        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+                    if valid {
+                        if let Ok(v) = std::env::var(name) {
+                            buf.push_str(&v);
+                        } else {
+                            buf.push('%');
+                            buf.push_str(name);
+                            buf.push('%');
+                        }
+                    } else {
+                        // Not a valid var name (e.g. "100%" literal); preserve.
+                        buf.push('%');
+                        buf.push_str(name);
+                        buf.push('%');
+                    }
+                    rest = &after[end + 1..];
+                }
+                None => {
+                    buf.push('%');
+                    buf.push_str(after);
+                    rest = "";
+                    break;
+                }
+            }
+        }
+        buf.push_str(rest);
+
+        // Pass 2: $env:NAME (PowerShell-style). Case-insensitive prefix; name
+        // terminates at the first byte that is not [A-Za-z0-9_].
+        let mut out = String::with_capacity(buf.len());
+        let bytes = buf.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            let remaining = &buf[i..];
+            if remaining.len() >= 5
+                && remaining.as_bytes()[..5].eq_ignore_ascii_case(b"$env:")
+            {
+                let name_start = i + 5;
+                let mut name_end = name_start;
+                while name_end < bytes.len() {
+                    let c = bytes[name_end];
+                    if c.is_ascii_alphanumeric() || c == b'_' {
+                        name_end += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if name_end > name_start {
+                    let name = &buf[name_start..name_end];
+                    if let Ok(v) = std::env::var(name) {
+                        out.push_str(&v);
+                    } else {
+                        out.push_str(&buf[i..name_end]);
+                    }
+                    i = name_end;
+                    continue;
+                }
+            }
+            // Default: copy one full UTF-8 char.
+            let ch = buf[i..].chars().next().unwrap();
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+        out
+    }
+
+    fn parse_config_dir_from_wrapper(path: &Path) -> Option<PathBuf> {
+        // Cap read at 64 KiB; real wrappers are < 1 KiB. Refusing larger
+        // files protects against accidentally treating an exe-renamed-as-cmd
+        // as a wrapper.
+        const MAX: u64 = 64 * 1024;
+        let metadata = std::fs::metadata(path).ok()?;
+        if metadata.len() > MAX {
+            return None;
+        }
+        let bytes = std::fs::read(path).ok()?;
+        // Strip UTF-8 BOM if present; tolerate non-UTF-8 by lossy decode.
+        let text_bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+        let text = String::from_utf8_lossy(text_bytes);
+
+        for raw_line in text.lines() {
+            let line = raw_line.trim_start();
+
+            // Strip optional shell-prefix introducer:
+            //   `cmd`/`.bat`: `set CLAUDE_CONFIG_DIR=...`
+            //   `cmd`/`.bat`: `set "CLAUDE_CONFIG_DIR=..."`     (cmd-quoted whole-assignment)
+            //   `.ps1`:       `$env:CLAUDE_CONFIG_DIR = ...`
+            //   `.sh`:        `export CLAUDE_CONFIG_DIR=...`
+            //   Bare:         `CLAUDE_CONFIG_DIR=...`
+            let after_prefix = if let Some(rest) = strip_ascii_prefix_ci(line, "set ") {
+                rest.trim_start()
+            } else if let Some(rest) = strip_ascii_prefix_ci(line, "$env:") {
+                rest.trim_start()
+            } else if let Some(rest) = strip_ascii_prefix_ci(line, "export ") {
+                rest.trim_start()
+            } else {
+                line
+            };
+
+            // Detect cmd's whole-assignment quoting: `set "VAR=value"`. After the
+            // `set ` strip we may be sitting on a leading `"`; if so, the matching
+            // closing `"` terminates the value (rather than wrapping it).
+            let (after_open_quote, cmd_quoted) = match after_prefix.strip_prefix('"') {
+                Some(rest) => (rest, true),
+                None => (after_prefix, false),
+            };
+
+            let Some(rest) =
+                strip_ascii_prefix_ci(after_open_quote, "CLAUDE_CONFIG_DIR")
+            else {
+                continue;
+            };
+            let rest = rest.trim_start();
+            let Some(rest) = rest.strip_prefix('=') else {
+                continue;
+            };
+            let value = rest.trim();
+
+            // Strip surrounding quotes. Two flavors:
+            //   (a) cmd whole-assignment: `set "VAR=value"`     → consume trailing `"`
+            //   (b) value-quoted:         `set VAR="value"` or `'value'` → strip matched pair
+            let unquoted: &str = if cmd_quoted {
+                value.strip_suffix('"').unwrap_or(value)
+            } else if value.len() >= 2
+                && ((value.starts_with('"') && value.ends_with('"'))
+                    || (value.starts_with('\'') && value.ends_with('\'')))
+            {
+                &value[1..value.len() - 1]
+            } else {
+                value
+            };
+
+            if unquoted.is_empty() {
+                return None;
+            }
+            let expanded = expand_env_vars(unquoted);
+            return Some(PathBuf::from(expanded));
+        }
+        None
+    }
+
+    fn looks_like_wrapper_extension(path: &Path) -> bool {
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| {
+                let lc = e.to_ascii_lowercase();
+                matches!(lc.as_str(), "cmd" | "bat" | "ps1" | "sh")
+            })
+            .unwrap_or(false)
+    }
+
+    fn resolve_token_to_file(token: &str) -> Option<PathBuf> {
+        let p = Path::new(token);
+        // Direct path (absolute, or relative with separator) — use as-is if
+        // it exists. Avoids consulting %PATH% when the user already gave us
+        // a full location.
+        let has_separator = token.contains('/') || token.contains('\\');
+        if has_separator || p.is_absolute() {
+            return if p.is_file() { Some(p.to_path_buf()) } else { None };
+        }
+        // Bare basename — defer to %PATH% + PATHEXT (Windows) via `which`.
+        which::which(token).ok()
+    }
+
+    // Find the first token whose basename starts with "claude" across
+    // shell + shell_args, splitting each arg on whitespace so cmd-wrapped
+    // strings ("git pull && claude-mb -x") are also covered.
+    let claude_token: Option<String> = {
+        let mut direct = std::iter::once(shell.to_string()).chain(
+            shell_args
+                .iter()
+                .flat_map(|a| a.split_whitespace().map(str::to_string)),
+        );
+        direct.find(|t| executable_basename(t).starts_with("claude"))
+    };
+    let claude_token = claude_token?;
+
+    let mangled = crate::session::session::mangle_cwd_for_claude(cwd);
+
+    // Stem == "claude" → no wrapper, default base. This covers `claude`,
+    // `claude.exe`, `C:\Tools\claude.cmd` (where the .cmd is the official
+    // installer's launcher and writes nothing of its own), etc.
+    // executable_basename returns a lowercased stem; comparison is case-insensitive by construction.
+    if executable_basename(&claude_token) == "claude" {
+        return default_base().map(|base| base.join("projects").join(&mangled));
+    }
+
+    // Non-default name (e.g. `claude-mb`). Try to resolve to an actual file
+    // and parse it for a CLAUDE_CONFIG_DIR override.
+    if let Some(file) = resolve_token_to_file(&claude_token) {
+        if looks_like_wrapper_extension(&file) {
+            if let Some(custom_base) = parse_config_dir_from_wrapper(&file) {
+                return Some(custom_base.join("projects").join(&mangled));
+            }
+        }
+    }
+
+    // Fall back to default base. Preserves pre-fix behavior whenever the
+    // wrapper is missing, unreadable, has no `CLAUDE_CONFIG_DIR` line, or
+    // points at a non-text extension.
+    default_base().map(|base| base.join("projects").join(&mangled))
+}
+
 /// Decide whether to auto-inject `--continue` for a Claude session.
 /// Pure function: no filesystem access. Caller is responsible for resolving
 /// `claude_project_exists` (typically `~/.claude/projects/<mangled-cwd>/.is_dir()`).
+///
+/// Callers should compute `claude_project_exists` via `resolve_claude_projects_dir`
+/// to honor wrapper-set `CLAUDE_CONFIG_DIR`. Note: a wrapper named exactly
+/// `claude.cmd` / `claude.exe` / `claude.ps1` that overrides `CLAUDE_CONFIG_DIR`
+/// is intentionally NOT honored — the resolver short-circuits when the file_stem
+/// equals `claude`. Users who need wrapper overrides should rename to
+/// `claude-<suffix>` (e.g. `claude-mb`).
 ///
 /// Returns `true` only when ALL of:
 ///   - the session is a Claude variant
@@ -282,6 +557,57 @@ fn should_inject_continue(
         lower == "--continue" || lower.starts_with("--continue=") || lower == "-c"
     });
     !already_has_continue
+}
+
+/// Issue #107 round 5 — build the title-prompt segment to concat with the
+/// cred-block, OR `Ok(None)` if the auto-title preconditions don't hold.
+///
+/// Synchronous: filesystem reads only, no PTY, no await, no snapshot.
+/// (#137 introduced `brief-set-title` which creates its own atomic backup;
+/// the backend no longer snapshots before injection.)
+///
+/// The caller is the post-spawn task in `create_session_inner`; it
+/// concatenates the returned `Some(prompt)` with the cred-block and issues a
+/// single `inject_text_into_session` call (Round 4 §R4.2.3 — preserved in
+/// Round 5).
+///
+/// Gates layered (in order):
+///   1. workgroup BRIEF.md path resolvable from `cwd` → else `Err`
+///      (config issue, F7 preserved).
+///   2. BRIEF.md exists and read succeeds → else `Err`.
+///   3. BRIEF.md non-empty (after trim) → else `Ok(None)` (silent skip).
+///   4. No `title:` field in existing frontmatter → else `Ok(None)` (silent
+///      skip).
+///   5. Build title prompt with the absolute, UNC-stripped path (F4
+///      preserved). Return `Ok(Some(prompt))`.
+fn build_title_prompt_appendage(cwd: &str) -> Result<Option<String>, String> {
+    use crate::commands::entity_creation::parse_brief_title;
+    use crate::session::session::find_workgroup_brief_path_for_cwd;
+
+    // (1) Resolve workgroup BRIEF.md path. F7 preserved.
+    let brief_path = find_workgroup_brief_path_for_cwd(cwd)
+        .ok_or_else(|| format!("[auto-title:config] no wg- ancestor in cwd '{}'", cwd))?;
+
+    // (2) Read BRIEF.md. Missing/unreadable → Err (warn-and-skip at caller).
+    let content = std::fs::read_to_string(&brief_path)
+        .map_err(|e| format!("read BRIEF.md at {:?}: {}", brief_path, e))?;
+
+    // (3) Empty brief → silent skip.
+    if content.trim().is_empty() {
+        return Ok(None);
+    }
+
+    // (4) Title already present → silent skip.
+    if parse_brief_title(&content).is_some() {
+        return Ok(None);
+    }
+
+    // (5) F4 preserved — strip Windows \\?\ extended-length prefix.
+    let raw = brief_path.to_string_lossy().to_string();
+    let path_str = raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string();
+    let prompt = crate::pty::title_prompt::build_title_prompt(&path_str);
+
+    Ok(Some(prompt))
 }
 
 /// Core session creation logic shared by the Tauri command and the restore path.
@@ -389,17 +715,11 @@ pub async fn create_session_inner(
     // Auto-inject --continue for Claude agents when AC has reason to believe a prior
     // conversation exists for this session (issue #82: `is_dir()` alone is unsound;
     // call sites pass `skip_auto_resume = true` for fresh creates).
-    let claude_project_exists = {
-        if let Some(home) = dirs::home_dir() {
-            let mangled = crate::session::session::mangle_cwd_for_claude(&cwd);
-            home.join(".claude")
-                .join("projects")
-                .join(&mangled)
-                .is_dir()
-        } else {
-            false
-        }
-    };
+    // Issue #186: honor `CLAUDE_CONFIG_DIR` overrides set by `.cmd`/`.bat`/`.ps1`/`.sh`
+    // wrappers (e.g. `claude-mb`) so the probe locates the real transcript store.
+    let claude_project_exists = resolve_claude_projects_dir(&shell, &shell_args, &cwd)
+        .map(|p| p.is_dir())
+        .unwrap_or(false);
     if should_inject_continue(
         is_claude,
         skip_auto_resume,
@@ -512,6 +832,18 @@ pub async fn create_session_inner(
         let session_id = id;
         let token = session.token;
         let cwd_clone = cwd.clone();
+        // Issue #107 (R2 fold F1) — capture Coordinator gate + auto-title
+        // setting snapshot here so the spawned task can chain title-gen after
+        // the credentials inject. The `cfg` opened at lines 322-323 is bound
+        // inside an inner block and dropped at line 331 — there is no live
+        // `cfg` at this point, so we open a fresh read guard for one field.
+        // Concurrent readers don't block; deadlock-free (no other lock held).
+        let is_coordinator_clone = is_coordinator;
+        let auto_title_enabled = {
+            let settings_state = app.state::<SettingsState>();
+            let cfg = settings_state.read().await;
+            cfg.auto_generate_brief_title
+        };
         tokio::spawn(async move {
             let max_wait = std::time::Duration::from_secs(30);
             let poll = std::time::Duration::from_millis(500);
@@ -540,24 +872,62 @@ pub async fn create_session_inner(
                 }
             }
 
+            // Issue #107 round 5 — build the optional title-prompt segment
+            // BEFORE the PTY write. Synchronous fs reads only; no async
+            // work, no snapshot, no second idle-wait. See plan §R5.5.
+            let title_appendage = if is_coordinator_clone && auto_title_enabled {
+                match build_title_prompt_appendage(&cwd_clone) {
+                    Ok(Some(prompt)) => {
+                        log::info!(
+                            "[session] Auto-title appendage built for session {}",
+                            session_id
+                        );
+                        Some(prompt)
+                    }
+                    Ok(None) => {
+                        log::info!(
+                            "[session] Auto-title appendage skipped (gate not passed) for session {}",
+                            session_id
+                        );
+                        None
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[session] Auto-title appendage skipped for session {}: {}",
+                            session_id,
+                            e
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            let auto_title_was_appended = title_appendage.is_some();
             let cred_block = crate::pty::credentials::build_credentials_block(&token, &cwd_clone);
+            let combined = match title_appendage {
+                Some(prompt) => format!("{}\n{}", cred_block, prompt),
+                None => cred_block,
+            };
 
             match crate::pty::inject::inject_text_into_session(
                 &app_clone,
                 session_id,
-                &cred_block,
+                &combined,
             )
             .await
             {
                 Ok(()) => {
                     log::info!(
-                        "[session] Credentials auto-injected for session {}",
-                        session_id
+                        "[session] Bootstrap message injected for session {} (auto-title={})",
+                        session_id,
+                        auto_title_was_appended
                     );
                 }
                 Err(e) => {
                     log::warn!(
-                        "[session] Failed to auto-inject credentials for {}: {}",
+                        "[session] Failed to inject bootstrap for {}: {}",
                         session_id,
                         e
                     );
@@ -925,7 +1295,7 @@ pub async fn restart_session(
     }
     let _ = app.emit(
         "session_switched",
-        serde_json::json!({ "id": session_info.id }),
+        serde_json::json!({ "id": session_info.id, "userInitiated": true }),
     );
 
     // 6. Re-attach Telegram bridge if the repo config has one
@@ -1000,7 +1370,10 @@ pub async fn switch_session(
     // Persist after switch (updates was_active)
     persist_current_state(&mgr).await;
 
-    let _ = app.emit("session_switched", serde_json::json!({ "id": id }));
+    let _ = app.emit(
+        "session_switched",
+        serde_json::json!({ "id": id, "userInitiated": true }),
+    );
 
     Ok(())
 }
@@ -1347,6 +1720,7 @@ pub async fn create_root_agent_session(
 mod tests {
     use super::{inject_codex_resume, resolve_actual_agent, should_inject_continue};
     use crate::config::settings::{AgentConfig, AppSettings};
+    use std::path::PathBuf;
 
     fn test_settings() -> AppSettings {
         AppSettings {
@@ -1752,5 +2126,403 @@ mod tests {
             true,
             "claude --continued-mode something"
         ));
+    }
+
+    // ── Issue #107 Round 5 §R5.8.6 — build_title_prompt_appendage idempotence ──
+    //
+    // Tempdir naming starts with `wg-` so `find_workgroup_brief_path_for_cwd`'s
+    // ancestor walk finds the cwd itself as the wg ancestor. The three tests
+    // pin gates (3), (4), and the happy path. Path-walk gate (1) failure is
+    // exercised by the existing `find_workgroup_brief_path_for_cwd` tests in
+    // `session/session.rs`. Read-failure gate (2) requires fault-injecting
+    // `std::fs::read_to_string`, which is not worth the harness for a thin
+    // orchestrator.
+
+    #[test]
+    fn build_title_prompt_appendage_returns_none_when_title_already_present() {
+        use std::env;
+        let dir = env::temp_dir().join(format!(
+            "wg-r5-idempotent-{}", std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let brief = dir.join("BRIEF.md");
+        std::fs::write(&brief, b"---\ntitle: 'Pre-existing'\n---\nBody.\n").unwrap();
+        let cwd = dir.to_string_lossy().to_string();
+        let result = super::build_title_prompt_appendage(&cwd);
+        assert!(matches!(result, Ok(None)), "expected Ok(None), got {:?}", result);
+        let _ = std::fs::remove_file(&brief);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn build_title_prompt_appendage_returns_none_when_brief_empty() {
+        use std::env;
+        let dir = env::temp_dir().join(format!(
+            "wg-r5-empty-{}", std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let brief = dir.join("BRIEF.md");
+        std::fs::write(&brief, b"   \n\n\t\n").unwrap();
+        let cwd = dir.to_string_lossy().to_string();
+        let result = super::build_title_prompt_appendage(&cwd);
+        assert!(matches!(result, Ok(None)), "expected Ok(None), got {:?}", result);
+        let _ = std::fs::remove_file(&brief);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn build_title_prompt_appendage_returns_some_when_brief_has_no_title() {
+        use std::env;
+        let dir = env::temp_dir().join(format!(
+            "wg-r5-some-{}", std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let brief = dir.join("BRIEF.md");
+        std::fs::write(&brief, b"# A real brief with body content.\n").unwrap();
+        let cwd = dir.to_string_lossy().to_string();
+        let result = super::build_title_prompt_appendage(&cwd);
+        let prompt = match result {
+            Ok(Some(p)) => p,
+            other => panic!("expected Ok(Some(_)), got {:?}", other),
+        };
+        assert!(prompt.contains("brief-set-title"));
+        assert!(prompt.contains("<YOUR_BINARY_PATH>"));
+        // Production code strips `\\?\` UNC prefix before embedding the path
+        // (F4 fold). Mirror the strip here so the assertion holds on Windows
+        // setups where `temp_dir()` returns an extended-length path.
+        let brief_raw = brief.to_string_lossy().to_string();
+        let brief_str = brief_raw.strip_prefix(r"\\?\").unwrap_or(&brief_raw);
+        assert!(prompt.contains(brief_str));
+        let _ = std::fs::remove_file(&brief);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    // ── Issue #186 — resolve_claude_projects_dir ──
+
+    fn write_wrapper(dir: &std::path::Path, name: &str, body: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    #[test]
+    fn resolve_claude_projects_dir_uses_home_for_bare_claude() {
+        // Default install → fall back to <home>/.claude/projects/<mangled>.
+        let cwd = "C:\\Users\\Test\\repo";
+        let resolved = super::resolve_claude_projects_dir("claude", &[], cwd);
+        // Skip if the test host has no home dir (CI sandboxes sometimes don't).
+        let Some(home) = dirs::home_dir() else { return; };
+        let expected = home
+            .join(".claude")
+            .join("projects")
+            .join(crate::session::session::mangle_cwd_for_claude(cwd));
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn resolve_claude_projects_dir_uses_home_for_direct_claude_exe_path() {
+        // Direct executable path with file_stem == "claude" → still default base.
+        let cwd = "C:\\Users\\Test\\repo";
+        let resolved =
+            super::resolve_claude_projects_dir("C:\\Tools\\claude.exe", &[], cwd);
+        let Some(home) = dirs::home_dir() else { return; };
+        let expected = home
+            .join(".claude")
+            .join("projects")
+            .join(crate::session::session::mangle_cwd_for_claude(cwd));
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn resolve_claude_projects_dir_returns_none_when_no_claude_token() {
+        let resolved = super::resolve_claude_projects_dir(
+            "powershell.exe",
+            &["-NoLogo".to_string()],
+            "C:\\x",
+        );
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn resolve_claude_projects_dir_parses_wrapper_with_set_directive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let custom_base = tmp.path().join(".claude-mb");
+        let wrapper = write_wrapper(
+            tmp.path(),
+            "claude-mb.cmd",
+            &format!(
+                "@echo off\r\nset CLAUDE_CONFIG_DIR={}\r\nclaude %*\r\n",
+                custom_base.display()
+            ),
+        );
+        let cwd = "C:\\Users\\Test\\repo";
+        let resolved =
+            super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], cwd);
+        let expected = custom_base
+            .join("projects")
+            .join(crate::session::session::mangle_cwd_for_claude(cwd));
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn resolve_claude_projects_dir_strips_quotes_around_value() {
+        let tmp = tempfile::tempdir().unwrap();
+        let custom_base = tmp.path().join("Path With Spaces").join(".claude-mb");
+        let wrapper = write_wrapper(
+            tmp.path(),
+            "claude-mb.cmd",
+            &format!(
+                "@echo off\r\nset CLAUDE_CONFIG_DIR=\"{}\"\r\nclaude %*\r\n",
+                custom_base.display()
+            ),
+        );
+        let resolved = super::resolve_claude_projects_dir(
+            wrapper.to_str().unwrap(),
+            &[],
+            "C:\\x",
+        );
+        let expected = custom_base
+            .join("projects")
+            .join(crate::session::session::mangle_cwd_for_claude("C:\\x"));
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn resolve_claude_projects_dir_falls_back_when_wrapper_lacks_directive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wrapper = write_wrapper(
+            tmp.path(),
+            "claude-mb.cmd",
+            "@echo off\r\nclaude %*\r\n",
+        );
+        let resolved = super::resolve_claude_projects_dir(
+            wrapper.to_str().unwrap(),
+            &[],
+            "C:\\x",
+        );
+        let Some(home) = dirs::home_dir() else { return; };
+        let expected = home
+            .join(".claude")
+            .join("projects")
+            .join(crate::session::session::mangle_cwd_for_claude("C:\\x"));
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn resolve_claude_projects_dir_falls_back_when_wrapper_missing() {
+        let resolved = super::resolve_claude_projects_dir(
+            "C:\\definitely\\not\\there\\claude-mb.cmd",
+            &[],
+            "C:\\x",
+        );
+        let Some(home) = dirs::home_dir() else { return; };
+        let expected = home
+            .join(".claude")
+            .join("projects")
+            .join(crate::session::session::mangle_cwd_for_claude("C:\\x"));
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn resolve_claude_projects_dir_finds_claude_token_in_cmd_wrapper_args() {
+        // shell=cmd.exe, args=["/K", "<abs path to claude-mb.cmd>", "--effort", "max"]
+        let tmp = tempfile::tempdir().unwrap();
+        let custom_base = tmp.path().join(".claude-mb");
+        let wrapper = write_wrapper(
+            tmp.path(),
+            "claude-mb.cmd",
+            &format!(
+                "@echo off\r\nset CLAUDE_CONFIG_DIR={}\r\nclaude %*\r\n",
+                custom_base.display()
+            ),
+        );
+        let resolved = super::resolve_claude_projects_dir(
+            "cmd.exe",
+            &[
+                "/K".to_string(),
+                wrapper.to_str().unwrap().to_string(),
+                "--effort".to_string(),
+                "max".to_string(),
+            ],
+            "C:\\x",
+        );
+        let expected = custom_base
+            .join("projects")
+            .join(crate::session::session::mangle_cwd_for_claude("C:\\x"));
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn resolve_claude_projects_dir_finds_claude_token_in_embedded_cmd_string() {
+        // Embedded form — per-arg whitespace split must surface claude-mb.cmd.
+        // Skip on hosts where the temp dir contains spaces (split would
+        // fragment the wrapper path); the cmd-wrapped-args test above
+        // already covers spaced paths via direct token form.
+        let tmp = tempfile::tempdir().unwrap();
+        if tmp.path().to_string_lossy().contains(' ') {
+            return;
+        }
+        let custom_base = tmp.path().join(".claude-mb");
+        let wrapper = write_wrapper(
+            tmp.path(),
+            "claude-mb.cmd",
+            &format!(
+                "@echo off\r\nset CLAUDE_CONFIG_DIR={}\r\nclaude %*\r\n",
+                custom_base.display()
+            ),
+        );
+        let combined = format!("git pull && {} --effort max", wrapper.display());
+        let resolved = super::resolve_claude_projects_dir(
+            "cmd.exe",
+            &["/K".to_string(), combined],
+            "C:\\x",
+        );
+        let expected = custom_base
+            .join("projects")
+            .join(crate::session::session::mangle_cwd_for_claude("C:\\x"));
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn resolve_claude_projects_dir_ignores_oversized_wrapper() {
+        // Large file (> 64 KiB cap) → treated as not-a-wrapper, fall back.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("claude-mb.cmd");
+        let mut body = String::with_capacity(80 * 1024);
+        body.push_str("set CLAUDE_CONFIG_DIR=C:\\should-not-be-read\r\n");
+        body.push_str(&"x".repeat(80 * 1024));
+        std::fs::write(&path, body).unwrap();
+        let resolved =
+            super::resolve_claude_projects_dir(path.to_str().unwrap(), &[], "C:\\x");
+        let Some(home) = dirs::home_dir() else { return; };
+        let expected = home
+            .join(".claude")
+            .join("projects")
+            .join(crate::session::session::mangle_cwd_for_claude("C:\\x"));
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn resolve_claude_projects_dir_parses_cmd_quoted_whole_assignment() {
+        // `set "CLAUDE_CONFIG_DIR=<path with spaces>"` — canonical cmd idiom
+        // when the value contains spaces or shell metacharacters.
+        let tmp = tempfile::tempdir().unwrap();
+        let custom_base = tmp.path().join("Path With Spaces").join(".claude-mb");
+        let wrapper = write_wrapper(
+            tmp.path(),
+            "claude-mb.cmd",
+            &format!(
+                "@echo off\r\nset \"CLAUDE_CONFIG_DIR={}\"\r\nclaude %*\r\n",
+                custom_base.display()
+            ),
+        );
+        let resolved = super::resolve_claude_projects_dir(
+            wrapper.to_str().unwrap(),
+            &[],
+            "C:\\x",
+        );
+        let expected = custom_base
+            .join("projects")
+            .join(crate::session::session::mangle_cwd_for_claude("C:\\x"));
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn resolve_claude_projects_dir_expands_percent_envvar_value() {
+        let var = "AC_TEST_186_BASE_PCT";
+        let tmp = tempfile::tempdir().unwrap();
+        let custom_base = tmp.path().join(".claude-mb");
+        // SAFETY: env state is process-global; unique name avoids cross-test races.
+        std::env::set_var(var, custom_base.to_str().unwrap());
+        let wrapper = write_wrapper(
+            tmp.path(),
+            "claude-mb.cmd",
+            &format!(
+                "@echo off\r\nset CLAUDE_CONFIG_DIR=%{}%\r\nclaude %*\r\n",
+                var
+            ),
+        );
+        let resolved = super::resolve_claude_projects_dir(
+            wrapper.to_str().unwrap(),
+            &[],
+            "C:\\x",
+        );
+        std::env::remove_var(var);
+        let expected = custom_base
+            .join("projects")
+            .join(crate::session::session::mangle_cwd_for_claude("C:\\x"));
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn resolve_claude_projects_dir_expands_powershell_envvar_value() {
+        let var = "AC_TEST_186_BASE_PS";
+        let tmp = tempfile::tempdir().unwrap();
+        let custom_base = tmp.path().join(".claude-mb");
+        std::env::set_var(var, custom_base.to_str().unwrap());
+        let wrapper = write_wrapper(
+            tmp.path(),
+            "claude-mb.ps1",
+            &format!(
+                "$env:CLAUDE_CONFIG_DIR = \"$env:{}\"\r\nclaude @args\r\n",
+                var
+            ),
+        );
+        let resolved = super::resolve_claude_projects_dir(
+            wrapper.to_str().unwrap(),
+            &[],
+            "C:\\x",
+        );
+        std::env::remove_var(var);
+        let expected = custom_base
+            .join("projects")
+            .join(crate::session::session::mangle_cwd_for_claude("C:\\x"));
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn resolve_claude_projects_dir_preserves_unknown_envvar_literal() {
+        // Unknown var → literal preserved → resulting path is_dir() will be
+        // false at the call site, but parse must succeed (return Some).
+        let tmp = tempfile::tempdir().unwrap();
+        let wrapper = write_wrapper(
+            tmp.path(),
+            "claude-mb.cmd",
+            "@echo off\r\nset CLAUDE_CONFIG_DIR=%AC_TEST_186_DEFINITELY_UNSET%\\\\.claude-mb\r\nclaude %*\r\n",
+        );
+        let resolved = super::resolve_claude_projects_dir(
+            wrapper.to_str().unwrap(),
+            &[],
+            "C:\\x",
+        );
+        let resolved = resolved.expect("parser must return Some even when var is unset");
+        let s = resolved.to_string_lossy();
+        assert!(
+            s.contains("%AC_TEST_186_DEFINITELY_UNSET%"),
+            "expected literal preservation, got {s}"
+        );
+    }
+
+    #[test]
+    fn resolve_claude_projects_dir_parses_wrapper_with_export_directive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let custom_base = tmp.path().join(".claude-mb");
+        let wrapper = write_wrapper(
+            tmp.path(),
+            "claude-mb.sh",
+            &format!(
+                "#!/usr/bin/env bash\nexport CLAUDE_CONFIG_DIR={}\nexec claude \"$@\"\n",
+                custom_base.display()
+            ),
+        );
+        let resolved = super::resolve_claude_projects_dir(
+            wrapper.to_str().unwrap(),
+            &[],
+            "/home/test/repo",
+        );
+        let expected = custom_base
+            .join("projects")
+            .join(crate::session::session::mangle_cwd_for_claude("/home/test/repo"));
+        assert_eq!(resolved, Some(expected));
     }
 }

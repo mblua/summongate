@@ -16,8 +16,14 @@ html, body, #root {
   background: var(--terminal-bg);
 }
 
-/* Layout */
+/* Layout
+ * `position: relative` makes this the containing block for the Home overlay
+ * (issue #164). Home is rendered as a direct child here and uses
+ * `position: absolute` to cover the BRIEF / LAST PROMPT panels and the
+ * terminal content area without unmounting them — keeping their height
+ * stable so TerminalView's ResizeObserver never fires on Home toggle. */
 .terminal-layout {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -65,6 +71,10 @@ html, body, #root {
   font-weight: 600;
   color: var(--statusbar-accent);
   opacity: 1;
+  max-width: 22em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .titlebar-version {
@@ -82,7 +92,6 @@ html, body, #root {
 .titlebar-dev-badge {
   display: inline-block;
   padding: 1px 5px;
-  margin-left: 6px;
   background: rgba(0, 180, 255, 0.15);
   color: #00b4ff;
   font-size: 8px;
@@ -95,7 +104,6 @@ html, body, #root {
 .titlebar-stage-badge {
   display: inline-block;
   padding: 1px 5px;
-  margin-left: 6px;
   background: rgba(255, 170, 0, 0.18);
   color: #ffaa00;
   font-size: 8px;
@@ -105,23 +113,24 @@ html, body, #root {
   vertical-align: middle;
 }
 
-.titlebar-project-badge {
+.titlebar-wg-badge {
   display: inline-block;
   padding: 1px 6px;
-  margin-left: 6px;
-  background: rgba(130, 80, 255, 0.15);
-  color: #b490ff;
+  max-width: 12em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: rgba(80, 200, 160, 0.15);
+  color: #5fd4a8;
   border-radius: 3px;
   font-size: 10px;
   font-weight: 600;
-  text-transform: uppercase;
   letter-spacing: 0.3px;
 }
 
 .titlebar-detached-badge {
   display: inline-block;
   padding: 1px 5px;
-  margin-right: 6px;
   background: rgba(255, 170, 0, 0.15);
   color: #ffaa00;
   font-size: 8px;
@@ -129,6 +138,28 @@ html, body, #root {
   letter-spacing: 0.5px;
   border-radius: 3px;
   vertical-align: middle;
+}
+
+/* Light-theme overrides — WCAG AA on --titlebar-bg #e8e8ec.
+   Calculated contrast ratios per WCAG 2.1 (luminance formula): */
+html.light-theme .titlebar-wg-badge {
+  /* #0a6e48 on #e8e8ec → 5.14:1 (AA) */
+  color: #0a6e48;
+  background: rgba(10, 110, 72, 0.12);
+}
+
+html.light-theme .titlebar-stage-badge,
+html.light-theme .titlebar-detached-badge {
+  /* #854700 on #e8e8ec → 5.93:1 (AAA) */
+  color: #854700;
+  background: rgba(133, 71, 0, 0.14);
+}
+
+html.light-theme .titlebar-dev-badge,
+html.light-theme .titlebar-version {
+  /* #0a4f9e on #e8e8ec → 6.56:1 (AAA) */
+  color: #0a4f9e;
+  background: rgba(10, 79, 158, 0.12);
 }
 
 .titlebar-controls {
@@ -202,6 +233,218 @@ html, body, #root {
   white-space: pre-wrap;
   word-break: break-word;
   opacity: 0.85;
+}
+
+/* Issue #162 — BRIEF panel action buttons + inline title editor */
+.workgroup-brief-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-xs);
+  margin-bottom: 4px;
+}
+
+.workgroup-brief-header .workgroup-brief-label {
+  margin-bottom: 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workgroup-brief-title {
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: var(--font-size-sm);
+  color: var(--terminal-fg);
+}
+
+.workgroup-brief-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.workgroup-brief-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--statusbar-fg);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+.workgroup-brief-action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--terminal-fg);
+}
+.workgroup-brief-action:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.workgroup-brief-title-edit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.workgroup-brief-title-input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--terminal-fg);
+  font-family: "Cascadia Code", "JetBrains Mono", monospace;
+  font-size: var(--font-size-sm);
+}
+.workgroup-brief-title-btn {
+  padding: 2px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--terminal-fg);
+  font-size: 11px;
+  cursor: pointer;
+}
+.workgroup-brief-title-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.10);
+}
+.workgroup-brief-title-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.workgroup-brief-error {
+  font-size: 11px;
+  color: #ff6b6b;
+  margin-bottom: 4px;
+}
+
+/* Light-theme overrides for #162 controls */
+html.light-theme .workgroup-brief-action {
+  border-color: rgba(0, 0, 0, 0.10);
+}
+html.light-theme .workgroup-brief-action:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.05);
+}
+html.light-theme .workgroup-brief-title-input {
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+html.light-theme .workgroup-brief-title-btn {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.10);
+}
+html.light-theme .workgroup-brief-title-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.10);
+}
+
+/* Issue #162 — modal CSS copied verbatim from src/main/styles/main.css.
+ * Required because the detached terminal window mounts TerminalApp
+ * without main.css. Keep these in sync if main.css's modal rules are
+ * ever revised. */
+.quit-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+.quit-confirm-modal {
+  background: var(--bg-modal, #14141a);
+  color: var(--fg-primary, #e8e8e8);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
+  border-radius: 6px;
+  min-width: 360px;
+  max-width: 480px;
+  padding: 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  font-family: "Geist", "Outfit", "General Sans", sans-serif;
+}
+.quit-confirm-title {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 500;
+}
+.quit-confirm-body {
+  margin: 0 0 20px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-secondary, rgba(255, 255, 255, 0.75));
+}
+.quit-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.quit-confirm-btn {
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out;
+}
+.quit-confirm-btn-cancel {
+  background: var(--btn-primary-bg, rgba(0, 212, 255, 0.2));
+  color: var(--btn-primary-fg, #00d4ff);
+  border-color: var(--btn-primary-border, rgba(0, 212, 255, 0.4));
+}
+.quit-confirm-btn-cancel:hover {
+  background: rgba(0, 212, 255, 0.3);
+}
+.quit-confirm-btn-cancel:focus-visible {
+  outline: 2px solid var(--focus-ring, #00d4ff);
+  outline-offset: 2px;
+}
+.quit-confirm-btn-quit {
+  background: transparent;
+  color: var(--fg-secondary, rgba(255, 255, 255, 0.7));
+  border-color: var(--border-subtle, rgba(255, 255, 255, 0.15));
+}
+.quit-confirm-btn-quit:hover {
+  background: rgba(255, 59, 92, 0.15);
+  color: #ff6b80;
+  border-color: rgba(255, 59, 92, 0.4);
+}
+.quit-confirm-btn-quit:focus-visible {
+  outline: 2px solid #ff6b80;
+  outline-offset: 2px;
+}
+
+html.light-theme .quit-confirm-modal {
+  background: #f7f7f9;
+  color: #1a1a1e;
+  border-color: rgba(0, 0, 0, 0.1);
+}
+html.light-theme .quit-confirm-body {
+  color: rgba(0, 0, 0, 0.7);
+}
+html.light-theme .quit-confirm-btn-quit {
+  background: rgba(196, 38, 61, 0.06);
+  color: #c4263d;
+  border-color: rgba(196, 38, 61, 0.35);
+}
+html.light-theme .quit-confirm-btn-quit:hover {
+  background: rgba(196, 38, 61, 0.12);
+  color: #a01b30;
+  border-color: rgba(196, 38, 61, 0.55);
+}
+html.light-theme .quit-confirm-btn-quit:focus-visible {
+  outline: 2px solid #c4263d;
 }
 
 /* Light-theme overrides for context panels */
@@ -418,6 +661,19 @@ html.light-theme .last-prompt-panel::-webkit-scrollbar-thumb {
 
 .status-bar-btn-clear:hover {
   color: #ffaa00;
+}
+
+/* Terminal content area. Lives between the context panels
+ * (WorkgroupBrief/LastPrompt) and StatusBar, and wraps the terminal/empty
+ * Show block. The Home overlay (#164) is a sibling of this element inside
+ * `.terminal-layout` — not nested here — so toggling Home does not affect
+ * this element's size and TerminalView's ResizeObserver does not fire. */
+.terminal-content-area {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Empty terminal state */

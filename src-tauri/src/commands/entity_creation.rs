@@ -113,7 +113,11 @@ fn sanitize_name(raw: &str) -> Result<String, String> {
 /// Validate that an existing entity name is safe for path operations.
 /// Unlike `sanitize_name`, this does NOT transform the name — it just rejects
 /// names that contain path traversal or separator characters.
-fn validate_existing_name(name: &str, entity_label: &str) -> Result<(), String> {
+///
+/// `pub(crate)` so the sentinel-collision invariant test in
+/// `wg_delete_diagnostic::tests` can prove that no valid WG name can collide
+/// with the `BLOCKERS:` / `DIRTY_REPOS:` sentinel prefixes.
+pub(crate) fn validate_existing_name(name: &str, entity_label: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err(format!("{} name cannot be empty", entity_label));
     }
@@ -176,14 +180,70 @@ fn parse_role_frontmatter(content: &str) -> (Option<String>, Option<String>) {
     (name, description)
 }
 
-fn default_brief_content(wg_name: &str) -> String {
-    format!(
-        "# {}\n\n## Objective\n\n_Describe the goal of this workgroup._\n\n## Scope\n\n_What is in and out of scope._\n\n## Deliverables\n\n- [ ] _List deliverables here_\n",
-        wg_name
-    )
+/// Extract a `title:` field from the YAML frontmatter at the start of `content`.
+///
+/// Best-effort frontmatter detection — NOT a YAML implementation. Suitable
+/// only for the narrow case of one optional scalar field at the top of
+/// BRIEF.md.
+///
+/// Returns `Some(title)` when:
+///   - `content` starts with `---`,
+///   - a closing `---` exists,
+///   - a line of the form `<key>: <value>` exists between the delimiters
+///     where `<key>` matches `title` case-insensitively (`title:`, `Title:`,
+///     `TITLE:`, mixed casing all accepted).
+///
+/// The value half is preserved verbatim (case-sensitive), then stripped of
+/// surrounding `"` or `'` quote pairs.
+///
+/// Returns `None` otherwise (no frontmatter, no title key, or empty value).
+///
+/// Mirrors `parse_role_frontmatter`'s shape — both speak the same on-disk
+/// format. See plan `_plans/107-auto-brief-title.md` §6 for why we do not
+/// pull in `serde_yaml`.
+pub(crate) fn parse_brief_title(content: &str) -> Option<String> {
+    let content = content.strip_prefix('\u{FEFF}').unwrap_or(content);
+    if !content.starts_with("---") {
+        return None;
+    }
+    let rest = &content[3..];
+    let end = rest.find("---")?;
+    let frontmatter = &rest[..end];
+
+    for line in frontmatter.lines() {
+        let trimmed = line.trim();
+        // Case-insensitive key match on `title:`. Round 2 fold (F3 / G3):
+        // agents stochastically capitalize keys (`Title:`, `TITLE:`); a
+        // case-sensitive match would let duplicate `title:` lines accumulate
+        // across restarts. Split on the first `:` so we compare just the key.
+        let Some((key, value_raw)) = trimmed.split_once(':') else {
+            continue;
+        };
+        if !key.trim().eq_ignore_ascii_case("title") {
+            continue;
+        }
+        let value = value_raw
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string();
+        if value.is_empty() {
+            return None;
+        }
+        return Some(value);
+    }
+    None
 }
 
-fn build_brief_content(wg_name: &str, brief: Option<String>) -> String {
+/// BRIEF.md content for a brand-new workgroup.
+///
+/// - User-supplied brief → written verbatim with a single trailing newline.
+/// - Nothing supplied → empty file.
+///
+/// Issue #107: do not auto-template the brief. Empty briefs are a valid state
+/// and signal "no title-gen yet" to the Coordinator-spawn flow in
+/// `commands/session.rs` (which skips title-gen on empty briefs).
+fn build_brief_content(_wg_name: &str, brief: Option<String>) -> String {
     let trimmed = brief
         .as_deref()
         .map(str::trim)
@@ -191,7 +251,7 @@ fn build_brief_content(wg_name: &str, brief: Option<String>) -> String {
 
     match trimmed {
         Some(content) => format!("{}\n", content),
-        None => default_brief_content(wg_name),
+        None => String::new(),
     }
 }
 
@@ -541,6 +601,8 @@ pub async fn create_workgroup(
     }
     std::fs::create_dir_all(&wg_dir)
         .map_err(|e| format!("Failed to create workgroup directory: {}", e))?;
+    std::fs::create_dir_all(wg_dir.join(crate::phone::messaging::MESSAGING_DIR_NAME))
+        .map_err(|e| format!("Failed to create messaging directory: {}", e))?;
 
     // BRIEF.md: use the user-provided brief when present, otherwise seed a template.
     let brief_content = build_brief_content(&wg_name, brief);
@@ -841,8 +903,42 @@ pub async fn delete_workgroup(
         }
     }
 
-    std::fs::remove_dir_all(&wg_dir)
-        .map_err(|e| format!("Failed to delete workgroup directory: {}", e))?;
+    // Preflight rename probe (#113 follow-up): try an atomic same-parent rename
+    // BEFORE remove_dir_all. NTFS rename requires DELETE access on every open
+    // handle to the dir or any descendant; if any blocker holds a handle without
+    // FILE_SHARE_DELETE (terminal cwd, VSCode workspace open, file watcher,
+    // memory-mapped BRIEF.md), the rename fails atomically — no files touched —
+    // and we run the diagnostic on the still-intact tree. On success the dir is
+    // re-parented to a sentinel name and removed; the user-visible WG is gone.
+    match try_atomic_delete_wg(&wg_dir) {
+        WgDeleteOutcome::Deleted => {
+            // fall through to success path
+        }
+        WgDeleteOutcome::Blocked(e) => {
+            let raw = e.to_string();
+            log::info!(
+                "[entity_creation] delete_workgroup: file-in-use detected for '{}' on rename probe, running blocker diagnostic on intact tree",
+                workgroup_name
+            );
+            let report = crate::commands::wg_delete_diagnostic::diagnose_blockers(
+                &wg_dir,
+                &workgroup_name,
+                &raw, // raw OS error verbatim — see plan §C.1
+                session_mgr.inner(),
+            )
+            .await;
+            let json = serde_json::to_string(&report).map_err(|se| {
+                format!(
+                    "Failed to serialize blocker report: {}; original error: {}",
+                    se, raw
+                )
+            })?;
+            return Err(format!("BLOCKERS:{}", json));
+        }
+        WgDeleteOutcome::Other(e) => {
+            return Err(format!("Failed to delete workgroup directory: {}", e));
+        }
+    }
     log::info!(
         "[entity_creation] Deleted workgroup: {} (force={})",
         workgroup_name,
@@ -1388,10 +1484,177 @@ fn check_workgroup_repos_dirty(wg_dirs: &[PathBuf]) -> Vec<(String, String)> {
     dirty
 }
 
-/// Scan .ac-new/ for existing wg-*-{team_name}/ dirs and return the next N.
+/// Result of a preflight-rename `delete_workgroup` attempt.
+///
+/// `pub(crate)` so the unit tests can pattern-match on the variants.
+pub(crate) enum WgDeleteOutcome {
+    /// Rename succeeded and the renamed dir was removed (or, in the rare race
+    /// where remove failed after a successful rename, an orphan remains and a
+    /// `log::warn!` was emitted — from the user's perspective the WG is gone).
+    Deleted,
+    /// Rename failed with a Windows file-in-use error. Tree is intact; caller
+    /// should run the blocker diagnostic and return `BLOCKERS:` to the frontend.
+    Blocked(std::io::Error),
+    /// Rename failed with any other error (NotFound, permission, invalid path,
+    /// …). Caller passes the raw error through unchanged.
+    Other(std::io::Error),
+}
+
+/// Atomically detect blockers before deleting a workgroup directory.
+///
+/// Strategy: rename the WG dir to a unique sentinel name in the same parent
+/// (NTFS metadata-only operation, fails atomically if any handle blocks it),
+/// then `remove_dir_all` the renamed dir. If rename fails with a file-in-use
+/// error the WG is still intact, so the caller can run the diagnostic over the
+/// original tree and surface a `BLOCKERS:` report.
+///
+/// Suffix scheme: `.deleting-<wg_name>-<uuid>` — leading `.` keeps any orphan
+/// (rare race: rename succeeds but remove_dir_all fails) invisible to the
+/// `starts_with("wg-")` filters in `ac_discovery`, `cli::list_peers`, and
+/// `claude_settings`, so an orphan won't surface as a ghost workgroup. UUID is
+/// used (already in `Cargo.toml`) to guarantee uniqueness across rapid retries.
+///
+/// `pub(crate)` so unit tests can drive it directly.
+pub(crate) fn try_atomic_delete_wg(wg_dir: &Path) -> WgDeleteOutcome {
+    let parent = match wg_dir.parent() {
+        Some(p) => p,
+        None => {
+            return WgDeleteOutcome::Other(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "workgroup directory has no parent",
+            ));
+        }
+    };
+    let original_name = match wg_dir.file_name().and_then(|n| n.to_str()) {
+        Some(n) => n,
+        None => {
+            return WgDeleteOutcome::Other(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "workgroup directory has no filename",
+            ));
+        }
+    };
+    let temp_name = format!(".deleting-{}-{}", original_name, uuid::Uuid::new_v4());
+    let temp_path = parent.join(&temp_name);
+
+    match std::fs::rename(wg_dir, &temp_path) {
+        Ok(()) => {
+            if let Err(e) = std::fs::remove_dir_all(&temp_path) {
+                // Rare race: a new handle opened between rename and remove. The
+                // user-visible WG is gone (renamed away); leave the orphan on
+                // disk for future cleanup tooling.
+                log::warn!(
+                    "[entity_creation] Renamed workgroup '{}' to '{}' but remove_dir_all failed: {}. \
+                     User-visible WG is gone; orphan remains on disk.",
+                    wg_dir.display(),
+                    temp_path.display(),
+                    e
+                );
+            }
+            WgDeleteOutcome::Deleted
+        }
+        Err(e) => {
+            if is_rename_blocked_by_handle(&e) {
+                WgDeleteOutcome::Blocked(e)
+            } else {
+                WgDeleteOutcome::Other(e)
+            }
+        }
+    }
+}
+
+/// True iff the rename-probe error indicates a blocker holds an open handle.
+///
+/// Superset of `is_file_in_use_error`: matches the same {32, 33, 1224} codes
+/// PLUS `ERROR_ACCESS_DENIED` (5). Empirically `MoveFileEx` (and therefore
+/// `std::fs::rename`) returns 5, not 32, when an existing open handle on the
+/// source's descendant lacks `FILE_SHARE_DELETE` — the most common real-world
+/// blocker shape (default-share opens by IDEs and terminals). This is the
+/// rename-path counterpart to `is_file_in_use_error`, which was tuned for
+/// `remove_dir_all` semantics where ACCESS_DENIED typically means a real
+/// permission failure (read-only file) rather than a share-mode mismatch.
+///
+/// `pub(crate)` so unit tests can exercise it without going through `try_atomic_delete_wg`.
+pub(crate) fn is_rename_blocked_by_handle(e: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        const ERROR_ACCESS_DENIED: i32 = 5;
+        if e.raw_os_error() == Some(ERROR_ACCESS_DENIED) {
+            return true;
+        }
+        is_file_in_use_error(e)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = e;
+        false
+    }
+}
+
+/// True iff `e` represents a Windows "file in use" error.
+///
+/// Matches the Win32 codes that surface when another process holds an open or
+/// memory-mapped handle to a file we tried to delete:
+/// - `ERROR_SHARING_VIOLATION` (32) — standard open with a deny-share mode.
+/// - `ERROR_LOCK_VIOLATION` (33) — byte-range lock collision.
+/// - `ERROR_USER_MAPPED_FILE` (1224) — file is mapped into another process's address
+///   space. This is the VSCode / IDE memory-mapped-I/O case and was the motivating
+///   real-world scenario for the blocker diagnostic. See plan §6.1.
+///
+/// On non-Windows always returns false: Linux / macOS produce different error codes
+/// for "directory not empty due to open file" and we don't run the Restart-Manager
+/// diagnostic there.
+///
+/// `pub(crate)` so the unit test in `wg_delete_diagnostic::tests` can exercise it
+/// without moving the test into this module.
+pub(crate) fn is_file_in_use_error(e: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        const ERROR_LOCK_VIOLATION: i32 = 33;
+        const ERROR_USER_MAPPED_FILE: i32 = 1224;
+        matches!(
+            e.raw_os_error(),
+            Some(ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION | ERROR_USER_MAPPED_FILE)
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = e;
+        false
+    }
+}
+
+/// Scan `.ac-new/` for existing `wg-<N>-{team_name}/` dirs and return the
+/// **lowest free positive integer** starting at 1.
+///
+/// Issue #177: previously this returned `max(existing) + 1`, which left
+/// permanent gaps after a workgroup was destroyed. The new policy reuses
+/// any freed numbers so the user-facing sequence stays compact.
+///
+/// Filtering rules (unchanged from prior behavior):
+/// - Only directories are considered (regular files are ignored).
+/// - The directory name must match `wg-<digits>-<team_name>` exactly:
+///   prefix `wg-`, suffix `-{team_name}`, numeric middle.
+/// - Non-numeric middles (e.g. `wg-foo-team`) and other team suffixes
+///   are ignored.
+///
+/// Slot 1 is always reachable because the lowest-free search starts at
+/// 1 (see the `find` call below); a stray `wg-0-{team}` directory ends
+/// up in `taken` but is never tested by `find` and so cannot displace
+/// slot 1.
+///
+/// Read-error degradation: if `std::fs::read_dir(ac_new_dir)` fails
+/// (permission denied, transient I/O, broken junction, path-too-long
+/// on Windows), the function returns `1` as a graceful fallback. The
+/// post-allocate `wg_dir.exists()` guard in `create_workgroup` will
+/// surface the real condition as an "already exists" error if a
+/// `wg-1-{team}` is in fact present; otherwise the slot-1 creation
+/// succeeds with stale state. Surfacing the read error is tracked
+/// separately and is out of scope for #177.
 fn determine_next_wg_number(ac_new_dir: &Path, team_name: &str) -> u32 {
     let suffix = format!("-{}", team_name);
-    let mut max_n: u32 = 0;
+    let mut taken: HashSet<u32> = HashSet::new();
 
     if let Ok(entries) = std::fs::read_dir(ac_new_dir) {
         for entry in entries.flatten() {
@@ -1401,18 +1664,31 @@ fn determine_next_wg_number(ac_new_dir: &Path, team_name: &str) -> u32 {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
             if name_str.starts_with("wg-") && name_str.ends_with(&suffix) {
-                // Extract the number between "wg-" and "-{team_name}"
-                let middle = &name_str[3..name_str.len() - suffix.len()];
-                if let Ok(n) = middle.parse::<u32>() {
-                    if n > max_n {
-                        max_n = n;
+                // Extract the number between "wg-" and "-{team_name}".
+                // Use `.get(..)` (checked slicing) — a name like
+                // `wg-{team}` (no number) passes both the prefix and
+                // suffix checks but produces a slice with start > end,
+                // which would panic with `&str[..]`. `.get(..)` returns
+                // `None` instead, so such entries are silently ignored.
+                if let Some(middle) =
+                    name_str.get(3..name_str.len() - suffix.len())
+                {
+                    if let Ok(n) = middle.parse::<u32>() {
+                        taken.insert(n);
                     }
                 }
             }
         }
     }
 
-    max_n + 1
+    // Lowest free positive integer ≥ 1. The bounded `..=u32::MAX` form avoids
+    // any iterator-overflow footgun in debug builds; `find` short-circuits at
+    // the first miss so the actual cost is O(taken.len() + 1) in practice.
+    // A `0` may end up in `taken` (from a stray `wg-0-{team}`) but is never
+    // tested here — the search starts at 1, so slot 1 is always reachable.
+    (1u32..=u32::MAX)
+        .find(|n| !taken.contains(n))
+        .unwrap_or(1)
 }
 
 /// Compute a relative path from the replica dir to the agent matrix.
@@ -1545,4 +1821,460 @@ async fn git_clone_async(url: &str, target: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the preflight-rename `delete_workgroup` helper added in
+    //! the #113 follow-up dispatch, plus the #107 helper
+    //! `parse_brief_title`.
+
+    use super::*;
+
+    /// Success path: a clean WG dir with no blockers gets renamed and removed.
+    /// The original path must not exist after the call, and there must be no
+    /// `.deleting-*` orphan left in the parent.
+    #[test]
+    fn try_atomic_delete_wg_removes_clean_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wg_dir = tmp.path().join("wg-1-test");
+        std::fs::create_dir(&wg_dir).expect("create wg_dir");
+        std::fs::write(wg_dir.join("BRIEF.md"), "# test\n").expect("write BRIEF.md");
+        std::fs::create_dir(wg_dir.join("repo-foo")).expect("create repo-foo");
+        std::fs::write(wg_dir.join("repo-foo").join("README.md"), "x").expect("write inside");
+
+        let outcome = try_atomic_delete_wg(&wg_dir);
+        assert!(
+            matches!(outcome, WgDeleteOutcome::Deleted),
+            "clean dir must report Deleted"
+        );
+        assert!(!wg_dir.exists(), "wg_dir must be gone after delete");
+
+        // Parent must contain no `.deleting-*` orphan.
+        let parent = tmp.path();
+        let orphans: Vec<_> = std::fs::read_dir(parent)
+            .expect("read tempdir")
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(".deleting-")
+            })
+            .collect();
+        assert!(
+            orphans.is_empty(),
+            "no .deleting-* orphan should remain after a clean delete; found {:?}",
+            orphans.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+        );
+    }
+
+    /// Other-error path: deleting a nonexistent WG dir surfaces as
+    /// `WgDeleteOutcome::Other` (NotFound), NOT as `Blocked`.
+    #[test]
+    fn try_atomic_delete_wg_classifies_missing_dir_as_other() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let missing = tmp.path().join("does-not-exist");
+        let outcome = try_atomic_delete_wg(&missing);
+        match outcome {
+            WgDeleteOutcome::Other(e) => {
+                assert_eq!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound,
+                    "missing-dir error must classify as NotFound"
+                );
+            }
+            WgDeleteOutcome::Blocked(_) => {
+                panic!("missing dir must NOT classify as Blocked")
+            }
+            WgDeleteOutcome::Deleted => panic!("missing dir cannot be Deleted"),
+        }
+    }
+
+    /// Blocked path (Windows-only): a child file opened without
+    /// `FILE_SHARE_DELETE` blocks the parent-dir rename with
+    /// `ERROR_SHARING_VIOLATION` (32). The rename must fail before any file is
+    /// touched, so the WG dir + child must both be intact afterward.
+    #[cfg(windows)]
+    #[test]
+    fn try_atomic_delete_wg_blocked_with_restrictive_share_mode() {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_SHARE_READ only — explicitly NO FILE_SHARE_DELETE.
+        const FILE_SHARE_READ: u32 = 0x00000001;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let wg_dir = tmp.path().join("wg-1-test");
+        std::fs::create_dir(&wg_dir).expect("create wg_dir");
+        let inside = wg_dir.join("locked.bin");
+        std::fs::write(&inside, b"hold me").expect("write inside file");
+
+        // Hold a handle that denies DELETE share. Drop scope at end of test.
+        let _handle = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&inside)
+            .expect("open with restricted share mode");
+
+        let outcome = try_atomic_delete_wg(&wg_dir);
+        match &outcome {
+            WgDeleteOutcome::Blocked(_) => {
+                assert!(wg_dir.is_dir(), "wg_dir must remain after blocked rename");
+                assert!(inside.is_file(), "inner file must remain after blocked rename");
+            }
+            WgDeleteOutcome::Deleted => {
+                panic!(
+                    "expected Blocked when child file is held without FILE_SHARE_DELETE; \
+                     got Deleted (rename succeeded — Windows behavior may have changed)"
+                );
+            }
+            WgDeleteOutcome::Other(e) => {
+                panic!("expected Blocked, got Other({:?}={})", e.kind(), e);
+            }
+        }
+    }
+
+    /// Suffix scheme invariant (#113 follow-up): the orphan name produced on a
+    /// rename-success-then-remove-fails race must NOT match the
+    /// `starts_with("wg-")` filters used by `ac_discovery`, `cli::list_peers`,
+    /// and `claude_settings`. We test this by asserting the format directly:
+    /// the temp name starts with `.deleting-`, which automatically dodges the
+    /// `wg-` prefix filter.
+    #[test]
+    fn temp_name_format_dodges_workgroup_filter() {
+        // Inline the same name construction `try_atomic_delete_wg` uses, so the
+        // assertion locks the contract independent of fs interaction.
+        let original_name = "wg-7-dev-team";
+        let temp_name = format!(".deleting-{}-{}", original_name, uuid::Uuid::new_v4());
+        assert!(
+            temp_name.starts_with(".deleting-"),
+            "temp name must start with .deleting- so future cleanup tooling can identify orphans"
+        );
+        assert!(
+            !temp_name.starts_with("wg-"),
+            "temp name must NOT match the wg- discovery filter (would surface as ghost workgroup)"
+        );
+    }
+
+    /// `is_rename_blocked_by_handle` matches `ERROR_ACCESS_DENIED` (5).
+    /// MoveFileEx returns 5 — not 32 — when an open handle on a descendant
+    /// lacks `FILE_SHARE_DELETE`. Empirical, verified by the
+    /// `try_atomic_delete_wg_blocked_with_restrictive_share_mode` test below.
+    #[cfg(windows)]
+    #[test]
+    fn is_rename_blocked_by_handle_matches_access_denied() {
+        let e = std::io::Error::from_raw_os_error(5);
+        assert!(
+            is_rename_blocked_by_handle(&e),
+            "os error 5 (ERROR_ACCESS_DENIED) must classify as a rename blocker"
+        );
+    }
+
+    /// `is_rename_blocked_by_handle` is a superset of `is_file_in_use_error` —
+    /// the existing 32/33/1224 codes still match.
+    #[cfg(windows)]
+    #[test]
+    fn is_rename_blocked_by_handle_matches_file_in_use_codes() {
+        for code in [32, 33, 1224] {
+            let e = std::io::Error::from_raw_os_error(code);
+            assert!(
+                is_rename_blocked_by_handle(&e),
+                "os error {} must classify as a rename blocker",
+                code
+            );
+        }
+    }
+
+    /// `is_rename_blocked_by_handle` does NOT match unrelated errors. NotFound
+    /// (2) is the canonical legitimate non-blocker error path.
+    #[cfg(windows)]
+    #[test]
+    fn is_rename_blocked_by_handle_rejects_not_found() {
+        let e = std::io::Error::from_raw_os_error(2);
+        assert!(
+            !is_rename_blocked_by_handle(&e),
+            "os error 2 (ERROR_FILE_NOT_FOUND) must NOT classify as blocker"
+        );
+    }
+
+    /// Off Windows the helper always returns false — diagnostic isn't run on
+    /// non-Windows platforms.
+    #[cfg(not(windows))]
+    #[test]
+    fn is_rename_blocked_by_handle_no_op_on_non_windows() {
+        let e = std::io::Error::from_raw_os_error(5);
+        assert!(
+            !is_rename_blocked_by_handle(&e),
+            "non-Windows must always return false"
+        );
+    }
+
+    // ── parse_brief_title — dev-rust R7 cases ──
+
+    #[test]
+    fn parse_brief_title_returns_some_for_canonical_frontmatter() {
+        assert_eq!(
+            parse_brief_title("---\ntitle: Hello world\n---\n\nbody\n"),
+            Some("Hello world".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_strips_double_quotes() {
+        assert_eq!(
+            parse_brief_title("---\ntitle: \"Quoted\"\n---\n"),
+            Some("Quoted".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_strips_single_quotes() {
+        assert_eq!(
+            parse_brief_title("---\ntitle: 'Quoted'\n---\n"),
+            Some("Quoted".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_returns_none_when_no_frontmatter() {
+        assert_eq!(parse_brief_title("# Heading\n\nbody\n"), None);
+    }
+
+    #[test]
+    fn parse_brief_title_returns_none_for_empty_value() {
+        assert_eq!(parse_brief_title("---\ntitle:\n---\n"), None);
+    }
+
+    #[test]
+    fn parse_brief_title_returns_none_when_closing_delimiter_missing() {
+        assert_eq!(parse_brief_title("---\ntitle: foo\nbody only\n"), None);
+    }
+
+    #[test]
+    fn parse_brief_title_returns_none_when_title_field_absent() {
+        assert_eq!(parse_brief_title("---\nname: foo\n---\n"), None);
+    }
+
+    #[test]
+    fn parse_brief_title_preserves_inner_colon() {
+        assert_eq!(
+            parse_brief_title("---\ntitle: a: b\n---\n"),
+            Some("a: b".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_handles_indented_key() {
+        assert_eq!(
+            parse_brief_title("---\n  title: foo\n---\n"),
+            Some("foo".to_string())
+        );
+    }
+
+    // ── parse_brief_title — dev-rust-grinch G3 / G13 case-insensitivity ──
+
+    #[test]
+    fn parse_brief_title_handles_capital_t() {
+        assert_eq!(
+            parse_brief_title("---\nTitle: Foo\n---\n"),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_handles_all_caps_key() {
+        assert_eq!(
+            parse_brief_title("---\nTITLE: Foo\n---\n"),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_handles_mixed_case_key() {
+        assert_eq!(
+            parse_brief_title("---\ntItLe: Foo\n---\n"),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_value_remains_case_sensitive() {
+        // The key match is case-insensitive; the value MUST round-trip
+        // verbatim (it is user-visible content, not a structural marker).
+        assert_eq!(
+            parse_brief_title("---\nTitle: MixedCASE Value\n---\n"),
+            Some("MixedCASE Value".to_string())
+        );
+    }
+
+    // ── parse_brief_title — UTF-8 BOM (grinch MEDIUM) ──
+    // Mirrors `cli/brief_ops.rs::parse_brief` which already strips the BOM.
+    // Without this, BRIEF.md saved as "UTF-8 with BOM" breaks gate-4
+    // idempotency and risks silent overwrite of a user-edited title.
+
+    #[test]
+    fn parse_brief_title_strips_utf8_bom() {
+        assert_eq!(
+            parse_brief_title("\u{FEFF}---\ntitle: Foo\n---\n"),
+            Some("Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_brief_title_returns_none_for_bom_without_frontmatter() {
+        assert_eq!(parse_brief_title("\u{FEFF}# Heading\n\nbody\n"), None);
+    }
+
+    // ── #177 — determine_next_wg_number lowest-free reuse ──
+
+    /// Helper: create an empty directory at `<root>/<name>` for the test.
+    fn touch_dir(root: &Path, name: &str) {
+        std::fs::create_dir(root.join(name))
+            .unwrap_or_else(|e| panic!("create_dir {}: {}", name, e));
+    }
+
+    /// Empty `.ac-new/` returns slot 1 — the lowest positive integer.
+    #[test]
+    fn determine_next_wg_number_returns_one_when_no_wg_dirs_exist() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 1);
+    }
+
+    /// Contiguous allocation: `wg-1`, `wg-2`, `wg-3` already exist for the team
+    /// → next slot is 4 (no internal gap to reuse).
+    #[test]
+    fn determine_next_wg_number_returns_next_after_contiguous_block() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-1-dev-team");
+        touch_dir(tmp.path(), "wg-2-dev-team");
+        touch_dir(tmp.path(), "wg-3-dev-team");
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 4);
+    }
+
+    /// Gap reuse — the load-bearing case from issue #177.
+    /// `wg-1` and `wg-3` exist (someone destroyed `wg-2`) → next slot is 2.
+    #[test]
+    fn determine_next_wg_number_reuses_lowest_internal_gap() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-1-dev-team");
+        touch_dir(tmp.path(), "wg-3-dev-team");
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 2);
+    }
+
+    /// Leading gap — `wg-1` is free even though higher slots are taken.
+    #[test]
+    fn determine_next_wg_number_reuses_slot_one_when_only_higher_slots_exist() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-2-dev-team");
+        touch_dir(tmp.path(), "wg-3-dev-team");
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 1);
+    }
+
+    /// Team scoping: dirs for a different team must not block slot reuse for the
+    /// requested team. `wg-1-dev-team` and `wg-1-qa-team` coexist → for `qa-team`
+    /// only slot 1 is taken (by `wg-1-qa-team`), so next is 2; for `dev-team`
+    /// only slot 1 is taken (by `wg-1-dev-team`), so next is 2.
+    #[test]
+    fn determine_next_wg_number_only_considers_matching_team_suffix() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-1-dev-team");
+        touch_dir(tmp.path(), "wg-1-qa-team");
+        touch_dir(tmp.path(), "wg-3-qa-team");
+        // For dev-team: only wg-1-dev-team counts → next free is 2.
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 2);
+        // For qa-team: wg-1-qa-team and wg-3-qa-team count → next free is 2.
+        assert_eq!(determine_next_wg_number(tmp.path(), "qa-team"), 2);
+    }
+
+    /// Invalid `wg-*` directory names must not occupy any slot.
+    /// - `wg-abc-dev-team`: non-numeric middle → parse fails → ignored.
+    /// - `wg--dev-team`:    empty middle (`[3..3]` slice) → parse fails → ignored.
+    ///
+    /// Only `wg-2-dev-team` is real, so slot 1 is still free.
+    /// (The `wg-dev-team` no-number case is covered by its own test below
+    /// because it specifically exercises the checked-slicing guard.)
+    #[test]
+    fn determine_next_wg_number_ignores_invalid_directory_names() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-abc-dev-team");
+        touch_dir(tmp.path(), "wg--dev-team");
+        touch_dir(tmp.path(), "wg-2-dev-team");
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 1);
+    }
+
+    /// `wg-0-<team>` does not block slot 1. The allocator's lowest-free
+    /// search starts at 1, so any `0` that ends up in `taken` is never
+    /// tested by `find` — slot 1 stays reachable. The allocator only ever
+    /// produces values ≥ 1.
+    #[test]
+    fn determine_next_wg_number_ignores_zero_numbered_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-0-dev-team");
+        touch_dir(tmp.path(), "wg-2-dev-team");
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 1);
+    }
+
+    /// Files (not directories) named like a workgroup must not occupy a slot —
+    /// the allocator only considers real workgroup directories.
+    #[test]
+    fn determine_next_wg_number_ignores_files_named_like_workgroups() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(tmp.path().join("wg-1-dev-team"), b"not a dir")
+            .expect("write file");
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 1);
+    }
+
+    /// Regression for the suffix-overlaps-prefix slice case: a directory
+    /// named `wg-{team}` (no number, e.g. `wg-dev-team`) passes both the
+    /// `starts_with("wg-")` and `ends_with("-{team}")` checks, but the
+    /// digits slice would be `&name_str[3..2]` — invalid. With `&str[..]`
+    /// indexing this panics; with `name_str.get(..)` it returns `None` and
+    /// the entry is silently ignored. This test locks in the no-panic
+    /// behavior so a future refactor cannot reintroduce the bug.
+    #[test]
+    fn determine_next_wg_number_does_not_panic_on_no_number_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-dev-team");
+        // Must return slot 1 (the bogus dir is ignored, not counted as taken).
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 1);
+    }
+
+    /// In-flight `.deleting-wg-N-team-<uuid>` directories must NOT be
+    /// counted as occupying slot N. Locks the contract that #177 relies
+    /// on: the leading `.` of the temp name (set in `try_atomic_delete_wg`
+    /// at line 1535 — `.deleting-{wg_name}-{uuid}`) dodges the
+    /// `starts_with("wg-")` filter, so a freed slot is reusable on the
+    /// very next allocation tick. A future temp-name refactor that drops
+    /// the leading `.` would silently re-introduce the gap-leak this issue
+    /// closes; this test catches that regression.
+    #[test]
+    fn determine_next_wg_number_ignores_deleting_temp_dirs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-1-dev-team");
+        touch_dir(
+            tmp.path(),
+            ".deleting-wg-2-dev-team-00000000-0000-0000-0000-000000000000",
+        );
+        // wg-2 is mid-delete: the `.deleting-…` entry must not block slot 2.
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 2);
+    }
+
+    /// Team `team` is a strict suffix of team `dev-team`. The dir
+    /// `wg-1-dev-team` ends with `-team` but must NOT count toward team
+    /// `team` — its middle `1-dev` fails `parse::<u32>()` and is ignored.
+    /// Test 5 only covered non-overlapping team names; this case locks the
+    /// suffix-overlap disambiguation that edge case §2 argues for. A future
+    /// maintainer who relaxed parsing (hex, leading `+`, trailing-char
+    /// stripping) would silently reintroduce cross-team contamination — and
+    /// none of the existing tests would catch it.
+    #[test]
+    fn determine_next_wg_number_distinguishes_subset_team_suffixes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        touch_dir(tmp.path(), "wg-1-dev-team");
+        touch_dir(tmp.path(), "wg-1-team");
+        // For team `team`: only `wg-1-team` counts; `wg-1-dev-team`'s
+        // middle `1-dev` is non-numeric and is ignored. Next free is 2.
+        assert_eq!(determine_next_wg_number(tmp.path(), "team"), 2);
+        // For team `dev-team`: only `wg-1-dev-team` counts. Next free is 2.
+        assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 2);
+    }
+
 }

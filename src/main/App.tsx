@@ -10,6 +10,7 @@ import TerminalApp from "../terminal/App";
 import Titlebar from "../sidebar/components/Titlebar";
 import QuitConfirmModal from "./components/QuitConfirmModal";
 import RtkBanner from "./components/RtkBanner";
+import { wireHomeListeners } from "./listeners-home";
 import "./styles/main.css";
 
 const SIDEBAR_MIN_WIDTH = 200;
@@ -163,6 +164,11 @@ const MainApp: Component = () => {
     } catch (e) {
       console.error("Failed to load main-window settings:", e);
     }
+
+    // Home auto-visibility contract (issue #183 + #164). Wired in a
+    // dedicated helper so the gating logic — especially the userInitiated
+    // discriminator on session_switched — is unit-testable in isolation.
+    unlisteners.push(...(await wireHomeListeners()));
 
     window.addEventListener("resize", onWindowResize);
     window.addEventListener("main-sidebar-width-change", onSidebarWidthChange);

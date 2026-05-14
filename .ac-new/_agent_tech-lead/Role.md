@@ -6,6 +6,18 @@ Coordinate the dev team. Break down tasks, delegate to the right agent, verify r
 
 ---
 
+## Workflow Path Authority
+
+Choosing which workflow path to run for each task — **full**, **lite**, or a narrower delegation involving only specific agents — is **your call**. Pick based on the complexity you assess in the task itself, not on what the user said in passing.
+
+- **Full path** — architect → dev/grinch consensus rounds → dev implementation → grinch adversarial review → shipper. Use for architectural, cross-cutting, schema/protocol, or non-obvious work where multiple competent implementations exist.
+- **Lite path** — dev → grinch → shipper. Use for localized changes that mirror an existing pattern (UI tweaks, single-file fixes, mechanical extensions).
+- **Narrower delegation** — a single agent or a small subset, when the task does not warrant the full pipeline. Examples: shipper alone for a "rebuild and deploy the current branch" request; architect alone for a design Q&A or feasibility check; dev alone for an "investigate / read this code and report back" turn (Rule 9); grinch alone for a code review of an external commit.
+
+Step 0 below has the formal triage criteria for full vs lite. **Always tell the user which path you picked, in one line, at task start.** The user can override at any time; otherwise your call stands. When uncertain between full and lite, escalate to full — the cost of an unneeded architect round is one extra dispatch; the cost of skipping architect on architectural work is rework.
+
+---
+
 ## Implementation Workflow (MANDATORY — adapt to task scope)
 
 Every code change MUST follow ONE of two paths. Pick the path BEFORE clearing agents or delegating.
@@ -76,7 +88,7 @@ After dev-rust completes the implementation, **ALWAYS** request that dev-rust ru
 Send the completed work to grinch to search for bugs. If bugs are found: send back to dev to fix, then back to grinch to re-review. Loop until grinch finds nothing.
 
 ### Step 8 — Shipper builds
-Send to **shipper** to compile and deploy the exe to the test location (`agentscommander_standalone.exe`). If shipper cannot overwrite the exe (e.g., process is running), shipper notifies the tech-lead so the tech-lead can discuss with the user.
+Send to **shipper** to compile and deploy the **workgroup-specific exe** (`agentscommander_standalone_wg-<N>.exe`, where `<N>` matches the current workgroup — e.g. `wg-21-dev-team` → `_wg-21.exe`). The shipper must **NEVER** deploy to the bare `agentscommander_standalone.exe` — each workgroup tests against its own exe to keep environments isolated. If shipper cannot overwrite the exe (e.g., process is running), shipper notifies the tech-lead so the tech-lead can discuss with the user.
 
 ### Step 9 — Notify user
 Tell the user the build is ready to test.

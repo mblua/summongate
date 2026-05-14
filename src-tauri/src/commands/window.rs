@@ -243,7 +243,10 @@ pub async fn attach_terminal(
         "terminal_attached",
         serde_json::json!({ "sessionId": session_id }),
     );
-    let _ = app.emit("session_switched", serde_json::json!({ "id": session_id }));
+    let _ = app.emit(
+        "session_switched",
+        serde_json::json!({ "id": session_id, "userInitiated": true }),
+    );
 
     Ok(())
 }
@@ -281,6 +284,20 @@ pub fn open_in_explorer(path: String) -> Result<(), String> {
         return Err(format!("Path is not a directory: {}", path));
     }
     open::that_detached(canonical).map_err(|e| format!("Failed to open explorer: {}", e))
+}
+
+/// Open an http/https URL in the user's default browser.
+/// Refuses any other scheme to prevent the frontend from invoking arbitrary
+/// shell handlers via crafted URLs. Scheme check is case-insensitive
+/// (RFC 3986 §3.1) but the original URL is passed to `open::that_detached`.
+#[tauri::command]
+pub fn open_external_url(url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return Err(format!("Refusing to open non-http(s) URL: {}", url));
+    }
+    open::that_detached(trimmed).map_err(|e| format!("Failed to open URL: {}", e))
 }
 
 /// Ensure the unified main window exists and is focused. In 0.8.0 the main window

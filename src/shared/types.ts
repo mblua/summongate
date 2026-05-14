@@ -131,6 +131,7 @@ export interface AppSettings {
   startOnlyCoordinators: boolean;
   sidebarAlwaysOnTop: boolean;
   raiseTerminalOnClick: boolean;
+  soundsEnabled: boolean;
   teamIdleBeepEnabled: boolean;
   voiceToTextEnabled: boolean;
   geminiApiKey: string;
@@ -157,6 +158,7 @@ export interface AppSettings {
   coordSortByActivity: boolean;
   injectRtkHook: boolean;
   rtkPromptDismissed: boolean;
+  autoGenerateBriefTitle: boolean;
 }
 
 // Team grouping for sidebar
@@ -252,6 +254,7 @@ export interface AcWorkgroup {
   name: string;
   path: string;
   brief?: string;
+  briefTitle?: string;
   agents: AcAgentReplica[];
   repoPath?: string;
   teamName?: string;
@@ -282,5 +285,64 @@ export interface TeamConfigResult {
   agents: string[];
   coordinator: string;
   repos: { url: string; agents: string[] }[];
+}
+
+// ---------------------------------------------------------------------------
+// Workgroup-delete blocker report (BLOCKERS: sentinel payload)
+// Mirrors src-tauri/src/commands/wg_delete_diagnostic.rs structs.
+// ---------------------------------------------------------------------------
+
+export interface BlockerSession {
+  sessionId: string;
+  agentName: string;
+  cwd: string;
+}
+
+export interface BlockerProcess {
+  pid: number;
+  name: string;
+  cwd?: string;
+  files: string[];
+}
+
+export interface BlockerReport {
+  workgroup: string;
+  platform: "windows" | "linux" | "macos" | "other";
+  diagnosticAvailable: boolean;
+  rawOsError: string;
+  sessions: BlockerSession[];
+  processes: BlockerProcess[];
+}
+
+// ---------------------------------------------------------------------------
+// Brief mutation result (issue #162 — BRIEF action buttons)
+// Mirrors src-tauri/src/commands/brief.rs::BriefUpdateResult.
+// ---------------------------------------------------------------------------
+
+export interface BriefUpdateResult {
+  workgroupRoot: string;
+  brief: string | null;
+}
+
+export interface WorkgroupBriefUpdatedEvent {
+  workgroupRoot?: string;
+  workgroupPath?: string;
+  brief: string | null;
+  sessionIds?: string[];
+  briefTitle?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Project registration result (#191 — shared open/new project flow)
+// Mirrors src-tauri/src/config/projects.rs::ProjectRegistration.
+// ---------------------------------------------------------------------------
+
+export interface ProjectRegistration {
+  /** Absolute path that was added (or matched) in projectPaths. */
+  path: string;
+  /** True when this call appended a new entry, false when already present. */
+  registered: boolean;
+  /** True when this call created .ac-new/ on disk (always false for openProject). */
+  created: boolean;
 }
 

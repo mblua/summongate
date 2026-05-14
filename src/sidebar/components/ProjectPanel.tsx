@@ -1,9 +1,10 @@
 import { Component, For, Show, createMemo, createSignal, onMount, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
-import type { AcWorkgroup, AcAgentReplica, AcTeam, Session, TelegramBotConfig } from "../../shared/types";
-import { SessionAPI, WindowAPI, EntityAPI, TelegramAPI, SettingsAPI, onDiscoveryBranchUpdated, emitOpenSettings } from "../../shared/ipc";
+import type { AcWorkgroup, AcAgentReplica, AcTeam, Session, TelegramBotConfig, BlockerReport } from "../../shared/types";
+import { SessionAPI, WindowAPI, EntityAPI, TelegramAPI, SettingsAPI, onDiscoveryBranchUpdated, onAcWorkgroupBriefUpdated, emitOpenSettings } from "../../shared/ipc";
 import type { SessionRepoInput } from "../../shared/ipc";
 import { isTauri } from "../../shared/platform";
+import { stripFrontmatter } from "../../shared/markdown";
 import { projectStore } from "../stores/project";
 import { sessionsStore } from "../stores/sessions";
 import { bridgesStore } from "../stores/bridges";
@@ -78,14 +79,21 @@ function getActiveReplicasForWg(wg: AcWorkgroup): AcAgentReplica[] {
 }
 
 const ProjectPanel: Component = () => {
-  // Listen for replica branch updates from the discovery branch watcher
+  // Listen for replica branch and workgroup BRIEF.md updates from the discovery watcher.
   let unlistenBranch: (() => void) | null = null;
+  let unlistenWgBrief: (() => void) | null = null;
   onMount(async () => {
     unlistenBranch = await onDiscoveryBranchUpdated((data) => {
       projectStore.updateReplicaBranch(data.replicaPath, data.branch);
     });
+    unlistenWgBrief = await onAcWorkgroupBriefUpdated((data) => {
+      projectStore.updateWorkgroupBrief(data.workgroupPath, data.brief, data.briefTitle);
+    });
   });
-  onCleanup(() => unlistenBranch?.());
+  onCleanup(() => {
+    unlistenBranch?.();
+    unlistenWgBrief?.();
+  });
 
   const [pendingLaunch, setPendingLaunch] = createSignal<PendingLaunch | null>(null);
 
@@ -208,9 +216,14 @@ const ProjectPanel: Component = () => {
         const [wgDeleteInProgress, setWgDeleteInProgress] = createSignal(false);
         const [wgDirtyRepos, setWgDirtyRepos] = createSignal(false);
         const [wgConfirmText, setWgConfirmText] = createSignal("");
+        const [wgBlockers, setWgBlockers] = createSignal<BlockerReport | null>(null);
+        const [wgRetryInProgress, setWgRetryInProgress] = createSignal(false);
+        const [wgLastForceUsed, setWgLastForceUsed] = createSignal(false);
+        let retryGen = 0;
         const [agentCtxMenu, setAgentCtxMenu] = createSignal<{ agent: { name: string; path: string; preferredAgentId?: string }; x: number; y: number } | null>(null);
         const [agentsHeaderCtxMenu, setAgentsHeaderCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
         const [workgroupsHeaderCtxMenu, setWorkgroupsHeaderCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
+        const [teamsHeaderCtxMenu, setTeamsHeaderCtxMenu] = createSignal<{ x: number; y: number } | null>(null);
         const [deletingAgent, setDeletingAgent] = createSignal<{ name: string; path: string } | null>(null);
         const [agentDeleteError, setAgentDeleteError] = createSignal("");
         const [agentDeleteInProgress, setAgentDeleteInProgress] = createSignal(false);
@@ -224,7 +237,57 @@ const ProjectPanel: Component = () => {
           setWgDirtyRepos(false);
           setWgConfirmText("");
           setWgDeleteInProgress(false);
+          setWgBlockers(null);
+          setWgRetryInProgress(false);
+          setWgLastForceUsed(false);
+          retryGen++;
           setDeletingWg(null);
+        };
+        const retryWgDelete = async () => {
+          if (wgRetryInProgress()) return;
+          const wg = deletingWg();
+          if (!wg) return;
+          setWgRetryInProgress(true);
+          const myGen = ++retryGen;
+          const force = wgLastForceUsed();
+          try {
+            await EntityAPI.deleteWorkgroup(proj.path, wg.name, force);
+            if (myGen !== retryGen) return;
+            await projectStore.reloadProject(proj.path);
+            if (myGen !== retryGen) return;
+            closeWgDeleteModal();
+          } catch (e: any) {
+            if (myGen !== retryGen) return;
+            const msg = typeof e === "string" ? e : e?.message ?? "Failed to delete workgroup";
+            if (msg.startsWith("BLOCKERS:")) {
+              try {
+                const report = JSON.parse(msg.slice("BLOCKERS:".length)) as BlockerReport;
+                setWgBlockers(report);
+                setWgDirtyRepos(false);
+                setWgConfirmText("");
+                setWgDeleteError("");
+                setWgRetryInProgress(false);
+                return;
+              } catch (parseErr) {
+                console.error("Failed to parse BLOCKERS: payload on retry:", parseErr);
+                setWgBlockers(null);
+                setWgDeleteError("Workgroup is still locked, but the blocker report could not be parsed. Try again.");
+                setWgRetryInProgress(false);
+                return;
+              }
+            }
+            if (msg.startsWith("DIRTY_REPOS:")) {
+              setWgBlockers(null);
+              setWgDeleteError(msg.slice("DIRTY_REPOS:".length));
+              setWgDirtyRepos(true);
+              setWgConfirmText("");
+              setWgRetryInProgress(false);
+              return;
+            }
+            setWgBlockers(null);
+            setWgDeleteError(msg);
+            setWgRetryInProgress(false);
+          }
         };
         const activeReplicas = createMemo(() => {
           const wg = deletingWg();
@@ -302,6 +365,7 @@ const ProjectPanel: Component = () => {
           setAgentCtxMenu(null);
           setAgentsHeaderCtxMenu(null);
           setWorkgroupsHeaderCtxMenu(null);
+          setTeamsHeaderCtxMenu(null);
           setReplicaCtxMenu(null);
           setCtxMenuPos({ x: e.clientX, y: e.clientY });
           setShowCtxMenu(true);
@@ -334,6 +398,7 @@ const ProjectPanel: Component = () => {
           setAgentCtxMenu(null);
           setAgentsHeaderCtxMenu(null);
           setWorkgroupsHeaderCtxMenu(null);
+          setTeamsHeaderCtxMenu(null);
           setReplicaCtxMenu(null);
           setTeamCtxMenu({ team, x: e.clientX, y: e.clientY });
           const dismiss = (ev?: Event) => {
@@ -358,6 +423,7 @@ const ProjectPanel: Component = () => {
           setAgentCtxMenu(null);
           setAgentsHeaderCtxMenu(null);
           setWorkgroupsHeaderCtxMenu(null);
+          setTeamsHeaderCtxMenu(null);
           setReplicaCtxMenu(null);
           setWgCtxMenu({ wg, x: e.clientX, y: e.clientY });
           const dismiss = (ev?: Event) => {
@@ -383,6 +449,7 @@ const ProjectPanel: Component = () => {
           setAgentCtxMenu(null);
           setAgentsHeaderCtxMenu(null);
           setWorkgroupsHeaderCtxMenu(null);
+          setTeamsHeaderCtxMenu(null);
           setReplicaCtxMenu({
             sessionId: session.id,
             sessionName: session.name,
@@ -407,7 +474,8 @@ const ProjectPanel: Component = () => {
           replica: AcAgentReplica,
           wg: AcWorkgroup,
           extraBadge?: string,
-          runningPeers?: () => AcAgentReplica[]
+          runningPeers?: () => AcAgentReplica[],
+          briefTitle?: string
         ) => {
           const dotClass = () => replicaDotClass(wg, replica);
           const isCoord = () => replica.isCoordinator;
@@ -502,6 +570,9 @@ const ProjectPanel: Component = () => {
             >
               <div class={`session-item-status ${dotClass()}`} />
               <div class="replica-item-info">
+                <Show when={briefTitle}>
+                  <span class="coord-brief-title" title={briefTitle}>{briefTitle}</span>
+                </Show>
                 <span class="replica-item-name">{replica.originProject ? `${replica.name}@${replica.originProject}` : replica.name}</span>
                 <div class="ac-discovery-badges">
                   <Show when={runningPeers && runningPeers()!.length > 0}>
@@ -597,6 +668,7 @@ const ProjectPanel: Component = () => {
           <div class="project-panel">
             <button
               class="project-header"
+              title={proj.path}
               onClick={() => setCollapsed((c) => !c)}
               onContextMenu={handleProjectContextMenu}
             >
@@ -712,7 +784,7 @@ const ProjectPanel: Component = () => {
                                 return dot === "running" || dot === "active";
                               })
                             );
-                            return renderReplicaItem(item.replica, item.wg, item.wg.name, runningPeers);
+                            return renderReplicaItem(item.replica, item.wg, item.wg.name, runningPeers, item.wg.briefTitle);
                           }}
                         </For>
                       </div>
@@ -732,6 +804,7 @@ const ProjectPanel: Component = () => {
                     setWgCtxMenu(null);
                     setAgentCtxMenu(null);
                     setAgentsHeaderCtxMenu(null);
+                    setTeamsHeaderCtxMenu(null);
                     setReplicaCtxMenu(null);
                     setWorkgroupsHeaderCtxMenu({ x: e.clientX, y: e.clientY });
                     const dismiss = (ev?: Event) => {
@@ -785,8 +858,8 @@ const ProjectPanel: Component = () => {
                                     </span>
                                     <div class="ac-wg-header-text">
                                       <span class="ac-wg-name">{wg.name}</span>
-                                      <Show when={wg.brief}>
-                                        <span class="ac-wg-brief">{wg.brief}</span>
+                                      <Show when={stripFrontmatter(wg.brief ?? "").trim()}>
+                                        {(brief) => <span class="ac-wg-brief">{brief()}</span>}
                                       </Show>
                                     </div>
                                   </div>
@@ -843,6 +916,7 @@ const ProjectPanel: Component = () => {
                     setWgCtxMenu(null);
                     setAgentsHeaderCtxMenu(null);
                     setWorkgroupsHeaderCtxMenu(null);
+                    setTeamsHeaderCtxMenu(null);
                     setReplicaCtxMenu(null);
                     setAgentCtxMenu({ agent, x: e.clientX, y: e.clientY });
                     const dismiss = (ev?: Event) => {
@@ -867,6 +941,7 @@ const ProjectPanel: Component = () => {
                     setWgCtxMenu(null);
                     setAgentCtxMenu(null);
                     setWorkgroupsHeaderCtxMenu(null);
+                    setTeamsHeaderCtxMenu(null);
                     setReplicaCtxMenu(null);
                     setAgentsHeaderCtxMenu({ x: e.clientX, y: e.clientY });
                     const dismiss = (ev?: Event) => {
@@ -1055,12 +1130,40 @@ const ProjectPanel: Component = () => {
                 {/* Teams */}
                 {(() => {
                   const [teamsCollapsed, setTeamsCollapsed] = createSignal(false);
+
+                  const handleTeamsHeaderContextMenu = (e: MouseEvent) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    cleanupCtx();
+                    setShowCtxMenu(false);
+                    setTeamCtxMenu(null);
+                    setWgCtxMenu(null);
+                    setAgentCtxMenu(null);
+                    setAgentsHeaderCtxMenu(null);
+                    setWorkgroupsHeaderCtxMenu(null);
+                    setReplicaCtxMenu(null);
+                    setTeamsHeaderCtxMenu({ x: e.clientX, y: e.clientY });
+                    const dismiss = (ev?: Event) => {
+                      if (ev instanceof KeyboardEvent && ev.key !== "Escape") return;
+                      setTeamsHeaderCtxMenu(null);
+                      cleanupCtx();
+                    };
+                    dismissCtx = dismiss;
+                    setTimeout(() => {
+                      window.addEventListener("click", dismiss);
+                      window.addEventListener("contextmenu", dismiss);
+                      window.addEventListener("keydown", dismiss as any);
+                    });
+                  };
+
                   return (
+                    <>
                     <Show when={sessionsStore.showCategories}>
                     <div class="ac-wg-group">
                       <div
                         class="ac-wg-header ac-wg-header--collapsible"
                         onClick={() => setTeamsCollapsed((c) => !c)}
+                        onContextMenu={handleTeamsHeaderContextMenu}
                       >
                         <span class="ac-discovery-chevron" classList={{ collapsed: teamsCollapsed() }}>
                           &#x25BE;
@@ -1120,6 +1223,28 @@ const ProjectPanel: Component = () => {
                       </Show>
                     </div>
                     </Show>
+
+                    {/* Teams header context menu */}
+                    {teamsHeaderCtxMenu() && (
+                      <Portal>
+                        <div
+                          class="session-context-menu"
+                          style={{ left: `${teamsHeaderCtxMenu()!.x}px`, top: `${teamsHeaderCtxMenu()!.y}px` }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            class="session-context-option"
+                            onClick={() => {
+                              setTeamsHeaderCtxMenu(null);
+                              setShowNewTeam(true);
+                            }}
+                          >
+                            New Team
+                          </button>
+                        </div>
+                      </Portal>
+                    )}
+                    </>
                   );
                 })()}
               </div>
@@ -1307,6 +1432,77 @@ const ProjectPanel: Component = () => {
                           />
                         </div>
                       </Show>
+                      <Show when={wgBlockers()}>
+                        {(r) => (
+                          <div style={{
+                            "background": "var(--danger, #c0392b)",
+                            "color": "#fff",
+                            "padding": "10px 12px",
+                            "border-radius": "6px",
+                            "margin-top": "10px",
+                            "font-size": "12px",
+                            "line-height": "1.5",
+                          }}>
+                            <strong>Cannot delete:</strong> the workgroup is locked by the following:
+                            <Show when={r().sessions.length > 0}>
+                              <div style={{ "margin-top": "6px" }}><strong>AC sessions</strong></div>
+                              <ul style={{ margin: "4px 0 6px 16px", padding: "0" }}>
+                                <For each={r().sessions}>
+                                  {(s) => <li>{s.agentName} <span style={{ opacity: 0.75 }}>({s.cwd})</span></li>}
+                                </For>
+                              </ul>
+                            </Show>
+                            <Show when={r().processes.length > 0}>
+                              <div style={{ "margin-top": "6px" }}><strong>External processes</strong></div>
+                              <ul style={{ margin: "4px 0 6px 16px", padding: "0" }}>
+                                <For each={r().processes}>
+                                  {(p) => (
+                                    <li>
+                                      {p.name} (PID {p.pid})
+                                      <Show when={p.cwd}>
+                                        {(cwd) => (
+                                          <div style={{ "font-size": "11px", opacity: 0.85 }}>
+                                            CWD: {cwd()}
+                                          </div>
+                                        )}
+                                      </Show>
+                                      <Show when={p.files.length > 0}>
+                                        <ul style={{ margin: "2px 0 0 16px", padding: "0", "font-size": "11px", opacity: 0.85 }}>
+                                          <For each={p.files}>{(f) => <li>{f}</li>}</For>
+                                        </ul>
+                                      </Show>
+                                    </li>
+                                  )}
+                                </For>
+                              </ul>
+                            </Show>
+                            <Show when={!r().diagnosticAvailable}>
+                              <div style={{ "margin-top": "6px", opacity: 0.85 }}>
+                                Diagnostic not available on this platform. Raw error: <code>{r().rawOsError}</code>
+                              </div>
+                            </Show>
+                            <Show when={r().diagnosticAvailable && r().sessions.length === 0 && r().processes.length === 0}>
+                              <div style={{ "margin-top": "6px", opacity: 0.85 }}>
+                                No blockers identified. The lock may be transient — try again in a moment.
+                                Raw error: <code>{r().rawOsError}</code>
+                              </div>
+                            </Show>
+                            <div style={{ "margin-top": "8px" }}>
+                              Close the listed sessions / quit the listed processes, then click <strong>Retry</strong> below.
+                            </div>
+                            <div style={{ "margin-top": "10px", display: "flex", "justify-content": "flex-end" }}>
+                              <button
+                                class="new-agent-create-btn"
+                                style={{ "background": "#fff", "color": "var(--danger, #c0392b)", "min-width": "84px" }}
+                                disabled={wgRetryInProgress() || wgDeleteInProgress()}
+                                onClick={retryWgDelete}
+                              >
+                                {wgRetryInProgress() ? "Retrying…" : "Retry"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </Show>
                     </div>
                     <div class="new-agent-footer">
                       <button class="new-agent-cancel-btn" onClick={closeWgDeleteModal}>
@@ -1315,19 +1511,46 @@ const ProjectPanel: Component = () => {
                       <button
                         class="new-agent-create-btn"
                         style={{ "background": "var(--danger, #c0392b)" }}
-                        disabled={wgDeleteInProgress() || activeReplicas().length > 0 || (wgDirtyRepos() && wgConfirmText() !== deletingWg()!.name)}
+                        disabled={
+                          wgDeleteInProgress()
+                          || activeReplicas().length > 0
+                          || (wgDirtyRepos() && wgConfirmText() !== deletingWg()!.name)
+                          || wgBlockers() !== null
+                        }
                         onClick={async () => {
                           if (wgDeleteInProgress()) return;
                           if (activeReplicas().length > 0) return;
                           setWgDeleteInProgress(true);
+                          const myGen = ++retryGen;
                           const wg = deletingWg()!;
                           const forceDelete = wgDirtyRepos();
+                          setWgLastForceUsed(forceDelete);
                           try {
                             await EntityAPI.deleteWorkgroup(proj.path, wg.name, forceDelete);
+                            if (myGen !== retryGen) return;
                             await projectStore.reloadProject(proj.path);
+                            if (myGen !== retryGen) return;
                           } catch (e: any) {
+                            if (myGen !== retryGen) return;
                             console.error("delete_workgroup failed:", e);
                             const msg = typeof e === "string" ? e : e?.message ?? "Failed to delete workgroup";
+                            // BLOCKERS: sentinel — render structured blocker list, no force-delete option.
+                            if (msg.startsWith("BLOCKERS:")) {
+                              try {
+                                const report = JSON.parse(msg.slice("BLOCKERS:".length)) as BlockerReport;
+                                setWgBlockers(report);
+                                setWgDirtyRepos(false);
+                                setWgConfirmText("");
+                                setWgDeleteError("");
+                                setWgDeleteInProgress(false);
+                                return;
+                              } catch (parseErr) {
+                                console.error("Failed to parse BLOCKERS: payload:", parseErr);
+                                setWgDeleteError("Workgroup is locked, but the blocker report could not be parsed. Try again.");
+                                setWgDeleteInProgress(false);
+                                return;
+                              }
+                            }
                             // DIRTY_REPOS: sentinel prefix — switch to force-confirm mode
                             if (!forceDelete && msg.startsWith("DIRTY_REPOS:")) {
                               setWgDeleteError(msg.slice("DIRTY_REPOS:".length));

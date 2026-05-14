@@ -67,7 +67,6 @@ html, body, #root {
 .titlebar-dev-badge {
   display: inline-block;
   padding: 1px 5px;
-  margin-left: 6px;
   background: rgba(0, 180, 255, 0.15);
   color: var(--sidebar-accent);
   font-size: 8px;
@@ -80,7 +79,6 @@ html, body, #root {
 .titlebar-stage-badge {
   display: inline-block;
   padding: 1px 5px;
-  margin-left: 6px;
   background: rgba(255, 170, 0, 0.18);
   color: #ffaa00;
   font-size: 8px;
@@ -89,6 +87,9 @@ html, body, #root {
   border-radius: 3px;
   vertical-align: middle;
 }
+
+/* .titlebar-wg-badge canonical definition lives in terminal.css.
+   Both stylesheets are bundled together, so the badge is styled in both windows. */
 
 .titlebar-controls {
   display: flex;
@@ -2347,6 +2348,30 @@ html.light-theme .root-agent-avatar {
   gap: 2px;
   min-width: 0;
   flex: 1;
+}
+
+.coord-brief-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--sidebar-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.coord-quick-access .replica-item-info .coord-brief-title {
+  /* Title is the primary identifier on a Coordinator card. */
+  font-weight: 700;
+  color: var(--sidebar-fg);
+  opacity: 1;
+}
+
+.coord-quick-access .replica-item:has(.ac-discovery-badge.coord) .replica-item-info:has(.coord-brief-title) .replica-item-name {
+  /* When a title is shown, demote the replica name to the secondary line. */
+  font-weight: 400;
+  font-size: var(--font-size-xs, 10px);
+  color: var(--sidebar-fg-dim);
+  opacity: 0.85;
 }
 
 .replica-item-name {

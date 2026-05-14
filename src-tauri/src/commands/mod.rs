@@ -1,5 +1,6 @@
 pub mod ac_discovery;
 pub mod agent_creator;
+pub mod brief;
 pub mod config;
 pub mod entity_creation;
 pub mod phone;
@@ -8,4 +9,5 @@ pub mod repos;
 pub mod session;
 pub mod telegram;
 pub mod voice;
+pub mod wg_delete_diagnostic;
 pub mod window;

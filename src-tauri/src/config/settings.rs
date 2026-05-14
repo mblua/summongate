@@ -29,17 +29,12 @@ pub struct WindowGeometry {
     pub height: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MainSidebarSide {
     Left,
+    #[default]
     Right,
-}
-
-impl Default for MainSidebarSide {
-    fn default() -> Self {
-        Self::Right
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +58,11 @@ pub struct AppSettings {
     /// busy→all-idle. The transition is computed in the FE from `waitingForInput`.
     #[serde(default = "default_true")]
     pub team_idle_beep_enabled: bool,
+    /// Master switch for all app-emitted sounds. When false, every current and
+    /// future app-generated playback path must stay silent. Per-feature toggles
+    /// (e.g. `team_idle_beep_enabled`) act as additional gates underneath this one.
+    #[serde(default = "default_true")]
+    pub sounds_enabled: bool,
     /// Raise terminal window when sidebar is clicked
     #[serde(default = "default_true")]
     pub raise_terminal_on_click: bool,
@@ -163,6 +163,12 @@ pub struct AppSettings {
     /// ask again]` button on the banner. See issue #120.
     #[serde(default)]
     pub rtk_prompt_dismissed: bool,
+    /// When true, on Coordinator session spawn AC injects a prompt asking the
+    /// agent to add a YAML frontmatter `title:` line to its workgroup
+    /// `BRIEF.md` (only if the brief is non-empty and has no `title:` yet).
+    /// See plan `_plans/107-auto-brief-title.md`.
+    #[serde(default = "default_true")]
+    pub auto_generate_brief_title: bool,
 }
 
 fn default_true() -> bool {
@@ -213,6 +219,7 @@ impl Default for AppSettings {
             start_only_coordinators: true,
             sidebar_always_on_top: false,
             team_idle_beep_enabled: true,
+            sounds_enabled: true,
             raise_terminal_on_click: true,
             voice_to_text_enabled: false,
             gemini_api_key: String::new(),
@@ -242,6 +249,7 @@ impl Default for AppSettings {
             log_level: None,
             inject_rtk_hook: false,
             rtk_prompt_dismissed: false,
+            auto_generate_brief_title: true,
         }
     }
 }
@@ -435,6 +443,74 @@ pub fn load_settings() -> AppSettings {
     settings
 }
 
+/// CLI-only variant of `load_settings`. Reads disk and applies the same
+/// in-memory migrations as `load_settings`, but does NOT auto-generate or
+/// persist a `root_token`. Used by CLI verbs that mutate settings
+/// (`open-project`, `new-project`) so error paths and pre-validation reads
+/// do NOT silently rewrite `settings.json` (Round-1 G5 in #191's plan).
+///
+/// The CLI verbs do not consume the root_token; if a future verb needs it,
+/// `settings.root_token == None` on a brand-new install is fine — the CLI
+/// is read-only with respect to it. The GUI still owns root_token
+/// generation via the next `load_settings()` call when it boots.
+///
+/// **Migration duplication is intentional for this PR.** Extracting an
+/// `apply_in_memory_migrations(&mut AppSettings)` helper that both loaders
+/// share is a clean follow-up, but pulls in scope outside #191 (touches
+/// `load_settings`'s control flow). Keep both copies in lockstep until
+/// then; if you add a new in-memory migration to `load_settings`, mirror
+/// it here too.
+pub fn load_settings_for_cli() -> AppSettings {
+    let path = match settings_path() {
+        Some(p) => p,
+        None => {
+            log::warn!("[cli] Could not determine home directory, using defaults");
+            return AppSettings::default();
+        }
+    };
+
+    let mut settings = if !path.exists() {
+        log::info!("[cli] No settings file found at {:?}, using defaults", path);
+        AppSettings::default()
+    } else {
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => match serde_json::from_str::<AppSettings>(&contents) {
+                Ok(s) => {
+                    log::info!("[cli] Loaded settings from {:?}", path);
+                    s
+                }
+                Err(e) => {
+                    log::error!("[cli] Failed to parse settings file: {}", e);
+                    AppSettings::default()
+                }
+            },
+            Err(e) => {
+                log::error!("[cli] Failed to read settings file: {}", e);
+                AppSettings::default()
+            }
+        }
+    };
+
+    // 0.8.0 unified-window migration — must mirror `load_settings` exactly,
+    // EXCEPT for the root_token auto-gen + save_settings call.
+    if settings.main_geometry.is_none() {
+        if let Some(ref g) = settings.terminal_geometry {
+            settings.main_geometry = Some(g.clone());
+        }
+    }
+    if (settings.main_zoom - default_zoom()).abs() < f64::EPSILON
+        && (settings.sidebar_zoom - default_zoom()).abs() > f64::EPSILON
+    {
+        settings.main_zoom = settings.sidebar_zoom;
+    }
+    if !settings.main_always_on_top && settings.sidebar_always_on_top {
+        settings.main_always_on_top = true;
+    }
+
+    // NO root_token auto-gen, NO save_settings call.
+    settings
+}
+
 /// Read only the `logLevel` field from `settings.json` without triggering migrations,
 /// auto-token-gen, or any in-memory mutation. Used by `lib.rs` at logger-init time so
 /// the full `load_settings` flow can run post-init with log calls captured.
@@ -616,6 +692,62 @@ mod tests {
         }"#;
         let s: AppSettings = serde_json::from_str(json).expect("deserialize old json");
         assert!(s.team_idle_beep_enabled);
+    }
+
+    #[test]
+    fn sounds_enabled_round_trips_through_serde() {
+        let mut s = AppSettings::default();
+        assert!(s.sounds_enabled);
+        s.sounds_enabled = false;
+        let json = serde_json::to_string(&s).expect("serialize");
+        assert!(json.contains("\"soundsEnabled\":false"));
+        let back: AppSettings = serde_json::from_str(&json).expect("deserialize");
+        assert!(!back.sounds_enabled);
+    }
+
+    #[test]
+    fn sounds_enabled_defaults_true_when_missing_from_json() {
+        // Old settings.json with only team_idle_beep_enabled (and no soundsEnabled
+        // field) must deserialize with sounds_enabled = true so existing users
+        // remain audible until they explicitly mute.
+        let json = r#"{
+            "defaultShell": "bash",
+            "defaultShellArgs": [],
+            "agents": [],
+            "telegramBots": [],
+            "startOnlyCoordinators": true,
+            "sidebarAlwaysOnTop": false,
+            "raiseTerminalOnClick": true,
+            "teamIdleBeepEnabled": false,
+            "voiceToTextEnabled": false,
+            "geminiApiKey": "",
+            "geminiModel": "gemini-2.5-flash",
+            "voiceAutoExecute": true,
+            "voiceAutoExecuteDelay": 15,
+            "sidebarZoom": 1.0,
+            "terminalZoom": 1.0,
+            "mainZoom": 1.0,
+            "guideZoom": 1.0,
+            "darkfactoryZoom": 1.0,
+            "sidebarGeometry": null,
+            "terminalGeometry": null,
+            "mainGeometry": null,
+            "mainSidebarWidth": 280.0,
+            "mainSidebarSide": "right",
+            "mainAlwaysOnTop": false,
+            "webServerEnabled": false,
+            "webServerPort": 7777,
+            "webServerBind": "127.0.0.1",
+            "projectPath": null,
+            "projectPaths": [],
+            "sidebarStyle": "noir-minimal",
+            "onboardingDismissed": false,
+            "coordSortByActivity": false
+        }"#;
+        let s: AppSettings = serde_json::from_str(json).expect("deserialize old json");
+        assert!(s.sounds_enabled);
+        // Existing per-feature toggle is honored as-is.
+        assert!(!s.team_idle_beep_enabled);
     }
 
     #[test]

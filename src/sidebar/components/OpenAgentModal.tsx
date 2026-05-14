@@ -1,6 +1,7 @@
 import { Component, createSignal, createEffect, createMemo, For, Show, onMount, onCleanup } from "solid-js";
 import type { AgentConfig, RepoMatch } from "../../shared/types";
 import { ReposAPI, SessionAPI, SettingsAPI } from "../../shared/ipc";
+import { homeStore } from "../../main/stores/home";
 
 const OpenAgentModal: Component<{ onClose: () => void; initialRepo?: RepoMatch }> = (props) => {
   const [query, setQuery] = createSignal("");
@@ -106,6 +107,7 @@ const OpenAgentModal: Component<{ onClose: () => void; initialRepo?: RepoMatch }
       shellArgs = cmdArgs;
     }
 
+    homeStore.hide();
     SessionAPI.create({
       shell,
       shellArgs,

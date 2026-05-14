@@ -166,7 +166,7 @@ async fn dispatch_inner(state: &WsState, cmd: &str, args: &Value) -> Result<Valu
                 &state.app_handle,
                 &state.broadcaster,
                 "session_switched",
-                &json!({ "id": id }),
+                &json!({ "id": id, "userInitiated": true }),
             );
 
             Ok(json!(null))
@@ -326,7 +326,13 @@ async fn dispatch_inner(state: &WsState, cmd: &str, args: &Value) -> Result<Valu
         | "set_detached_geometry"
         | "open_in_explorer"
         | "focus_main_window"
-        | "open_guide_window" => Ok(json!(null)),
+        | "open_guide_window"
+        | "open_external_url" => Ok(json!(null)),
+
+        // Home screen Markdown fetch is Tauri-only for v1; browser mode is
+        // out of scope (issue #164 §Constraints). The frontend renders this
+        // error in the Home view's error state.
+        "fetch_home_markdown" => Err("Home is not available in browser mode".to_string()),
 
         // --- Repos ---
         "search_repos" => {

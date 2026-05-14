@@ -9,6 +9,12 @@ use crate::web::auth::WebAccessToken;
 use crate::web::broadcast::WsBroadcaster;
 use crate::{RtkStartupModeState, RtkSweepLockState, WebServerHandle};
 
+const HOME_MARKDOWN_URL: &str =
+    "https://raw.githubusercontent.com/mblua/AgentsCommander/main/docs/home-en.md";
+
+const HOME_MARKDOWN_MAX_BYTES: usize = 256 * 1024; // 256 KB
+const HOME_MARKDOWN_TIMEOUT_SECS: u64 = 5;
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RtkSweepResult {
@@ -204,6 +210,25 @@ pub async fn set_rtk_prompt_dismissed(
     Ok(())
 }
 
+/// Narrow setter — flips ONLY `sounds_enabled`. Same lock-held-through-save
+/// pattern as `set_inject_rtk_hook` (issue #158). Replaces the toolbar's
+/// previous full-object `update_settings(next)` call, which could clobber
+/// unrelated fields from a stale `settingsStore.current` snapshot.
+/// The `update_settings` caveat documented on `set_inject_rtk_hook` applies
+/// here too.
+#[tauri::command]
+pub async fn set_sounds_enabled(
+    settings: State<'_, SettingsState>,
+    value: bool,
+) -> Result<(), String> {
+    let mut s = settings.write().await;
+    s.sounds_enabled = value;
+    let snapshot = s.clone();
+    save_settings(&snapshot)?;
+    drop(s); // explicit; lock released AFTER the disk write completes
+    Ok(())
+}
+
 /// Sweep every AC-managed agent directory and apply
 /// `ensure_rtk_pretool_hook(dir, enabled)`. Best-effort per directory:
 /// per-dir failures are logged + appended to `errors` and the sweep
@@ -288,6 +313,49 @@ pub async fn get_rtk_startup_status(
         .get()
         .cloned()
         .unwrap_or_else(|| "silent".to_string()))
+}
+
+/// Fetch the Home screen Markdown source from the public docs URL.
+/// Returns the raw Markdown body as a String.
+/// Errors are returned as user-facing strings; the frontend renders them in
+/// the Home view's error state.
+#[tauri::command]
+pub async fn fetch_home_markdown() -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(HOME_MARKDOWN_TIMEOUT_SECS))
+        .user_agent(concat!("agentscommander/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+    let resp = client
+        .get(HOME_MARKDOWN_URL)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Server returned status {}", resp.status().as_u16()));
+    }
+
+    // Use bytes() so we can length-check before allocating a String.
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    if bytes.is_empty() {
+        return Err("Server returned empty response".to_string());
+    }
+    if bytes.len() > HOME_MARKDOWN_MAX_BYTES {
+        return Err("Response too large".to_string());
+    }
+
+    // Strip a leading UTF-8 BOM if present so it does not render as an
+    // invisible character at the top of the document (grinch §M, optional).
+    let trimmed: &[u8] = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+
+    String::from_utf8(trimmed.to_vec())
+        .map_err(|_| "Response is not valid UTF-8".to_string())
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-import { Component, onMount, onCleanup, Show } from "solid-js";
+import { Component, onMount, onCleanup, createMemo, Show } from "solid-js";
 import type { UnlistenFn } from "../shared/transport";
 import { isTauri } from "../shared/platform";
 import {
@@ -9,17 +9,20 @@ import {
   onSessionDestroyed,
   onSessionRenamed,
   onThemeChanged,
+  onWorkgroupBriefUpdated,
 } from "../shared/ipc";
 import { registerShortcuts, unregisterShortcuts } from "../shared/shortcuts";
 import { initZoom } from "../shared/zoom";
 import { initWindowGeometry, initDetachedWindowGeometry } from "../shared/window-geometry";
 import { settingsStore } from "../shared/stores/settings";
 import { terminalStore } from "./stores/terminal";
+import { homeStore } from "../main/stores/home";
 import Titlebar from "./components/Titlebar";
 import WorkgroupBrief from "./components/WorkgroupBrief";
 import LastPrompt from "./components/LastPrompt";
 import TerminalView from "./components/TerminalView";
 import StatusBar from "./components/StatusBar";
+import HomeView from "../main/components/HomeView";
 import "./styles/terminal.css";
 
 interface TerminalAppProps {
@@ -38,6 +41,16 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
   let shortcutHandler: ((e: KeyboardEvent) => void) | null = null;
   let cleanupZoom: (() => void) | null = null;
   let cleanupGeometry: (() => void) | null = null;
+
+  // Home is rendered as an overlay covering the BRIEF/LAST PROMPT panels and
+  // the terminal content area beneath them, while those panels stay mounted
+  // (#164 follow-up). Keeping Brief/LastPrompt mounted preserves the height
+  // of `.terminal-content-area`, so TerminalView's ResizeObserver does not
+  // fire on Home toggle and the PTY does not receive a SIGWINCH. Detached
+  // and locked windows never render Home — they keep the normal layout.
+  const isHomeShown = createMemo(
+    () => !!(props.embedded && !props.detached && !props.lockedSessionId && homeStore.visible)
+  );
 
   const loadActiveSession = async () => {
     if (props.lockedSessionId) {
@@ -172,6 +185,37 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       })
     );
 
+
+    // Issue #162 & #163 merged: cross-window brief refresh and polling updates.
+    const normalizePathForCompare = (p: string): string => {
+      let s = p;
+      if (s.startsWith("\\\\?\\")) s = s.slice(4);
+      else if (s.startsWith("//?/")) s = s.slice(4);
+      return s.replace(/\\/g, "/").toLowerCase();
+    };
+    unlisteners.push(
+      await onWorkgroupBriefUpdated((data) => {
+        // #163: Poller (ac_discovery.rs) provides sessionIds
+        if (data.sessionIds) {
+          const targetId = props.lockedSessionId ?? terminalStore.activeSessionId;       
+          if (!targetId) return;
+          if (!data.sessionIds.includes(targetId)) return;
+          terminalStore.setActiveWorkgroupBrief(data.brief);
+        } 
+        // #162: Manual edits (brief.rs) provide workgroupRoot
+        else if (data.workgroupRoot || data.workgroupPath) {
+          const wgRoot = data.workgroupRoot || data.workgroupPath;
+          const cwd = terminalStore.activeWorkingDirectory;
+          if (!cwd || !wgRoot) return;
+          const cwdNorm = normalizePathForCompare(cwd);
+          const wgNorm = normalizePathForCompare(wgRoot);
+          if (cwdNorm === wgNorm || cwdNorm.startsWith(wgNorm + "/")) {
+            terminalStore.setActiveWorkgroupBrief(data.brief);
+          }
+        }
+      })
+    );
+
     // Theme sync: follow sidebar theme toggle (redundant in embedded mode —
     // sidebar's toggle already flips the shared documentElement classList).
     if (!props.embedded) {
@@ -201,29 +245,42 @@ const TerminalApp: Component<TerminalAppProps> = (props) => {
       </Show>
       <WorkgroupBrief />
       <LastPrompt sessionId={props.lockedSessionId} />
-      <Show
-        when={terminalStore.activeSessionId}
-        fallback={
-          <div class="terminal-empty">
-            <span>
-              {props.detached
-                ? "Session closed"
-                : "No active session"}
-            </span>
-            <Show when={!props.detached}>
-              <button
-                class="terminal-empty-btn"
-                onClick={() => SessionAPI.create()}
-              >
-                + New Session
-              </button>
-            </Show>
-          </div>
-        }
-      >
-        <TerminalView lockedSessionId={props.lockedSessionId} />
-      </Show>
+      <div class="terminal-content-area">
+        <Show
+          when={terminalStore.activeSessionId}
+          fallback={
+            <div class="terminal-empty">
+              <span>
+                {props.detached
+                  ? "Session closed"
+                  : "No active session"}
+              </span>
+              <Show when={!props.detached}>
+                <button
+                  class="terminal-empty-btn"
+                  onClick={() => { homeStore.hide(); SessionAPI.create(); }}
+                >
+                  + New Session
+                </button>
+              </Show>
+            </div>
+          }
+        >
+          <TerminalView lockedSessionId={props.lockedSessionId} />
+        </Show>
+      </div>
       <StatusBar detached={props.detached} />
+      {/* Home overlay (issue #164). Sibling of WorkgroupBrief/LastPrompt and
+          .terminal-content-area inside .terminal-layout (the positioned
+          containing block). Painted on top so it visually covers BRIEF /
+          LAST PROMPT and the terminal area, but those panels remain mounted
+          underneath — toggling Home must not change the height of
+          .terminal-content-area or trigger TerminalView's ResizeObserver
+          (which would SIGWINCH the PTY). TerminalView is never unmounted
+          while Home is visible. Detached/locked windows never render Home. */}
+      <Show when={isHomeShown()}>
+        <HomeView />
+      </Show>
     </div>
   );
 };

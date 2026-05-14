@@ -1,6 +1,6 @@
 [package]
 name = "agentscommander-new"
-version = "0.8.1"
+version = "0.8.21"
 edition = "2021"
 
 [dependencies]
@@ -32,7 +32,19 @@ tauri-plugin-dialog = "2.6.0"
 which = "7"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_Console", "Win32_Foundation", "Win32_System_Threading", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_System_Console",
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_Storage_FileSystem",
+    "Win32_System_RestartManager",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Wdk_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

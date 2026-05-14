@@ -14,6 +14,9 @@ import type {
   AcDiscoveryResult,
   TeamConfigResult,
   WindowGeometry,
+  BriefUpdateResult,
+  WorkgroupBriefUpdatedEvent,
+  ProjectRegistration,
 } from "./types";
 
 export interface SessionRepoInput {
@@ -136,6 +139,8 @@ export const SettingsAPI = {
     transport.invoke<void>("set_inject_rtk_hook", { value }),
   setRtkPromptDismissed: (value: boolean) =>
     transport.invoke<void>("set_rtk_prompt_dismissed", { value }),
+  setSoundsEnabled: (value: boolean) =>
+    transport.invoke<void>("set_sounds_enabled", { value }),
   sweepRtkHook: (enabled: boolean) =>
     transport.invoke<RtkSweepResult>("sweep_rtk_hook", { enabled }),
   getRtkStartupStatus: () =>
@@ -166,9 +171,12 @@ export function onSessionDestroyed(
 }
 
 export function onSessionSwitched(
-  callback: (data: { id: string }) => void
+  callback: (data: { id: string | null; userInitiated?: boolean }) => void
 ): Promise<UnlistenFn> {
-  return transport.listen<{ id: string }>("session_switched", callback);
+  return transport.listen<{ id: string | null; userInitiated?: boolean }>(
+    "session_switched",
+    callback
+  );
 }
 
 export function onSessionRenamed(
@@ -240,6 +248,23 @@ export const WindowAPI = {
 
   /** @deprecated use focusMain(); back-compat alias, drop at v0.9 */
   ensureTerminal: () => transport.invoke<void>("focus_main_window"),
+
+  // Open an http/https URL in the user's default browser. Backend rejects
+  // non-http(s) schemes (issue #164).
+  openExternal: (url: string) =>
+    transport.invoke<void>("open_external_url", { url }),
+};
+
+// Brief API (issue #162)
+export const BriefAPI = {
+  getTitle: (sessionId: string) =>
+    transport.invoke<string | null>("brief_get_title", { sessionId }),
+
+  setTitle: (sessionId: string, title: string) =>
+    transport.invoke<BriefUpdateResult>("brief_set_title", { sessionId, title }),
+
+  clean: (sessionId: string) =>
+    transport.invoke<BriefUpdateResult>("brief_clean", { sessionId }),
 };
 
 // Telegram Bridge API
@@ -310,6 +335,20 @@ export function onDiscoveryBranchUpdated(
   );
 }
 
+export function onAcWorkgroupBriefUpdated(
+  callback: (data: {
+    workgroupPath: string;
+    brief: string | null;
+    briefTitle?: string;
+  }) => void
+): Promise<UnlistenFn> {
+  return transport.listen<{
+    workgroupPath: string;
+    brief: string | null;
+    briefTitle?: string;
+  }>("ac_workgroup_brief_updated", callback);
+}
+
 export function onSessionIdle(
   callback: (data: { id: string }) => void
 ): Promise<UnlistenFn> {
@@ -376,6 +415,20 @@ export const ProjectAPI = {
     transport.invoke<void>("create_ac_project", { path }),
   discover: (path: string) =>
     transport.invoke<AcDiscoveryResult>("discover_project", { path }),
+  /**
+   * Validate an existing AC project at `path` and register it in
+   * settings.projectPaths. Wraps the `open_project` Tauri command added in
+   * #191 — same backend logic as the CLI `open-project` verb.
+   */
+  open: (path: string) =>
+    transport.invoke<ProjectRegistration>("open_project", { path }),
+  /**
+   * Ensure an AC project at `path` (mkdir `.ac-new/` if missing) and register
+   * it in settings.projectPaths. Wraps the `new_project` Tauri command added
+   * in #191 — same backend logic as the CLI `new-project` verb.
+   */
+  new: (path: string) =>
+    transport.invoke<ProjectRegistration>("new_project", { path }),
 };
 
 // Entity Creation API (agents, teams, workgroups)
@@ -449,6 +502,11 @@ export const GuideAPI = {
   open: () => transport.invoke<void>("open_guide_window"),
 };
 
+// Home content (issue #164)
+export const HomeAPI = {
+  fetchMarkdown: () => transport.invoke<string>("fetch_home_markdown"),
+};
+
 // Theme sync across windows
 export function emitThemeChanged(light: boolean): Promise<void> {
   return transport.emit("theme_changed", { light });
@@ -502,6 +560,16 @@ export function onTelegramIncoming(
 ): Promise<UnlistenFn> {
   return transport.listen<{ sessionId: string; text: string; from: string }>(
     "telegram_incoming",
+    callback
+  );
+}
+
+export function onWorkgroupBriefUpdated(
+  callback: (data: WorkgroupBriefUpdatedEvent) => void
+): Promise<UnlistenFn> {
+  return transport.listen<WorkgroupBriefUpdatedEvent>(
+
+    "workgroup_brief_updated",
     callback
   );
 }

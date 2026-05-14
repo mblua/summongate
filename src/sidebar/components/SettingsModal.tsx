@@ -8,6 +8,7 @@ import type {
 } from "../../shared/types";
 import { SettingsAPI, TelegramAPI, ReposAPI } from "../../shared/ipc";
 import { settingsStore } from "../../shared/stores/settings";
+import { setSoundsEnabled } from "../../shared/sound";
 import { sessionsStore } from "../stores/sessions";
 import { AGENT_PRESET_MAP, newAgentId } from "../../shared/agent-presets";
 
@@ -232,6 +233,11 @@ const SettingsModal: Component<{ onClose: () => void; section?: string }> = (pro
     setSaveError("");
     setSaving(true);
     await SettingsAPI.update(settings.data);
+    // #158 — push soundsEnabled into sound.ts synchronously so the gate
+    // updates before the settingsStore.refresh() roundtrip below resolves.
+    // Without this, a beep emitted between this point and the next load()
+    // would see the stale gate value.
+    setSoundsEnabled(settings.data.soundsEnabled ?? true);
     if (isTauri) {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       await getCurrentWindow().setAlwaysOnTop(settings.data.sidebarAlwaysOnTop);
@@ -341,6 +347,17 @@ const SettingsModal: Component<{ onClose: () => void; section?: string }> = (pro
           <input
             type="checkbox"
             class="settings-checkbox"
+            checked={settings.data!.autoGenerateBriefTitle}
+            onChange={(e) =>
+              updateField("autoGenerateBriefTitle", e.currentTarget.checked)
+            }
+          />
+          <span>Auto-generate workspace title from brief</span>
+        </label>
+        <label class="settings-checkbox-field">
+          <input
+            type="checkbox"
+            class="settings-checkbox"
             checked={settings.data!.sidebarAlwaysOnTop}
             onChange={(e) =>
               updateField("sidebarAlwaysOnTop", e.currentTarget.checked)
@@ -434,7 +451,19 @@ const SettingsModal: Component<{ onClose: () => void; section?: string }> = (pro
           <input
             type="checkbox"
             class="settings-checkbox"
+            checked={settings.data!.soundsEnabled}
+            onChange={(e) =>
+              updateField("soundsEnabled", e.currentTarget.checked)
+            }
+          />
+          <span>Enable app sounds (master switch)</span>
+        </label>
+        <label class="settings-checkbox-field">
+          <input
+            type="checkbox"
+            class="settings-checkbox"
             checked={settings.data!.teamIdleBeepEnabled}
+            disabled={!settings.data!.soundsEnabled}
             onChange={(e) =>
               updateField("teamIdleBeepEnabled", e.currentTarget.checked)
             }

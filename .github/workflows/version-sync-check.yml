@@ -1,0 +1,55 @@
+name: Version sync check
+
+on:
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/Cargo.lock'
+      - 'src-tauri/tauri.conf.json'
+      - 'scripts/bump-version.mjs'
+      - 'scripts/check-version-sync.mjs'
+      - '.github/workflows/version-sync-check.yml'
+  push:
+    branches-ignore:
+      - main
+      - 'release/**'
+      - 'hotfix/**'
+      - 'dependabot/**'
+      - 'revert/**'
+      - 'gh-readonly-queue/**'
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/Cargo.lock'
+      - 'src-tauri/tauri.conf.json'
+      - 'scripts/bump-version.mjs'
+      - 'scripts/check-version-sync.mjs'
+      - '.github/workflows/version-sync-check.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: version-sync-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version-sync:
+    name: version-sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Pin npm version
+        run: npm install -g npm@11.6.2
+
+      - name: Verify all version locations agree
+        run: npm run version:check
