@@ -239,30 +239,40 @@ agentscommander list-peers --token <TOKEN> --root <CWD>
 
 ### `create-agent` — Create a new agent
 
-Creates a folder with a `CLAUDE.md` role prompt. Optionally launches it with a coding agent.
+Creates a folder with a `CLAUDE.md` role prompt using the same backend creation helper as the UI modal. Optionally launches it with a coding agent.
 
 ```bash
 # Create only
-agentscommander create-agent --parent "C:\path\to\folder" --name "MyAgent"
+agentscommander create-agent --parent "C:\path\to\folder" --name " MyAgent "
 
 # Create and launch with Claude Code
-agentscommander create-agent --parent "C:\path\to\folder" --name "MyAgent" --launch claude
+agentscommander create-agent --parent "C:\path\to\folder" --name " MyAgent " --launch claude
 ```
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--parent` | Yes | Parent directory where the agent folder will be created |
-| `--name` | Yes | Agent name (becomes a subfolder inside `--parent`) |
+| `--parent` | Yes | Existing parent directory where the agent folder will be created |
+| `--name` | Yes | Agent name, trimmed before use (becomes a subfolder inside `--parent`) |
 | `--launch` | No | Coding agent id to launch after creation (e.g., `claude`, `codex`) |
 | `--root` | No | Caller's root directory (for context) |
 | `--token` | No | Session token (for auth context) |
 
 **What it does:**
-1. Creates `<parent>/<name>/` directory
-2. Writes `CLAUDE.md` with content: `You are the agent <parentFolder>/<name>`
-3. If `--launch` is provided, writes a session request that the running app picks up and launches automatically (~3s)
+1. Uses the same backend folder and `CLAUDE.md` creation helper as the UI modal.
+2. Creates `<parent>/<trimmed name>/` directory.
+3. Writes `CLAUDE.md` with content: `You are the agent <parentFolder>/<trimmed name>`.
+4. If `--launch` is provided, after folder creation writes a session request that the running app picks up and launches automatically (~3s).
+
+**Validation:**
+- `--name` is trimmed before use.
+- `--name` must not be empty after trimming.
+- `--name` must not contain path separators (`/` or `\`) or NUL.
+- `--parent` must already exist; it is not created automatically.
+- The target folder must not already exist; existing folders are not overwritten.
 
 **Output** (stdout, JSON):
+The `agentName` field is derived from the parent folder name and the trimmed `--name`; for example, `--name " MyAgent "` produces `folder/MyAgent`.
+
 ```json
 {
   "agentPath": "C:\\path\\to\\folder\\MyAgent",

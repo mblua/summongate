@@ -1,4 +1,5 @@
 pub mod agent_config;
+pub mod agent_creation;
 pub mod claude_settings;
 pub mod profile;
 pub mod projects;
