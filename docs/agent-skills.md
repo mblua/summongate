@@ -17,6 +17,9 @@ relevant skill file during the task.
 For an Agent Matrix agent, skills live beside the agent's canonical role,
 memory, and plans:
 
+This tree shows the skill-relevant canonical state only. Other Matrix entries,
+such as `inbox/`, `outbox/`, and `config.json`, are omitted here.
+
 ```text
 <project>/
 +-- .ac-new/
@@ -38,7 +41,9 @@ Agents Commander does not create or manage that folder for plain
 
 ## Minimal Skill Layout
 
-Use one directory per skill. The required entry point is `SKILL.md`.
+Use one directory per skill. By convention, `SKILL.md` is the entry point that
+agents are instructed to read. Agents Commander does not enforce this layout or
+validate that a skill directory contains `SKILL.md`.
 
 ```text
 skills/
@@ -100,6 +105,10 @@ or:
 Before publishing release notes, read skills/release-notes/SKILL.md and follow
 that workflow.
 ```
+
+When the agent is running from a workgroup replica, resolve `skills/...`
+against the origin Agent Matrix directory named in the session context, not
+against the replica's current working directory.
 
 An agent should then:
 
