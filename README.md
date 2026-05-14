@@ -93,6 +93,13 @@ cd src-tauri && cargo clippy
 cd src-tauri && cargo test
 ```
 
+## Documentation
+
+- [Agent skills tutorial](docs/agent-skills.md) - create and use reusable
+  workflows stored in an agent's `skills/` folder.
+- [Architecture map](docs/architecture.md) - backend, frontend, IPC, and PTY
+  structure.
+
 ## Build
 
 ```bash
