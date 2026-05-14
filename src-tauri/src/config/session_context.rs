@@ -578,7 +578,14 @@ Your agent root is your current working directory.
 
 ### Send a message to another agent
 
-**MANDATORY**: Before sending any message, resolve the exact agent name via `list-peers`. Never guess agent names — they follow the format `parent_folder/folder` based on where the agent is triggered.
+**MANDATORY**: Before sending any message, resolve the exact agent name via `list-peers`. Never guess agent names.
+
+**Peer name format** (canonical FQN, exactly what `list-peers` emits in the `name` field):
+
+- **WG replicas** (the common case): `<project>:<workgroup>/<agent>` — e.g. `agentscommander:wg-15-dev-team/dev-rust`.
+- **Origin agents**: `<project>/<agent>` — e.g. `agentscommander/architect`.
+
+**The filesystem directory name is NEVER a valid `--to` value.** Replica dirs like `__agent_shipper` and matrix dirs like `_agent_architect` are on-disk paths only — they are not peer names. The `list-peers` JSON `name` field is the only authoritative source. If `list-peers` returns an empty array, do NOT fall back to scanning `__agent_*` siblings on disk — that produces invalid `--to` values. Stop and report the empty result instead.
 
 Messaging is **file-based** to avoid PTY truncation. Two steps:
 
@@ -639,5 +646,17 @@ mod tests {
         assert!(out.contains("filename ONLY"));
         assert!(out.contains("BAD:"));
         assert!(out.contains("GOOD:"));
+    }
+
+    #[test]
+    fn default_context_embeds_fqn_format_and_filesystem_warning() {
+        let out = default_context("C:/tmp/fake-agent", None);
+        // Canonical FQN format shown explicitly (the bug case used the wrong shape).
+        assert!(out.contains("<project>:<workgroup>/<agent>"));
+        assert!(out.contains("<project>/<agent>"));
+        // Explicit prohibition of filesystem-directory names as --to values.
+        assert!(out.contains("filesystem directory name is NEVER"));
+        assert!(out.contains("__agent_"));
+        assert!(out.contains("list-peers"));
     }
 }
