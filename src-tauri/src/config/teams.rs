@@ -106,6 +106,31 @@ pub enum ResolutionError {
         target: String,
         candidates: Vec<String>,
     },
+
+    /// Target's agent segment starts with the on-disk replica/matrix prefix
+    /// (`__agent_` or `_agent_`) — i.e. the caller passed a filesystem directory
+    /// name instead of a peer FQN. Common Codex-agent fallback bug when
+    /// `list-peers` returned empty (Issue #134).
+    #[error(
+        "target '{0}' looks like a filesystem directory name, not a peer FQN. \
+         Use the 'name' field from `list-peers` (e.g. 'project:wg-N-team/agent' \
+         for WG replicas, 'project/agent' for origin agents). Directory names \
+         like '__agent_*' or '_agent_*' are NEVER valid --to values."
+    )]
+    LooksLikeFilesystemDir(String),
+}
+
+/// Does the agent segment of `target` start with the on-disk replica/matrix
+/// prefix? Checks the right-hand-most `/`-delimited segment after stripping
+/// an optional `proj:` prefix — catches `__agent_x`, `proj/__agent_x`,
+/// `wg-1-team/__agent_x`, and `proj:wg-1-team/__agent_x` alike.
+fn agent_segment_is_filesystem_dir(target: &str) -> bool {
+    let after_colon = target.split_once(':').map(|(_, l)| l).unwrap_or(target);
+    let agent = after_colon
+        .rsplit_once('/')
+        .map(|(_, a)| a)
+        .unwrap_or(after_colon);
+    agent.starts_with("__agent_") || agent.starts_with("_agent_")
 }
 
 /// Validate that a qualified target's right-hand side is shaped
@@ -183,6 +208,14 @@ pub fn resolve_agent_target(
     // Basic shape guard.
     if target.is_empty() || target.contains('\0') {
         return Err(ResolutionError::InvalidShape(target.to_string()));
+    }
+
+    // Issue #134: reject filesystem-directory names (`__agent_*`, `_agent_*`)
+    // anywhere in the agent segment. `agent_name_from_path` strips these
+    // prefixes when deriving display names, so a legitimate peer FQN never
+    // contains them — accepting them silently routes the message into the void.
+    if agent_segment_is_filesystem_dir(target) {
+        return Err(ResolutionError::LooksLikeFilesystemDir(target.to_string()));
     }
 
     // Case 1: fully qualified (`<project>:<local>`).
@@ -940,6 +973,32 @@ mod tests {
             resolve_agent_target("bare-agent", &paths).unwrap(),
             "bare-agent"
         );
+    }
+
+    /// Issue #134: filesystem directory names like `__agent_shipper` are never
+    /// valid peer FQNs. They must reject early with `LooksLikeFilesystemDir`
+    /// regardless of where they appear (bare, after a project prefix, after a
+    /// WG-local prefix, or fully qualified).
+    #[test]
+    fn resolve_agent_target_rejects_filesystem_dir_names() {
+        let (_tmp, paths) = make_project_fixture(&[]);
+        for bad in [
+            "__agent_shipper",
+            "__agent_dev-rust",
+            "_agent_architect",
+            "_agent_tech-lead",
+            "some-project/__agent_shipper",
+            "wg-1-devs/__agent_alice",
+            "proj-a:wg-1-devs/__agent_alice",
+        ] {
+            match resolve_agent_target(bad, &paths) {
+                Err(ResolutionError::LooksLikeFilesystemDir(s)) => assert_eq!(s, bad),
+                other => panic!(
+                    "expected LooksLikeFilesystemDir for {:?}, got {:?}",
+                    bad, other
+                ),
+            }
+        }
     }
 
     /// Validation #16: `is_coordinator_for_cwd` correctness guard.

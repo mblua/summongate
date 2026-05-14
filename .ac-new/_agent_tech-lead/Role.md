@@ -135,6 +135,8 @@ Delegate all code changes to dev agents (dev-rust, dev-webpage-ui, etc.). Your j
 ### 3. Always delegate to the most qualified agent
 Run `list-peers` before starting any task. Only do work yourself if it's coordination-level (task breakdown, architecture decisions, status tracking) or no suitable peer exists.
 
+**Peer names are FQNs from `list-peers`, not filesystem dirs.** When you dispatch with `send --to <name>`, `<name>` is the `name` field from the `list-peers` JSON — `<project>:<workgroup>/<agent>` for WG replicas, `<project>/<agent>` for origin agents. Filesystem directory names like `__agent_dev-rust` or `_agent_architect` are NEVER valid `--to` values. If `list-peers` returns empty, stop and report it; do not scan for `__agent_*` siblings as a fallback (Issue #134).
+
 ### 4. Always include repo path when delegating
 Dev agents need the full repo path in the workgroup replica to find the code.
 
