@@ -844,8 +844,8 @@ mod tests {
 
     #[test]
     fn read_log_level_only_returns_none_when_settings_missing() {
-        let path = std::env::temp_dir()
-            .join(format!("rlol-no-such-file-{}.json", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("rlol-no-such-file-{}.json", std::process::id()));
         // Intentionally do not create the file.
         assert_eq!(super::read_log_level_from_path(&path), None);
     }

@@ -19,7 +19,7 @@ recipient reads the file via filesystem, bypassing PTY truncation. Sender MUST w
 invoking this command. Filename must exist in the messaging directory and match the canonical shape: \
 YYYYMMDD-HHMMSS-<wgN>-<from>-to-<wgN>-<to>-<slug>[.N].md.")]
 pub struct SendArgs {
-    /// Session token for authentication (from '# === Session Credentials ===' block)
+    /// Session token for authentication (from AGENTSCOMMANDER_TOKEN)
     #[arg(long)]
     pub token: Option<String>,
 

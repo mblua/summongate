@@ -84,7 +84,7 @@ pub struct Session {
     /// never persisted and never exposed via SessionInfo.
     #[serde(skip)]
     pub git_repos_gen: u64,
-    /// Unique token for CLI authentication. Passed to agents via init prompt.
+    /// Unique token for CLI authentication. Agent PTY children receive it via per-child `AGENTSCOMMANDER_TOKEN` env at spawn.
     pub token: Uuid,
     /// True if this session runs Claude Code (detected at creation time).
     /// Used by the Telegram bridge to choose JSONL watcher vs PTY pipeline.
@@ -288,9 +288,7 @@ mod tests {
 
     #[test]
     fn find_workgroup_brief_path_walks_up_from_replica_dir() {
-        let p = find_workgroup_brief_path_for_cwd(
-            r"C:\proj\.ac-new\wg-3-team\__agent_dev-rust",
-        );
+        let p = find_workgroup_brief_path_for_cwd(r"C:\proj\.ac-new\wg-3-team\__agent_dev-rust");
         assert_eq!(
             p,
             Some(std::path::PathBuf::from(

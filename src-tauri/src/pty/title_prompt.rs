@@ -8,10 +8,9 @@
 //! behalf, atomically, with a timestamped backup. See plan
 //! `_plans/107-auto-brief-title.md` Round 5 §R5.4.2.
 //!
-//! No I/O. Pure string format. The agent substitutes `<YOUR_TOKEN>`,
-//! `<YOUR_ROOT>`, and `<YOUR_BINARY_PATH>` from the `# === Session
-//! Credentials ===` block delivered in the same PTY paste (Round 4 §R4.2
-//! combined-write design — preserved in Round 5).
+//! No I/O. Pure string format. The agent substitutes
+//! `<AGENTSCOMMANDER_TOKEN>`, `<AGENTSCOMMANDER_ROOT>`, and
+//! `<AGENTSCOMMANDER_BINARY_PATH>` from environment variables only.
 
 /// Build the title-generation prompt for an agent whose workgroup's BRIEF.md
 /// lives at `brief_absolute_path`.
@@ -25,10 +24,12 @@ pub fn build_title_prompt(brief_absolute_path: &str) -> String {
             "[AgentsCommander auto-title] The workgroup brief lives at `{path}` ",
             "and has no `title:` field. Read the brief and pick a short summary title ",
             "(8 words or fewer, single line, no trailing period), then set it by running:\n\n",
-            "  \"<YOUR_BINARY_PATH>\" brief-set-title --token <YOUR_TOKEN> --root \"<YOUR_ROOT>\" --title \"<your title>\"\n\n",
-            "`<YOUR_BINARY_PATH>`, `<YOUR_TOKEN>`, and `<YOUR_ROOT>` are in the ",
-            "`# === Session Credentials ===` block immediately above (fields ",
-            "`BinaryPath`, `Token`, `Root`). The CLI writes BRIEF.md atomically and ",
+            "  \"<AGENTSCOMMANDER_BINARY_PATH>\" brief-set-title --token <AGENTSCOMMANDER_TOKEN> --root \"<AGENTSCOMMANDER_ROOT>\" --title \"<your title>\"\n\n",
+            "`<AGENTSCOMMANDER_BINARY_PATH>`, `<AGENTSCOMMANDER_TOKEN>`, and ",
+            "`<AGENTSCOMMANDER_ROOT>` mean the environment variables of the same names. ",
+            "If any of these env vars are unavailable, run nothing; the session was not ",
+            "started with valid AgentsCommander credential env. ",
+            "The CLI writes BRIEF.md atomically and ",
             "creates a timestamped `BRIEF.<UTC-ts>.bak.md` backup — do NOT edit ",
             "BRIEF.md directly.\n\n",
             "Skip silently (run nothing) if: the brief is empty, or already has a ",
@@ -48,9 +49,9 @@ mod tests {
         let p = build_title_prompt(r"C:\repo\.ac-new\wg-1-foo\BRIEF.md");
         assert!(p.contains(r"C:\repo\.ac-new\wg-1-foo\BRIEF.md"));
         assert!(p.contains("brief-set-title"));
-        assert!(p.contains("<YOUR_BINARY_PATH>"));
-        assert!(p.contains("<YOUR_TOKEN>"));
-        assert!(p.contains("<YOUR_ROOT>"));
+        assert!(p.contains("<AGENTSCOMMANDER_BINARY_PATH>"));
+        assert!(p.contains("<AGENTSCOMMANDER_TOKEN>"));
+        assert!(p.contains("<AGENTSCOMMANDER_ROOT>"));
         assert!(p.contains("--title \"<your title>\""));
     }
 
@@ -61,11 +62,14 @@ mod tests {
     }
 
     #[test]
-    fn prompt_references_credentials_block_for_substitution() {
+    fn prompt_documents_env_only_credentials() {
         let p = build_title_prompt("/tmp/BRIEF.md");
-        assert!(p.contains("`# === Session Credentials ===`"));
-        assert!(p.contains("immediately above"));
-        assert!(p.contains("`BinaryPath`, `Token`, `Root`"));
+        let legacy_header = ["# === Session", "Credentials ==="].join(" ");
+        assert!(p.contains("environment variables"));
+        assert!(p.contains("<AGENTSCOMMANDER_TOKEN>"));
+        assert!(!p.contains(&legacy_header));
+        assert!(!p.to_ascii_lowercase().contains("fallback"));
+        assert!(!p.to_ascii_lowercase().contains("visible"));
     }
 
     #[test]

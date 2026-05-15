@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tauri::State;
 
-use crate::config::claude_settings::{enumerate_managed_agent_dirs, ensure_rtk_pretool_hook};
+use crate::config::claude_settings::{ensure_rtk_pretool_hook, enumerate_managed_agent_dirs};
 use crate::config::settings::{load_settings, save_settings, AppSettings, SettingsState};
 use crate::pty::manager::PtyManager;
 use crate::session::manager::SessionManager;
@@ -354,8 +354,7 @@ pub async fn fetch_home_markdown() -> Result<String, String> {
     // invisible character at the top of the document (grinch §M, optional).
     let trimmed: &[u8] = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
 
-    String::from_utf8(trimmed.to_vec())
-        .map_err(|_| "Response is not valid UTF-8".to_string())
+    String::from_utf8(trimmed.to_vec()).map_err(|_| "Response is not valid UTF-8".to_string())
 }
 
 #[cfg(test)]

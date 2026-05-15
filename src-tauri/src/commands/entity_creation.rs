@@ -1465,6 +1465,7 @@ fn check_workgroup_repos_dirty(wg_dirs: &[PathBuf]) -> Vec<(String, String)> {
 
             // Check for uncommitted changes (staged + unstaged + untracked)
             let mut cmd = std::process::Command::new("git");
+            crate::pty::credentials::scrub_credentials_from_std_command(&mut cmd);
             cmd.args(["status", "--porcelain"])
                 .current_dir(&path)
                 .stdout(std::process::Stdio::piped())
@@ -1484,6 +1485,7 @@ fn check_workgroup_repos_dirty(wg_dirs: &[PathBuf]) -> Vec<(String, String)> {
 
             // Check for unpushed commits
             let mut cmd2 = std::process::Command::new("git");
+            crate::pty::credentials::scrub_credentials_from_std_command(&mut cmd2);
             cmd2.args(["log", "@{upstream}..HEAD", "--oneline"])
                 .current_dir(&path)
                 .stdout(std::process::Stdio::piped())
@@ -1805,6 +1807,7 @@ async fn git_clone_async(url: &str, target: &Path) -> Result<(), String> {
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let mut cmd = tokio::process::Command::new("git");
+    crate::pty::credentials::scrub_credentials_from_tokio_command(&mut cmd);
     cmd.args(["-c", "core.longpaths=true", "clone", "--depth", "1", url])
         .arg(target.as_os_str());
 
@@ -1838,6 +1841,7 @@ async fn git_clone_async(url: &str, target: &Path) -> Result<(), String> {
             url
         );
         let mut reset_cmd = tokio::process::Command::new("git");
+        crate::pty::credentials::scrub_credentials_from_tokio_command(&mut reset_cmd);
         reset_cmd.args(["reset"]).current_dir(target);
         #[cfg(windows)]
         {

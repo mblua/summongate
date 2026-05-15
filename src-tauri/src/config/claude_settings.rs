@@ -380,7 +380,10 @@ fn remove_rtk_hook(obj: &mut serde_json::Value, settings_path: &Path) -> bool {
     if !hooks_obj.contains_key("PreToolUse") {
         return false;
     }
-    let pretool_arr = match hooks_obj.get_mut("PreToolUse").and_then(|v| v.as_array_mut()) {
+    let pretool_arr = match hooks_obj
+        .get_mut("PreToolUse")
+        .and_then(|v| v.as_array_mut())
+    {
         Some(a) => a,
         None => {
             log::warn!(
@@ -410,7 +413,10 @@ fn remove_rtk_hook(obj: &mut serde_json::Value, settings_path: &Path) -> bool {
         } else {
             continue;
         }
-        let inner = entry.get_mut("hooks").and_then(|v| v.as_array_mut()).unwrap();
+        let inner = entry
+            .get_mut("hooks")
+            .and_then(|v| v.as_array_mut())
+            .unwrap();
         let before = inner.len();
         inner.retain(|h| {
             h.get("command")
@@ -542,62 +548,61 @@ pub fn enumerate_managed_agent_dirs(project_paths: &[String]) -> Vec<std::path::
         }
     };
 
-    let scan_ac_new = |ac_new: &std::path::Path,
-                       out: &mut Vec<PathBuf>,
-                       seen: &mut HashSet<PathBuf>| {
-        let entries = match std::fs::read_dir(ac_new) {
-            Ok(e) => e,
-            Err(e) => {
-                log::warn!(
-                    "[rtk-sweep] Cannot read {} for replica enumeration: {}",
-                    ac_new.display(),
-                    e
-                );
-                return;
-            }
-        };
-        for entry in entries.flatten() {
-            let p = entry.path();
-            let name = match p.file_name().and_then(|n| n.to_str()) {
-                Some(n) => n.to_string(),
-                None => continue,
+    let scan_ac_new =
+        |ac_new: &std::path::Path, out: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>| {
+            let entries = match std::fs::read_dir(ac_new) {
+                Ok(e) => e,
+                Err(e) => {
+                    log::warn!(
+                        "[rtk-sweep] Cannot read {} for replica enumeration: {}",
+                        ac_new.display(),
+                        e
+                    );
+                    return;
+                }
             };
+            for entry in entries.flatten() {
+                let p = entry.path();
+                let name = match p.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n.to_string(),
+                    None => continue,
+                };
 
-            if name.starts_with("_agent_") {
-                push_if_new(p, out, seen);
-                continue;
-            }
-
-            if name.starts_with("wg-") {
-                // M7 gate — re-check wg-* parent isn't a symlink/junction.
-                if !is_real_directory(&p) {
+                if name.starts_with("_agent_") {
+                    push_if_new(p, out, seen);
                     continue;
                 }
 
-                let wg_entries = match std::fs::read_dir(&p) {
-                    Ok(e) => e,
-                    Err(e) => {
-                        log::warn!(
-                            "[rtk-sweep] Cannot read workgroup {} for replica enumeration: {}",
-                            p.display(),
-                            e
-                        );
+                if name.starts_with("wg-") {
+                    // M7 gate — re-check wg-* parent isn't a symlink/junction.
+                    if !is_real_directory(&p) {
                         continue;
                     }
-                };
-                for wg_entry in wg_entries.flatten() {
-                    let rp = wg_entry.path();
-                    let rname = match rp.file_name().and_then(|n| n.to_str()) {
-                        Some(n) => n.to_string(),
-                        None => continue,
+
+                    let wg_entries = match std::fs::read_dir(&p) {
+                        Ok(e) => e,
+                        Err(e) => {
+                            log::warn!(
+                                "[rtk-sweep] Cannot read workgroup {} for replica enumeration: {}",
+                                p.display(),
+                                e
+                            );
+                            continue;
+                        }
                     };
-                    if rname.starts_with("__agent_") {
-                        push_if_new(rp, out, seen);
+                    for wg_entry in wg_entries.flatten() {
+                        let rp = wg_entry.path();
+                        let rname = match rp.file_name().and_then(|n| n.to_str()) {
+                            Some(n) => n.to_string(),
+                            None => continue,
+                        };
+                        if rname.starts_with("__agent_") {
+                            push_if_new(rp, out, seen);
+                        }
                     }
                 }
             }
-        }
-    };
+        };
 
     for project in project_paths {
         let base = std::path::Path::new(project);
@@ -845,7 +850,10 @@ mod tests {
         seed_settings(&dir, original);
         ensure_rtk_pretool_hook(&dir, true).expect("ok");
         let raw = read_settings_raw(&dir).expect("file present");
-        assert_eq!(raw, original, "malformed file must NOT be overwritten on ON");
+        assert_eq!(
+            raw, original,
+            "malformed file must NOT be overwritten on ON"
+        );
         cleanup(&dir);
     }
 
@@ -858,7 +866,10 @@ mod tests {
             .as_str()
             .expect("command string");
         assert_eq!(cmd, RTK_REWRITER_COMMAND);
-        assert!(cmd.contains(RTK_HOOK_MARKER), "marker must survive round-trip");
+        assert!(
+            cmd.contains(RTK_HOOK_MARKER),
+            "marker must survive round-trip"
+        );
         cleanup(&dir);
     }
 
@@ -894,7 +905,10 @@ mod tests {
         seed_settings(&dir, original);
         ensure_rtk_pretool_hook(&dir, false).expect("ok");
         let raw = read_settings_raw(&dir).expect("file present");
-        assert_eq!(raw, original, "malformed file must NOT be overwritten on OFF");
+        assert_eq!(
+            raw, original,
+            "malformed file must NOT be overwritten on OFF"
+        );
         cleanup(&dir);
     }
 
@@ -913,7 +927,8 @@ mod tests {
             .as_str()
             .expect("command path in source-of-truth file");
         assert_eq!(
-            cmd, RTK_REWRITER_COMMAND,
+            cmd,
+            RTK_REWRITER_COMMAND,
             "RTK_REWRITER_COMMAND drifted from {}",
             source.display()
         );
@@ -991,7 +1006,9 @@ mod tests {
         #[cfg(windows)]
         {
             // mklink /J creates a junction (no admin required).
-            let status = std::process::Command::new("cmd")
+            let mut cmd = std::process::Command::new("cmd");
+            crate::pty::credentials::scrub_credentials_from_std_command(&mut cmd);
+            let status = cmd
                 .args([
                     "/C",
                     "mklink",
@@ -1080,7 +1097,10 @@ mod tests {
         assert_eq!(v["claudeMdExcludes"], json!([]));
         assert_eq!(v["hooks"]["PreToolUse"][0]["matcher"], "Bash");
         let raw = read_settings_raw(&dir).unwrap();
-        assert!(!raw.starts_with('\u{feff}'), "BOM must be stripped on write");
+        assert!(
+            !raw.starts_with('\u{feff}'),
+            "BOM must be stripped on write"
+        );
         cleanup(&dir);
     }
 
@@ -1182,7 +1202,9 @@ mod tests {
         }
         #[cfg(windows)]
         {
-            let status = std::process::Command::new("cmd")
+            let mut cmd = std::process::Command::new("cmd");
+            crate::pty::credentials::scrub_credentials_from_std_command(&mut cmd);
+            let status = cmd
                 .args([
                     "/C",
                     "mklink",
@@ -1229,7 +1251,9 @@ mod tests {
         use std::process::{Command, Stdio};
 
         // Skip gracefully if node isn't in PATH (CI without node, etc.).
-        let node_check = Command::new("node").arg("--version").output();
+        let mut node_check_cmd = Command::new("node");
+        crate::pty::credentials::scrub_credentials_from_std_command(&mut node_check_cmd);
+        let node_check = node_check_cmd.arg("--version").output();
         if !matches!(&node_check, Ok(o) if o.status.success()) {
             return;
         }
@@ -1243,7 +1267,9 @@ mod tests {
             .and_then(|s| s.strip_suffix('"'))
             .expect("RTK_REWRITER_COMMAND must have shape `node -e \"...\"`");
 
-        let mut child = Command::new("node")
+        let mut node_cmd = Command::new("node");
+        crate::pty::credentials::scrub_credentials_from_std_command(&mut node_cmd);
+        let mut child = node_cmd
             .arg("-e")
             .arg(js_body)
             .stdin(Stdio::piped())
@@ -1264,8 +1290,8 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let parsed: serde_json::Value = serde_json::from_str(stdout.trim())
-            .expect("hook stdout must be valid JSON");
+        let parsed: serde_json::Value =
+            serde_json::from_str(stdout.trim()).expect("hook stdout must be valid JSON");
         let updated_cmd = parsed["hookSpecificOutput"]["updatedInput"]["command"]
             .as_str()
             .expect("v2 shape: hookSpecificOutput.updatedInput.command must be a string");
@@ -1430,12 +1456,7 @@ mod tests {
         let inner = v["hooks"]["PreToolUse"][0]["hooks"]
             .as_array()
             .expect("inner");
-        assert_eq!(
-            inner.len(),
-            1,
-            "exactly the v2 entry remains: {:?}",
-            inner
-        );
+        assert_eq!(inner.len(), 1, "exactly the v2 entry remains: {:?}", inner);
         assert_eq!(inner[0]["command"], RTK_REWRITER_COMMAND);
         cleanup(&dir);
     }
@@ -1534,7 +1555,10 @@ mod tests {
         let v = read_settings(&dir).expect("file present");
         assert_eq!(v, json!({}), "OFF removes our hook even with BOM");
         let raw = read_settings_raw(&dir).unwrap();
-        assert!(!raw.starts_with('\u{feff}'), "BOM must be stripped on write");
+        assert!(
+            !raw.starts_with('\u{feff}'),
+            "BOM must be stripped on write"
+        );
         cleanup(&dir);
     }
 }

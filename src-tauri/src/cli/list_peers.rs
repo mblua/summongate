@@ -39,7 +39,7 @@ NOTES:\n  \
 All agents that belong to your team(s) are listed. Agents you cannot directly\n\
 message are included with reachable=false. If you have no teams, the result is an empty array.")]
 pub struct ListPeersArgs {
-    /// Session token for authentication (from '# === Session Credentials ===' block)
+    /// Session token for authentication (from AGENTSCOMMANDER_TOKEN)
     #[arg(long)]
     pub token: Option<String>,
 

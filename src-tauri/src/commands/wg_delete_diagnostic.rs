@@ -407,11 +407,11 @@ fn scan_restart_manager_processes_windows(wg_dir: &Path) -> Result<Vec<BlockerPr
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::RestartManager::{
-        CCH_RM_SESSION_KEY, RM_PROCESS_INFO, RmEndSession, RmGetList, RmRegisterResources,
-        RmStartSession,
+        RmEndSession, RmGetList, RmRegisterResources, RmStartSession, CCH_RM_SESSION_KEY,
+        RM_PROCESS_INFO,
     };
     use windows_sys::Win32::System::Threading::{
-        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
     };
 
     const ERROR_SUCCESS: u32 = 0;
@@ -935,7 +935,7 @@ fn current_process_cwd_blocker_from_parts(
 fn enumerate_processes_windows() -> Result<Vec<ProcessSnapshotEntry>, String> {
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
         TH32CS_SNAPPROCESS,
     };
 
@@ -1187,7 +1187,11 @@ fn read_remote_utf16_path(
         .map(|b| u16::from_le_bytes([b[0], b[1]]))
         .collect();
     let cwd = strip_long_prefix_str(String::from_utf16_lossy(&wide).trim_end_matches('\0'));
-    if cwd.is_empty() { None } else { Some(cwd) }
+    if cwd.is_empty() {
+        None
+    } else {
+        Some(cwd)
+    }
 }
 
 #[cfg(test)]
@@ -1620,7 +1624,9 @@ mod tests {
         let repo_dir = wg_dir.join("repo-foo");
         std::fs::create_dir_all(&repo_dir).expect("create repo");
 
-        let child = Command::new("powershell.exe")
+        let mut cmd = Command::new("powershell.exe");
+        crate::pty::credentials::scrub_credentials_from_std_command(&mut cmd);
+        let child = cmd
             .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"])
             .current_dir(&repo_dir)
             .stdin(Stdio::null())

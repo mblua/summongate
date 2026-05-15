@@ -350,9 +350,7 @@ pub(crate) fn resolve_claude_projects_dir(
         let mut i = 0;
         while i < bytes.len() {
             let remaining = &buf[i..];
-            if remaining.len() >= 5
-                && remaining.as_bytes()[..5].eq_ignore_ascii_case(b"$env:")
-            {
+            if remaining.len() >= 5 && remaining.as_bytes()[..5].eq_ignore_ascii_case(b"$env:") {
                 let name_start = i + 5;
                 let mut name_end = name_start;
                 while name_end < bytes.len() {
@@ -423,9 +421,7 @@ pub(crate) fn resolve_claude_projects_dir(
                 None => (after_prefix, false),
             };
 
-            let Some(rest) =
-                strip_ascii_prefix_ci(after_open_quote, "CLAUDE_CONFIG_DIR")
-            else {
+            let Some(rest) = strip_ascii_prefix_ci(after_open_quote, "CLAUDE_CONFIG_DIR") else {
                 continue;
             };
             let rest = rest.trim_start();
@@ -474,7 +470,11 @@ pub(crate) fn resolve_claude_projects_dir(
         // a full location.
         let has_separator = token.contains('/') || token.contains('\\');
         if has_separator || p.is_absolute() {
-            return if p.is_file() { Some(p.to_path_buf()) } else { None };
+            return if p.is_file() {
+                Some(p.to_path_buf())
+            } else {
+                None
+            };
         }
         // Bare basename — defer to %PATH% + PATHEXT (Windows) via `which`.
         which::which(token).ok()
@@ -559,17 +559,15 @@ fn should_inject_continue(
     !already_has_continue
 }
 
-/// Issue #107 round 5 — build the title-prompt segment to concat with the
-/// cred-block, OR `Ok(None)` if the auto-title preconditions don't hold.
+/// Issue #107 round 5 — build the optional title prompt, or `Ok(None)` if the
+/// auto-title preconditions do not hold.
 ///
 /// Synchronous: filesystem reads only, no PTY, no await, no snapshot.
 /// (#137 introduced `brief-set-title` which creates its own atomic backup;
 /// the backend no longer snapshots before injection.)
 ///
-/// The caller is the post-spawn task in `create_session_inner`; it
-/// concatenates the returned `Some(prompt)` with the cred-block and issues a
-/// single `inject_text_into_session` call (Round 4 §R4.2.3 — preserved in
-/// Round 5).
+/// The caller is the post-spawn task in `create_session_inner`; it injects this
+/// prompt by itself. Credentials are not part of this payload.
 ///
 /// Gates layered (in order):
 ///   1. workgroup BRIEF.md path resolvable from `cwd` → else `Err`
@@ -818,122 +816,125 @@ pub async fn create_session_inner(
     mgr.set_effective_shell_args(id, effective.clone()).await;
     session.effective_shell_args = Some(effective);
 
+    let extra_env = if agent_id.is_some() {
+        crate::pty::credentials::build_credentials_env(&session.token, &cwd)
+    } else {
+        Vec::new()
+    };
+
     pty_mgr
         .lock()
         .unwrap()
-        .spawn(id, &shell, &shell_args, &cwd, 120, 30, app.clone())
+        .spawn(
+            id,
+            &shell,
+            &shell_args,
+            &cwd,
+            120,
+            30,
+            &extra_env,
+            app.clone(),
+        )
         .map_err(|e| e.to_string())?;
 
-    // Auto-inject credentials for agent sessions after PTY spawn.
-    // Wait for Claude to become idle (ready for input) instead of fixed delay.
-    // Mirrors the pattern in mailbox.rs inject_followup_after_idle_static.
-    if agent_id.is_some() {
-        let app_clone = app.clone();
-        let session_id = id;
-        let token = session.token;
-        let cwd_clone = cwd.clone();
-        // Issue #107 (R2 fold F1) — capture Coordinator gate + auto-title
-        // setting snapshot here so the spawned task can chain title-gen after
-        // the credentials inject. The `cfg` opened at lines 322-323 is bound
-        // inside an inner block and dropped at line 331 — there is no live
-        // `cfg` at this point, so we open a fresh read guard for one field.
-        // Concurrent readers don't block; deadlock-free (no other lock held).
-        let is_coordinator_clone = is_coordinator;
+    // Auto-inject optional non-credential bootstrap text for agent sessions
+    // after PTY spawn. Credentials are already present in child environment
+    // variables; no credentials are written through PTY.
+    //
+    // Currently the only bootstrap payload is the Coordinator auto-title prompt.
+    if agent_id.is_some() && !is_coordinator {
+        log::debug!(
+            "[session] No bootstrap injection for non-coordinator agent session {}",
+            id
+        );
+    }
+    if agent_id.is_some() && is_coordinator {
         let auto_title_enabled = {
             let settings_state = app.state::<SettingsState>();
             let cfg = settings_state.read().await;
             cfg.auto_generate_brief_title
         };
-        tokio::spawn(async move {
-            let max_wait = std::time::Duration::from_secs(30);
-            let poll = std::time::Duration::from_millis(500);
-            let start = std::time::Instant::now();
 
-            loop {
-                if start.elapsed() >= max_wait {
-                    log::warn!("[session] Timeout waiting for idle before credential injection for session {}", session_id);
-                    break; // inject anyway as fallback
-                }
-                tokio::time::sleep(poll).await;
+        if auto_title_enabled {
+            let app_clone = app.clone();
+            let session_id = id;
+            let cwd_clone = cwd.clone();
 
-                let session_mgr = app_clone.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
-                let mgr = session_mgr.read().await;
-                let sessions = mgr.list_sessions().await;
-                match sessions.iter().find(|s| s.id == session_id.to_string()) {
-                    Some(s) if s.waiting_for_input => break, // ready
-                    Some(_) => {}                            // still busy, keep polling
-                    None => {
-                        log::warn!(
-                            "[session] Session {} gone before credential injection",
-                            session_id
-                        );
-                        return; // session destroyed, nothing to inject
-                    }
-                }
-            }
-
-            // Issue #107 round 5 — build the optional title-prompt segment
-            // BEFORE the PTY write. Synchronous fs reads only; no async
-            // work, no snapshot, no second idle-wait. See plan §R5.5.
-            let title_appendage = if is_coordinator_clone && auto_title_enabled {
-                match build_title_prompt_appendage(&cwd_clone) {
+            tokio::spawn(async move {
+                let prompt = match build_title_prompt_appendage(&cwd_clone) {
                     Ok(Some(prompt)) => {
                         log::info!(
-                            "[session] Auto-title appendage built for session {}",
+                            "[session] Auto-title prompt built for session {}",
                             session_id
                         );
-                        Some(prompt)
+                        prompt
                     }
                     Ok(None) => {
                         log::info!(
-                            "[session] Auto-title appendage skipped (gate not passed) for session {}",
+                            "[session] Auto-title prompt skipped (gate not passed) for session {}",
                             session_id
                         );
-                        None
+                        return;
                     }
                     Err(e) => {
                         log::warn!(
-                            "[session] Auto-title appendage skipped for session {}: {}",
+                            "[session] Auto-title prompt skipped for session {}: {}",
                             session_id,
                             e
                         );
-                        None
+                        return;
+                    }
+                };
+
+                let max_wait = std::time::Duration::from_secs(30);
+                let poll = std::time::Duration::from_millis(500);
+                let start = std::time::Instant::now();
+
+                loop {
+                    if start.elapsed() >= max_wait {
+                        log::warn!(
+                            "[session] Timeout waiting for idle before auto-title prompt injection for session {}",
+                            session_id
+                        );
+                        break;
+                    }
+                    tokio::time::sleep(poll).await;
+
+                    let session_mgr = app_clone.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
+                    let mgr = session_mgr.read().await;
+                    let sessions = mgr.list_sessions().await;
+                    match sessions.iter().find(|s| s.id == session_id.to_string()) {
+                        Some(s) if s.waiting_for_input => break,
+                        Some(_) => {}
+                        None => {
+                            log::warn!(
+                                "[session] Session {} gone before auto-title prompt injection",
+                                session_id
+                            );
+                            return;
+                        }
                     }
                 }
-            } else {
-                None
-            };
 
-            let auto_title_was_appended = title_appendage.is_some();
-            let cred_block = crate::pty::credentials::build_credentials_block(&token, &cwd_clone);
-            let combined = match title_appendage {
-                Some(prompt) => format!("{}\n{}", cred_block, prompt),
-                None => cred_block,
-            };
-
-            match crate::pty::inject::inject_text_into_session(
-                &app_clone,
-                session_id,
-                &combined,
-            )
-            .await
-            {
-                Ok(()) => {
-                    log::info!(
-                        "[session] Bootstrap message injected for session {} (auto-title={})",
-                        session_id,
-                        auto_title_was_appended
-                    );
+                match crate::pty::inject::inject_text_into_session(&app_clone, session_id, &prompt)
+                    .await
+                {
+                    Ok(()) => {
+                        log::info!(
+                            "[session] Auto-title prompt injected for session {}",
+                            session_id
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[session] Failed to inject auto-title prompt for {}: {}",
+                            session_id,
+                            e
+                        );
+                    }
                 }
-                Err(e) => {
-                    log::warn!(
-                        "[session] Failed to inject bootstrap for {}: {}",
-                        session_id,
-                        e
-                    );
-                }
-            }
-        });
+            });
+        }
     }
 
     let info = SessionInfo::from(&session);
@@ -1625,7 +1626,7 @@ pub async fn get_active_session(
 ///   {exe_dir}/.{binary_name}/ac-root-agent
 /// If a session already exists at that path, switches to it instead.
 /// Uses the first configured coding agent from settings.
-/// Injects session credentials immediately after creation.
+/// Starts the root agent with per-child credential env when a configured coding agent is launched.
 #[tauri::command]
 pub async fn create_root_agent_session(
     app: AppHandle,
@@ -1783,7 +1784,7 @@ pub async fn create_root_agent_session(
         }
     }
 
-    // Credentials are auto-injected by create_session_inner for all Claude sessions.
+    // Credentials for resolved agent sessions are provided through the child process environment in PtyManager::spawn; no visible credential write occurs here.
 
     Ok(info)
 }
@@ -2213,15 +2214,17 @@ mod tests {
     #[test]
     fn build_title_prompt_appendage_returns_none_when_title_already_present() {
         use std::env;
-        let dir = env::temp_dir().join(format!(
-            "wg-r5-idempotent-{}", std::process::id()
-        ));
+        let dir = env::temp_dir().join(format!("wg-r5-idempotent-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let brief = dir.join("BRIEF.md");
         std::fs::write(&brief, b"---\ntitle: 'Pre-existing'\n---\nBody.\n").unwrap();
         let cwd = dir.to_string_lossy().to_string();
         let result = super::build_title_prompt_appendage(&cwd);
-        assert!(matches!(result, Ok(None)), "expected Ok(None), got {:?}", result);
+        assert!(
+            matches!(result, Ok(None)),
+            "expected Ok(None), got {:?}",
+            result
+        );
         let _ = std::fs::remove_file(&brief);
         let _ = std::fs::remove_dir(&dir);
     }
@@ -2229,15 +2232,17 @@ mod tests {
     #[test]
     fn build_title_prompt_appendage_returns_none_when_brief_empty() {
         use std::env;
-        let dir = env::temp_dir().join(format!(
-            "wg-r5-empty-{}", std::process::id()
-        ));
+        let dir = env::temp_dir().join(format!("wg-r5-empty-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let brief = dir.join("BRIEF.md");
         std::fs::write(&brief, b"   \n\n\t\n").unwrap();
         let cwd = dir.to_string_lossy().to_string();
         let result = super::build_title_prompt_appendage(&cwd);
-        assert!(matches!(result, Ok(None)), "expected Ok(None), got {:?}", result);
+        assert!(
+            matches!(result, Ok(None)),
+            "expected Ok(None), got {:?}",
+            result
+        );
         let _ = std::fs::remove_file(&brief);
         let _ = std::fs::remove_dir(&dir);
     }
@@ -2245,9 +2250,7 @@ mod tests {
     #[test]
     fn build_title_prompt_appendage_returns_some_when_brief_has_no_title() {
         use std::env;
-        let dir = env::temp_dir().join(format!(
-            "wg-r5-some-{}", std::process::id()
-        ));
+        let dir = env::temp_dir().join(format!("wg-r5-some-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let brief = dir.join("BRIEF.md");
         std::fs::write(&brief, b"# A real brief with body content.\n").unwrap();
@@ -2258,13 +2261,18 @@ mod tests {
             other => panic!("expected Ok(Some(_)), got {:?}", other),
         };
         assert!(prompt.contains("brief-set-title"));
-        assert!(prompt.contains("<YOUR_BINARY_PATH>"));
+        assert!(prompt.contains("<AGENTSCOMMANDER_BINARY_PATH>"));
         // Production code strips `\\?\` UNC prefix before embedding the path
         // (F4 fold). Mirror the strip here so the assertion holds on Windows
         // setups where `temp_dir()` returns an extended-length path.
         let brief_raw = brief.to_string_lossy().to_string();
         let brief_str = brief_raw.strip_prefix(r"\\?\").unwrap_or(&brief_raw);
         assert!(prompt.contains(brief_str));
+        let legacy_header = ["# === Session", "Credentials ==="].join(" ");
+        assert!(prompt.contains("<AGENTSCOMMANDER_TOKEN>"));
+        assert!(!prompt.contains(&legacy_header));
+        assert!(!prompt.to_ascii_lowercase().contains("fallback"));
+        assert!(!prompt.to_ascii_lowercase().contains("visible"));
         let _ = std::fs::remove_file(&brief);
         let _ = std::fs::remove_dir(&dir);
     }
@@ -2283,7 +2291,9 @@ mod tests {
         let cwd = "C:\\Users\\Test\\repo";
         let resolved = super::resolve_claude_projects_dir("claude", &[], cwd);
         // Skip if the test host has no home dir (CI sandboxes sometimes don't).
-        let Some(home) = dirs::home_dir() else { return; };
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
         let expected = home
             .join(".claude")
             .join("projects")
@@ -2295,9 +2305,10 @@ mod tests {
     fn resolve_claude_projects_dir_uses_home_for_direct_claude_exe_path() {
         // Direct executable path with file_stem == "claude" → still default base.
         let cwd = "C:\\Users\\Test\\repo";
-        let resolved =
-            super::resolve_claude_projects_dir("C:\\Tools\\claude.exe", &[], cwd);
-        let Some(home) = dirs::home_dir() else { return; };
+        let resolved = super::resolve_claude_projects_dir("C:\\Tools\\claude.exe", &[], cwd);
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
         let expected = home
             .join(".claude")
             .join("projects")
@@ -2307,11 +2318,8 @@ mod tests {
 
     #[test]
     fn resolve_claude_projects_dir_returns_none_when_no_claude_token() {
-        let resolved = super::resolve_claude_projects_dir(
-            "powershell.exe",
-            &["-NoLogo".to_string()],
-            "C:\\x",
-        );
+        let resolved =
+            super::resolve_claude_projects_dir("powershell.exe", &["-NoLogo".to_string()], "C:\\x");
         assert!(resolved.is_none());
     }
 
@@ -2328,8 +2336,7 @@ mod tests {
             ),
         );
         let cwd = "C:\\Users\\Test\\repo";
-        let resolved =
-            super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], cwd);
+        let resolved = super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], cwd);
         let expected = custom_base
             .join("projects")
             .join(crate::session::session::mangle_cwd_for_claude(cwd));
@@ -2348,11 +2355,7 @@ mod tests {
                 custom_base.display()
             ),
         );
-        let resolved = super::resolve_claude_projects_dir(
-            wrapper.to_str().unwrap(),
-            &[],
-            "C:\\x",
-        );
+        let resolved = super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], "C:\\x");
         let expected = custom_base
             .join("projects")
             .join(crate::session::session::mangle_cwd_for_claude("C:\\x"));
@@ -2362,17 +2365,11 @@ mod tests {
     #[test]
     fn resolve_claude_projects_dir_falls_back_when_wrapper_lacks_directive() {
         let tmp = tempfile::tempdir().unwrap();
-        let wrapper = write_wrapper(
-            tmp.path(),
-            "claude-mb.cmd",
-            "@echo off\r\nclaude %*\r\n",
-        );
-        let resolved = super::resolve_claude_projects_dir(
-            wrapper.to_str().unwrap(),
-            &[],
-            "C:\\x",
-        );
-        let Some(home) = dirs::home_dir() else { return; };
+        let wrapper = write_wrapper(tmp.path(), "claude-mb.cmd", "@echo off\r\nclaude %*\r\n");
+        let resolved = super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], "C:\\x");
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
         let expected = home
             .join(".claude")
             .join("projects")
@@ -2387,7 +2384,9 @@ mod tests {
             &[],
             "C:\\x",
         );
-        let Some(home) = dirs::home_dir() else { return; };
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
         let expected = home
             .join(".claude")
             .join("projects")
@@ -2444,11 +2443,8 @@ mod tests {
             ),
         );
         let combined = format!("git pull && {} --effort max", wrapper.display());
-        let resolved = super::resolve_claude_projects_dir(
-            "cmd.exe",
-            &["/K".to_string(), combined],
-            "C:\\x",
-        );
+        let resolved =
+            super::resolve_claude_projects_dir("cmd.exe", &["/K".to_string(), combined], "C:\\x");
         let expected = custom_base
             .join("projects")
             .join(crate::session::session::mangle_cwd_for_claude("C:\\x"));
@@ -2464,9 +2460,10 @@ mod tests {
         body.push_str("set CLAUDE_CONFIG_DIR=C:\\should-not-be-read\r\n");
         body.push_str(&"x".repeat(80 * 1024));
         std::fs::write(&path, body).unwrap();
-        let resolved =
-            super::resolve_claude_projects_dir(path.to_str().unwrap(), &[], "C:\\x");
-        let Some(home) = dirs::home_dir() else { return; };
+        let resolved = super::resolve_claude_projects_dir(path.to_str().unwrap(), &[], "C:\\x");
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
         let expected = home
             .join(".claude")
             .join("projects")
@@ -2488,11 +2485,7 @@ mod tests {
                 custom_base.display()
             ),
         );
-        let resolved = super::resolve_claude_projects_dir(
-            wrapper.to_str().unwrap(),
-            &[],
-            "C:\\x",
-        );
+        let resolved = super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], "C:\\x");
         let expected = custom_base
             .join("projects")
             .join(crate::session::session::mangle_cwd_for_claude("C:\\x"));
@@ -2514,11 +2507,7 @@ mod tests {
                 var
             ),
         );
-        let resolved = super::resolve_claude_projects_dir(
-            wrapper.to_str().unwrap(),
-            &[],
-            "C:\\x",
-        );
+        let resolved = super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], "C:\\x");
         std::env::remove_var(var);
         let expected = custom_base
             .join("projects")
@@ -2540,11 +2529,7 @@ mod tests {
                 var
             ),
         );
-        let resolved = super::resolve_claude_projects_dir(
-            wrapper.to_str().unwrap(),
-            &[],
-            "C:\\x",
-        );
+        let resolved = super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], "C:\\x");
         std::env::remove_var(var);
         let expected = custom_base
             .join("projects")
@@ -2562,11 +2547,7 @@ mod tests {
             "claude-mb.cmd",
             "@echo off\r\nset CLAUDE_CONFIG_DIR=%AC_TEST_186_DEFINITELY_UNSET%\\\\.claude-mb\r\nclaude %*\r\n",
         );
-        let resolved = super::resolve_claude_projects_dir(
-            wrapper.to_str().unwrap(),
-            &[],
-            "C:\\x",
-        );
+        let resolved = super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], "C:\\x");
         let resolved = resolved.expect("parser must return Some even when var is unset");
         let s = resolved.to_string_lossy();
         assert!(
@@ -2587,14 +2568,14 @@ mod tests {
                 custom_base.display()
             ),
         );
-        let resolved = super::resolve_claude_projects_dir(
-            wrapper.to_str().unwrap(),
-            &[],
-            "/home/test/repo",
-        );
-        let expected = custom_base
-            .join("projects")
-            .join(crate::session::session::mangle_cwd_for_claude("/home/test/repo"));
+        let resolved =
+            super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], "/home/test/repo");
+        let expected =
+            custom_base
+                .join("projects")
+                .join(crate::session::session::mangle_cwd_for_claude(
+                    "/home/test/repo",
+                ));
         assert_eq!(resolved, Some(expected));
     }
 }

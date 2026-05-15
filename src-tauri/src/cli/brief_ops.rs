@@ -370,11 +370,7 @@ impl LockGuard {
     ) -> Result<Self, BriefOpError> {
         let start = Instant::now();
         loop {
-            match OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(path)
-            {
+            match OpenOptions::new().write(true).create_new(true).open(path) {
                 Ok(mut file) => {
                     // Best-effort metadata write — never abort lock acquisition on this.
                     let _ = writeln!(
@@ -473,8 +469,7 @@ where
     let is_noop = match op {
         BriefOp::SetTitle(_) => title_value_of(&new_parsed) == title_value_of(&parsed),
         BriefOp::Clean => {
-            new_parsed.frontmatter == parsed.frontmatter
-                && new_parsed.body == parsed.body
+            new_parsed.frontmatter == parsed.frontmatter && new_parsed.body == parsed.body
         }
         BriefOp::AppendBody(_) => false,
     };
@@ -511,8 +506,9 @@ where
                 Err(e) => return Err(BriefOpError::BackupFailed(candidate, e)),
             }
         }
-        let bp = chosen
-            .ok_or_else(|| BriefOpError::BackupExhausted(wg_root.join(format!("BRIEF.{}.bak.md", ts))))?;
+        let bp = chosen.ok_or_else(|| {
+            BriefOpError::BackupExhausted(wg_root.join(format!("BRIEF.{}.bak.md", ts)))
+        })?;
         match std::fs::copy(&brief_path, &bp) {
             Ok(_) => Some(bp),
             Err(copy_err) => {
@@ -594,7 +590,9 @@ where
         return Err(BriefOpError::RenameFailed(e, backup_path));
     }
 
-    Ok(EditOutcome::Wrote { backup: backup_path })
+    Ok(EditOutcome::Wrote {
+        backup: backup_path,
+    })
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -820,8 +818,7 @@ mod tests {
         let fix = FixtureRoot::new("brief-u19");
         let lock_path = fix.path().join("BRIEF.md.lock");
         {
-            let _g =
-                LockGuard::acquire(&lock_path, LOCK_TIMEOUT_5S, LOCK_STALE_AFTER_5M).unwrap();
+            let _g = LockGuard::acquire(&lock_path, LOCK_TIMEOUT_5S, LOCK_STALE_AFTER_5M).unwrap();
             assert!(lock_path.exists());
         }
         assert!(!lock_path.exists());
@@ -832,11 +829,7 @@ mod tests {
         let fix = FixtureRoot::new("brief-u20");
         let lock_path = fix.path().join("BRIEF.md.lock");
         let _held = LockGuard::acquire(&lock_path, LOCK_TIMEOUT_5S, LOCK_STALE_AFTER_5M).unwrap();
-        let res = LockGuard::acquire(
-            &lock_path,
-            Duration::from_millis(100),
-            LOCK_STALE_AFTER_5M,
-        );
+        let res = LockGuard::acquire(&lock_path, Duration::from_millis(100), LOCK_STALE_AFTER_5M);
         assert!(matches!(res, Err(BriefOpError::LockTimeout)));
     }
 
@@ -911,8 +904,7 @@ mod tests {
         // Pattern: BRIEF.YYYYMMDD-HHMMSS(.N)?.bak.md
         assert!(
             name == "BRIEF.20260101-123456.bak.md"
-                || name.starts_with("BRIEF.20260101-123456.")
-                    && name.ends_with(".bak.md"),
+                || name.starts_with("BRIEF.20260101-123456.") && name.ends_with(".bak.md"),
             "unexpected backup filename: {}",
             name
         );
@@ -1015,8 +1007,7 @@ mod tests {
             assert!(r1.is_ok() || matches!(r1, Err(BriefOpError::LockTimeout)));
             assert!(r2.is_ok() || matches!(r2, Err(BriefOpError::LockTimeout)));
             if r1.is_ok() && r2.is_ok() {
-                let final_content =
-                    std::fs::read_to_string(wg.join("BRIEF.md")).unwrap();
+                let final_content = std::fs::read_to_string(wg.join("BRIEF.md")).unwrap();
                 assert!(final_content.contains("title: 'X'"));
                 assert!(final_content.contains("appended body line"));
             }
@@ -1065,7 +1056,10 @@ mod tests {
         let bk0 = wg.join("BRIEF.20260101-000000.bak.md");
         let bk1 = wg.join("BRIEF.20260101-000000.1.bak.md");
         assert!(bk0.exists(), "first backup should exist");
-        assert!(bk1.exists(), "collision-suffixed second backup should exist");
+        assert!(
+            bk1.exists(),
+            "collision-suffixed second backup should exist"
+        );
         // First backup contains "first\n" (the pre-edit state of the first call).
         assert_eq!(std::fs::read_to_string(&bk0).unwrap(), "first\n");
     }
@@ -1177,7 +1171,10 @@ mod tests {
         let parsed = parse_brief("");
         let p = apply_clean(&parsed);
         let out = render(&p);
-        assert_eq!(out, "---\ntitle: 'Clean'\n---\nReady to start a new topic\n");
+        assert_eq!(
+            out,
+            "---\ntitle: 'Clean'\n---\nReady to start a new topic\n"
+        );
     }
 
     #[test]
@@ -1230,9 +1227,10 @@ mod tests {
         }
         // No backup file created.
         let entries: Vec<_> = std::fs::read_dir(&wg).unwrap().flatten().collect();
-        let bak_count = entries.iter().filter(|e| {
-            e.file_name().to_string_lossy().ends_with(".bak.md")
-        }).count();
+        let bak_count = entries
+            .iter()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".bak.md"))
+            .count();
         assert_eq!(bak_count, 0);
     }
 
@@ -1289,4 +1287,3 @@ mod tests {
         assert_eq!(bak_count, 0);
     }
 }
-

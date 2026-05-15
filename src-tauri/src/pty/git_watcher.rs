@@ -171,6 +171,7 @@ impl GitWatcher {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         let mut cmd = tokio::process::Command::new("git");
+        crate::pty::credentials::scrub_credentials_from_tokio_command(&mut cmd);
         cmd.args(["rev-parse", "--abbrev-ref", "HEAD"])
             .current_dir(working_dir)
             .kill_on_drop(true);
