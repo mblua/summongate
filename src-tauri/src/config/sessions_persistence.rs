@@ -12,7 +12,7 @@ use crate::session::session::{SessionStatus, TEMP_SESSION_PREFIX};
 /// The optional runtime fields (id, status, waiting_for_input, created_at) are
 /// populated during live snapshots so the CLI can read session state from the
 /// file without requiring an HTTP request. They are ignored on restore.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PersistedSession {
     pub name: String,

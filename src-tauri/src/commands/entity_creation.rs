@@ -85,6 +85,44 @@ pub struct SyncResult {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Agent Matrix / replica directory contract (issue #209)
+// ---------------------------------------------------------------------------
+//
+// Agent Matrices own canonical state (`memory/`, `plans/`, `skills/`) plus
+// mailboxes. Workgroup replicas own only mailboxes; their config points back
+// to the origin matrix for canonical state.
+pub(crate) const AGENT_MATRIX_DIRS: &[&str] = &["memory", "plans", "skills", "inbox", "outbox"];
+pub(crate) const AGENT_REPLICA_DIRS: &[&str] = &["inbox", "outbox"];
+
+/// Create the full Agent Matrix layout, including the root directory.
+///
+/// The returned tag is `"agent_dir"` for root failures or the failing subdir
+/// name for child directory failures, so callers can preserve diagnostics.
+pub(crate) fn create_agent_matrix_layout(
+    agent_dir: &Path,
+) -> Result<(), (&'static str, std::io::Error)> {
+    std::fs::create_dir_all(agent_dir).map_err(|e| ("agent_dir", e))?;
+    for &sub in AGENT_MATRIX_DIRS {
+        std::fs::create_dir_all(agent_dir.join(sub)).map_err(|e| (sub, e))?;
+    }
+    Ok(())
+}
+
+/// Create the full workgroup replica layout, including the root directory.
+///
+/// Canonical state is intentionally absent here; replicas reference the origin
+/// Agent Matrix through `config.json`.
+pub(crate) fn create_agent_replica_layout(
+    replica_dir: &Path,
+) -> Result<(), (&'static str, std::io::Error)> {
+    std::fs::create_dir_all(replica_dir).map_err(|e| ("replica_dir", e))?;
+    for &sub in AGENT_REPLICA_DIRS {
+        std::fs::create_dir_all(replica_dir.join(sub)).map_err(|e| (sub, e))?;
+    }
+    Ok(())
+}
+
 /// Sanitize a user-provided name into a safe directory component:
 /// lowercase, only a-z 0-9 and hyphens, no leading/trailing hyphens.
 fn sanitize_name(raw: &str) -> Result<String, String> {
@@ -279,19 +317,16 @@ pub async fn create_agent_matrix(
         return Err(format!("Agent '{}' already exists", safe_name));
     }
 
-    // Create directory structure
-    std::fs::create_dir_all(&agent_dir)
-        .map_err(|e| format!("Failed to create agent directory: {}", e))?;
-
-    for sub in &["memory", "plans", "skills", "inbox", "outbox"] {
-        std::fs::create_dir_all(agent_dir.join(sub))
-            .map_err(|e| format!("Failed to create {} directory: {}", sub, e))?;
-    }
+    // Create directory structure. The helper owns both root and subdir creation.
+    create_agent_matrix_layout(&agent_dir).map_err(|(sub, e)| match sub {
+        "agent_dir" => format!("Failed to create agent directory: {}", e),
+        _ => format!("Failed to create {} directory: {}", sub, e),
+    })?;
 
     // Role.md with YAML frontmatter (single-quoted values for safe YAML)
     let desc_yaml = description.replace('\'', "''");
     let role_content = format!(
-        "---\nname: '{}'\ndescription: '{}'\ntype: agent\n---\n\n# {}\n\n{}\n\n## Source of Truth\n\nThis role is defined in Role.md of your Agent Matrix at: .ac-new/_agent_{}/\nIf you are running as a replica, this file was generated from that source.\nAlways use memory/ and plans/ from your Agent Matrix, and treat Role.md there as the canonical role definition. Never use external memory systems.\n\n## Agent Memory Rule\n\nIf you are running as a replica, the single source of truth for persistent knowledge is your Agent Matrix's memory/, plans/, and Role.md. Use your replica folder only for replica-local scratch, inbox/outbox, and session artifacts. NEVER use external memory systems from the coding agent (e.g., ~/.claude/projects/memory/).\n",
+        "---\nname: '{}'\ndescription: '{}'\ntype: agent\n---\n\n# {}\n\n{}\n\n## Source of Truth\n\nThis role is defined in Role.md of your Agent Matrix at: .ac-new/_agent_{}/\nIf you are running as a replica, this file was generated from that source.\nAlways use memory/, plans/, and skills/ from your Agent Matrix, and treat Role.md there as the canonical role definition. Never use external memory systems.\n\n## Agent Memory Rule\n\nIf you are running as a replica, the single source of truth for persistent knowledge is your Agent Matrix's memory/, plans/, skills/, and Role.md. Use your replica folder only for replica-local scratch, inbox/outbox, and session artifacts. NEVER use external memory systems from the coding agent (e.g., ~/.claude/projects/memory/).\n",
         safe_name, desc_yaml, safe_name, description, safe_name
     );
 
@@ -678,14 +713,12 @@ pub async fn create_workgroup(
             .unwrap_or(agent_dir_name);
 
         let replica_dir = wg_dir.join(format!("__agent_{}", agent_name));
-        std::fs::create_dir_all(&replica_dir)
-            .map_err(|e| format!("Failed to create replica dir for {}: {}", agent_name, e))?;
 
-        // inbox/ and outbox/
-        for sub in &["inbox", "outbox"] {
-            std::fs::create_dir_all(replica_dir.join(sub))
-                .map_err(|e| format!("Failed to create {} for {}: {}", sub, agent_name, e))?;
-        }
+        // Per-replica layout. Canonical state stays in the origin matrix.
+        create_agent_replica_layout(&replica_dir).map_err(|(sub, e)| match sub {
+            "replica_dir" => format!("Failed to create replica dir for {}: {}", agent_name, e),
+            _ => format!("Failed to create {} for {}: {}", sub, agent_name, e),
+        })?;
 
         // Issue #84 / #120 — write .claude/settings.local.json if any agent has
         // the flag, and apply the rtk hook based on the global toggle. Per-replica
@@ -1824,11 +1857,133 @@ async fn git_clone_async(url: &str, target: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    //! Tests for the preflight-rename `delete_workgroup` helper added in
-    //! the #113 follow-up dispatch, plus the #107 helper
-    //! `parse_brief_title`.
+    //! Tests for Agent Matrix/replica layout invariants, the preflight-rename
+    //! `delete_workgroup` helper added in the #113 follow-up dispatch, plus
+    //! the #107 helper `parse_brief_title`.
 
     use super::*;
+
+    #[test]
+    fn create_agent_matrix_layout_creates_root_and_canonical_subdirs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let agent_dir = tmp.path().join("_agent_test");
+
+        assert!(!agent_dir.exists(), "agent_dir must not exist before call");
+
+        create_agent_matrix_layout(&agent_dir).expect("create_agent_matrix_layout");
+
+        assert!(
+            agent_dir.is_dir(),
+            "helper must create the matrix root itself"
+        );
+        for canonical in &["memory", "plans", "skills"] {
+            assert!(
+                agent_dir.join(canonical).is_dir(),
+                "expected canonical state dir {}/",
+                canonical
+            );
+        }
+        assert!(agent_dir.join("inbox").is_dir(), "expected inbox/");
+        assert!(agent_dir.join("outbox").is_dir(), "expected outbox/");
+    }
+
+    #[test]
+    fn create_agent_matrix_layout_is_idempotent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let agent_dir = tmp.path().join("_agent_test");
+
+        create_agent_matrix_layout(&agent_dir).expect("first call");
+        let sentinel = agent_dir.join("memory").join("sentinel.md");
+        std::fs::write(&sentinel, b"x").expect("write sentinel");
+
+        create_agent_matrix_layout(&agent_dir).expect("second call");
+        assert!(
+            sentinel.is_file(),
+            "second call must not wipe pre-existing files in memory/"
+        );
+    }
+
+    #[test]
+    fn agent_matrix_dirs_contains_memory_plans_skills() {
+        let names: std::collections::HashSet<&str> = AGENT_MATRIX_DIRS.iter().copied().collect();
+        for required in &["memory", "plans", "skills"] {
+            assert!(
+                names.contains(required),
+                "AGENT_MATRIX_DIRS must contain {} (issue #209)",
+                required
+            );
+        }
+    }
+
+    #[test]
+    fn create_agent_replica_layout_creates_only_inbox_outbox() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let replica_dir = tmp.path().join("__agent_test");
+
+        assert!(
+            !replica_dir.exists(),
+            "replica_dir must not exist before call"
+        );
+
+        create_agent_replica_layout(&replica_dir).expect("create_agent_replica_layout");
+
+        assert!(
+            replica_dir.is_dir(),
+            "helper must create the replica root itself"
+        );
+        assert!(replica_dir.join("inbox").is_dir(), "expected inbox/");
+        assert!(replica_dir.join("outbox").is_dir(), "expected outbox/");
+        for canonical in &["memory", "plans", "skills"] {
+            assert!(
+                !replica_dir.join(canonical).exists(),
+                "replica MUST NOT have {}/; origin matrix is canonical",
+                canonical
+            );
+        }
+    }
+
+    #[test]
+    fn agent_matrix_and_replica_dir_sets_are_disjoint_on_canonical_state() {
+        let canonical: std::collections::HashSet<&str> =
+            ["memory", "plans", "skills"].into_iter().collect();
+        let replica: std::collections::HashSet<&str> = AGENT_REPLICA_DIRS.iter().copied().collect();
+        assert!(
+            canonical.is_disjoint(&replica),
+            "AGENT_REPLICA_DIRS must not include canonical state names; overlap: {:?}",
+            canonical.intersection(&replica).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn replica_identity_resolves_to_origin_matrix_role_md() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ac_new = tmp.path().join(".ac-new");
+        let matrix_dir = ac_new.join("_agent_alpha");
+        let replica_dir = ac_new.join("wg-1-team").join("__agent_alpha");
+        std::fs::create_dir_all(&matrix_dir).expect("create matrix_dir");
+        std::fs::create_dir_all(&replica_dir).expect("create replica_dir");
+
+        let matrix_role = matrix_dir.join("Role.md");
+        std::fs::write(&matrix_role, b"# Alpha\n").expect("write matrix Role.md");
+
+        let identity = compute_relative_identity("_agent_alpha", &replica_dir, &ac_new);
+
+        assert_eq!(
+            identity, "../../_agent_alpha",
+            "expected identity to traverse wg-1-team -> .ac-new -> _agent_alpha"
+        );
+
+        let resolved = replica_dir.join(&identity).join("Role.md");
+        assert_eq!(
+            resolved
+                .canonicalize()
+                .expect("canonicalize resolved Role.md"),
+            matrix_role
+                .canonicalize()
+                .expect("canonicalize matrix Role.md"),
+            "replica Role.md context entry must resolve to origin matrix Role.md"
+        );
+    }
 
     /// Success path: a clean WG dir with no blockers gets renamed and removed.
     /// The original path must not exist after the call, and there must be no

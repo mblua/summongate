@@ -1,18 +1,22 @@
 use clap::Args;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
-use crate::config;
+use crate::config::{self, agent_creation};
 
 #[derive(Args)]
 #[command(after_help = "\
 WHAT IT DOES:\n  \
-  1. Creates <parent>/<name>/ directory\n  \
-  2. Writes CLAUDE.md with: \"You are the agent <parentFolder>/<name>\"\n  \
-  3. If --launch is given, writes a session request that the running app picks up (~3s)\n\n\
+  1. Uses the same backend folder + CLAUDE.md creation helper as the UI modal\n  \
+  2. Creates <parent>/<trimmed name>/ directory\n  \
+  3. Writes CLAUDE.md with: \"You are the agent <parentFolder>/<trimmed name>\"\n  \
+  4. If --launch is given, after folder creation writes a session request that the running app picks up (~3s)\n\n\
+VALIDATION:\n  \
+  --name is trimmed before use. It must not be empty after trim, and it must not contain path separators (/ or \\) or NUL.\n  \
+  --parent must already exist; it is not created automatically.\n  \
+  The target folder must not already exist; existing folders are not overwritten.\n\n\
 OUTPUT: JSON object with fields: agentPath, agentName, claudeMd, launched, launchAgent.\n\n\
-The agent name is derived as \"<last component of parent>/<name>\" (e.g., parent=\"C:\\repos\" + \
-name=\"MyBot\" → \"repos/MyBot\"). This is the name other agents will use with `send --to`.")]
+The agent name is derived as \"<last component of parent>/<trimmed name>\" (e.g., parent=\"C:\\repos\" + \
+name=\" MyBot \" -> \"repos/MyBot\"). This is the name other agents will use with `send --to`.")]
 pub struct CreateAgentArgs {
     /// Parent directory where the agent folder will be created
     #[arg(long)]
@@ -61,60 +65,15 @@ pub struct SessionRequest {
 }
 
 pub fn execute(args: CreateAgentArgs) -> i32 {
-    let parent = PathBuf::from(&args.parent);
+    let created = match agent_creation::create_agent_folder_on_disk(&args.parent, &args.name) {
+        Ok(created) => created,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
+    };
 
-    // Validate parent exists
-    if !parent.exists() {
-        eprintln!("Error: parent folder does not exist: {}", args.parent);
-        return 1;
-    }
-
-    // Validate agent name
-    let name = args.name.trim();
-    if name.is_empty() {
-        eprintln!("Error: --name cannot be empty");
-        return 1;
-    }
-    if name.contains('/') || name.contains('\\') || name.contains('\0') {
-        eprintln!("Error: --name cannot contain path separators");
-        return 1;
-    }
-
-    // Create agent directory
-    let agent_dir = parent.join(name);
-    if agent_dir.exists() {
-        eprintln!("Error: folder already exists: {}", agent_dir.display());
-        return 1;
-    }
-
-    if let Err(e) = std::fs::create_dir_all(&agent_dir) {
-        eprintln!("Error: failed to create folder: {}", e);
-        return 1;
-    }
-
-    // Derive display name: last component of parent / agent name
-    let parent_name = parent
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| args.parent.clone());
-    let full_agent_name = format!("{}/{}", parent_name, name);
-
-    // Write CLAUDE.md
-    let claude_content = format!("You are the agent {}", full_agent_name);
-    let claude_path = agent_dir.join("CLAUDE.md");
-    if let Err(e) = std::fs::write(&claude_path, &claude_content) {
-        eprintln!("Error: failed to write CLAUDE.md: {}", e);
-        return 1;
-    }
-
-    // TODO: When replica creation is added (for __agent_* dirs inside workgroups),
-    // write config.json with: { "context": ["$AGENTSCOMMANDER_CONTEXT"] }
-    // so that replicas get the global context by default.
-
-    // Write .claude/settings.local.json if the launched agent has exclude_global_claude_md
-    // (checked later when we resolve the agent config)
-
-    let agent_path_str = agent_dir.to_string_lossy().to_string();
+    let agent_path_str = created.agent_dir.to_string_lossy().to_string();
     let mut launched = false;
     let mut launch_agent_id: Option<String> = None;
 
@@ -134,7 +93,9 @@ pub fn execute(args: CreateAgentArgs) -> i32 {
             Some(agent) => {
                 // Auto-generate .claude/settings.local.json if the agent has the flag
                 if agent.exclude_global_claude_md {
-                    if let Err(e) = config::claude_settings::ensure_claude_md_excludes(&agent_dir) {
+                    if let Err(e) =
+                        config::claude_settings::ensure_claude_md_excludes(&created.agent_dir)
+                    {
                         eprintln!("Warning: failed to write claude settings: {}", e);
                     }
                 }
@@ -143,7 +104,7 @@ pub fn execute(args: CreateAgentArgs) -> i32 {
                 // with a running AC instance. Cross-process race documented in §7.4
                 // of the issue #120 plan as a follow-up.
                 if let Err(e) = config::claude_settings::ensure_rtk_pretool_hook(
-                    &agent_dir,
+                    &created.agent_dir,
                     settings.inject_rtk_hook,
                 ) {
                     eprintln!("Warning: failed to apply rtk hook: {}", e);
@@ -165,7 +126,7 @@ pub fn execute(args: CreateAgentArgs) -> i32 {
                 let request = SessionRequest {
                     id: uuid::Uuid::new_v4().to_string(),
                     cwd: agent_path_str.clone(),
-                    session_name: full_agent_name.clone(),
+                    session_name: created.display_name.clone(),
                     agent_id: agent.id.clone(),
                     shell,
                     shell_args,
@@ -193,11 +154,10 @@ pub fn execute(args: CreateAgentArgs) -> i32 {
         }
     }
 
-    // Output result as JSON
     let result = CreateAgentResult {
         agent_path: agent_path_str,
-        agent_name: full_agent_name,
-        claude_md: claude_content,
+        agent_name: created.display_name,
+        claude_md: created.claude_md,
         launched,
         launch_agent: launch_agent_id,
     };

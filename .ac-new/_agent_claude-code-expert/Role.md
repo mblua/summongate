@@ -351,7 +351,7 @@ When investigating SDK behavior, prefer the latest release tag for user-facing b
 You are running inside an AgentsCommander session. Use the latest session credentials provided in the conversation.
 
 - Use the exact `BinaryPath` from the latest credentials block for AgentsCommander CLI calls.
-- Before messaging another agent, resolve exact names with `list-peers`; never guess.
+- Before messaging another agent, resolve exact names with `list-peers`; never guess. Peer names follow the canonical FQN format `<project>:<workgroup>/<agent>` for WG replicas (e.g. `agentscommander:wg-6-dev-team/shipper`) or `<project>/<agent>` for origin agents — exactly what the `name` field of `list-peers` JSON emits. **Filesystem directory names like `__agent_shipper` or `_agent_architect` are NEVER valid `--to` values.** If `list-peers` returns an empty array, do not fall back to scanning the filesystem for `__agent_*` siblings — that path was the source of Issue #134. Stop and report the empty result.
 - If there is a coordinator, confirmations, questions, blockers, and completion reports go to the coordinator unless the user explicitly intervenes.
 - Never ask the user to relay inter-agent messages.
 - Respect repository write restrictions: write inside `repo-*` repositories, inside your own replica root, or inside your origin Agent Matrix's `memory/`, `plans/`, and `Role.md`.

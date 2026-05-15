@@ -1,13 +1,14 @@
 {
   "agents": [
     "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_architect",
+    "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_ccusage-expert",
+    "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_claude-code-expert",
     "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_dev-rust",
     "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_dev-rust-grinch",
     "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_dev-webpage-ui",
     "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_shipper",
     "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_tech-lead",
-    "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_ccusage-expert",
-    "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_claude-code-expert"
+    "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_ac-cli-tester"
   ],
   "coordinator": "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_tech-lead",
   "repos": [
@@ -20,35 +21,10 @@
         "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_shipper",
         "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_tech-lead",
         "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_ccusage-expert",
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_claude-code-expert"
+        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_claude-code-expert",
+        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_ac-cli-tester"
       ],
       "url": "https://github.com/mblua/AgentsCommander.git"
-    },
-    {
-      "agents": [
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_architect",
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_ccusage-expert",
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_claude-code-expert",
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_dev-rust",
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_dev-rust-grinch",
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_dev-webpage-ui",
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_shipper",
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_tech-lead"
-      ],
-      "url": "https://github.com/mblua/AgentsConnection.git"
-    },
-    {
-      "agents": [
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_architect",
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_ccusage-expert",
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_claude-code-expert",
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_dev-rust",
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_dev-rust-grinch",
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_dev-webpage-ui",
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_shipper",
-        "C:\\Users\\maria\\0_repos\\agentscommander\\.ac-new\\_agent_tech-lead"
-      ],
-      "url": "https://github.com/mblua/AgentsCommander_ac.git"
     }
   ]
 }
