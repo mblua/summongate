@@ -25,7 +25,7 @@ External edits between our read and our write are detected and the verb aborts.\
 TITLE INPUT: --title is a single-line string. Embedded \\n / \\r / NUL / other \
 control characters (except tab) are rejected.")]
 pub struct BriefSetTitleArgs {
-    /// Session token for authentication (from AGENTSCOMMANDER_TOKEN or visible credentials fallback)
+    /// Session token for authentication (from AGENTSCOMMANDER_TOKEN)
     #[arg(long)]
     pub token: Option<String>,
 

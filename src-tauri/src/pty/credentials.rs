@@ -1,10 +1,10 @@
-//! Agent credential helpers.
+//! Agent credential environment helpers.
 //!
-//! Produces the visible `# === Session Credentials ===` fallback block, the
-//! env var payload used for agent PTY children, and shared scrubbing helpers
-//! for child processes that must not inherit parent `AGENTSCOMMANDER_*` values.
-//! The visible block output must stay byte-for-byte identical across spawn and
-//! `/clear` call sites so agents parse consistently.
+//! Builds the per-session `AGENTSCOMMANDER_*` environment payload for agent PTY
+//! children and provides shared scrubbing helpers for child processes that must
+//! not inherit parent `AGENTSCOMMANDER_*` values.
+//!
+//! Credentials are never formatted as visible PTY text.
 
 use uuid::Uuid;
 
@@ -31,12 +31,20 @@ pub struct CredentialValues {
     pub local_dir: String,
 }
 
+fn fallback_binary_path() -> &'static str {
+    if cfg!(windows) {
+        "agentscommander.exe"
+    } else {
+        "agentscommander"
+    }
+}
+
 pub fn build_credential_values(token: &Uuid, cwd: &str) -> CredentialValues {
     let exe = std::env::current_exe().ok();
     if exe.is_none() {
         log::warn!(
-            "[credentials] current_exe() unavailable; credentials will use fallback \
-             binary name. Agent may be unable to invoke the CLI."
+            "[credentials] current_exe() unavailable; credential env will use fallback \
+             binary path/name. Agent may be unable to invoke the CLI."
         );
     }
 
@@ -49,7 +57,7 @@ pub fn build_credential_values(token: &Uuid, cwd: &str) -> CredentialValues {
         let raw = exe
             .as_ref()
             .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "agentscommander.exe".to_string());
+            .unwrap_or_else(|| fallback_binary_path().to_string());
         raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string()
     };
 
@@ -113,79 +121,19 @@ pub fn scrub_credentials_from_tokio_command(command: &mut tokio::process::Comman
     scrub_credentials_from_std_command(command.as_std_mut());
 }
 
-/// Build the credentials block for a session.
-///
-/// The block is terminated by `\n` (no trailing Enter) — the caller is
-/// responsible for calling `inject_text_into_session` which adds the Enter
-/// keystrokes for agents that need them.
-///
-/// `token` is `Display`'d lowercase with dashes (standard `Uuid` format).
-/// `cwd` is the session's working directory, verbatim.
-///
-/// `Binary`, `BinaryPath`, and `LocalDir` are derived from the current
-/// process executable — the running `agentscommander*.exe`. This matches
-/// the original inline behavior in `commands/session.rs` and is what
-/// agents use to invoke back into the CLI.
-///
-/// No I/O except `std::env::current_exe()` and a single `log::warn!`
-/// when `current_exe()` returns `Err` (per plan §17.6 for operator
-/// observability on the rare "agent cannot find its binary" path).
-pub fn build_credentials_block(token: &Uuid, cwd: &str) -> String {
-    let values = build_credential_values(token, cwd);
-
-    format!(
-        concat!(
-            "\n\n",
-            "# === Session Credentials ===\n",
-            "# Token: {token}\n",
-            "# Root: {root}\n",
-            "# Binary: {binary}\n",
-            "# BinaryPath: {binary_path}\n",
-            "# LocalDir: {local_dir}\n",
-            "# === End Credentials ===\n",
-        ),
-        token = values.token,
-        root = values.root,
-        binary = values.binary,
-        binary_path = values.binary_path,
-        local_dir = values.local_dir,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn block_structure_is_byte_stable() {
-        let token = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
-        let block = build_credentials_block(&token, r"C:\example\root");
-
-        // Split on '\n' (keep empty trailing element → final "" after last \n).
-        let lines: Vec<&str> = block.split('\n').collect();
-
-        // Expected structure, in order (10 elements: 9 \n-terminated lines + trailing empty):
-        //  0: ""                                   (first leading \n)
-        //  1: ""                                   (second leading \n)
-        //  2: "# === Session Credentials ==="
-        //  3: "# Token: 00000000-0000-0000-0000-000000000001"
-        //  4: "# Root: C:\example\root"
-        //  5: "# Binary: <runtime-derived>"
-        //  6: "# BinaryPath: <runtime-derived>"
-        //  7: "# LocalDir: <runtime-derived>"
-        //  8: "# === End Credentials ==="
-        //  9: ""                                   (trailing \n)
-        assert_eq!(lines.len(), 10, "line count drift: {}", lines.len());
-        assert_eq!(lines[0], "", "missing first leading newline");
-        assert_eq!(lines[1], "", "missing second leading newline");
-        assert_eq!(lines[2], "# === Session Credentials ===");
-        assert_eq!(lines[3], "# Token: 00000000-0000-0000-0000-000000000001");
-        assert_eq!(lines[4], r"# Root: C:\example\root");
-        assert!(lines[5].starts_with("# Binary: "), "Binary line prefix");
-        assert!(lines[6].starts_with("# BinaryPath: "), "BinaryPath prefix");
-        assert!(lines[7].starts_with("# LocalDir: "), "LocalDir prefix");
-        assert_eq!(lines[8], "# === End Credentials ===");
-        assert_eq!(lines[9], "", "missing trailing newline");
+    fn fallback_binary_path_is_platform_specific() {
+        let p = super::fallback_binary_path();
+        if cfg!(windows) {
+            assert_eq!(p, "agentscommander.exe");
+        } else {
+            assert_eq!(p, "agentscommander");
+            assert!(!p.ends_with(".exe"));
+        }
     }
 
     #[test]

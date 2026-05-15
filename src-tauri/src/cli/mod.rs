@@ -15,8 +15,8 @@ use clap::{Parser, Subcommand};
 #[command(about = "Agent terminal session manager with inter-agent messaging")]
 #[command(after_help = "\
 TOKEN: In agent sessions, pass AGENTSCOMMANDER_TOKEN from the environment. \
-If the env var is unavailable, use the latest visible '# === Session Credentials ===' fallback block. \
-If a token expires, any failed `send` triggers an automatic token refresh.\n\n\
+Credentials are not delivered through visible PTY text. \
+If token validation fails, restart or respawn the sender session; live token refresh is not supported.\n\n\
 EXIT CODES: All subcommands return 0 on success, 1 on error.\n\n\
 AGENT NAMES: Agents are identified by their path-based name (e.g., \"repos/my-project\"). \
 Use `list-peers` to discover valid agent names before sending messages.")]
@@ -104,8 +104,7 @@ pub fn validate_cli_token(token: &Option<String>) -> Result<(String, bool), Stri
         _ => {
             return Err(
                 "Error: --token is required. In agent sessions, pass AGENTSCOMMANDER_TOKEN \
-                 from the environment, or use the latest '# === Session Credentials ===' \
-                 fallback block if the env var is unavailable."
+                 from the environment. If it is unavailable, restart or respawn the session."
                     .to_string(),
             );
         }
@@ -130,8 +129,8 @@ pub fn validate_cli_token(token: &Option<String>) -> Result<(String, bool), Stri
     if uuid::Uuid::parse_str(&token).is_err() {
         return Err(
             "Error: invalid token supplied. Expected a valid session token (UUID) or root token. \
-             In agent sessions, use AGENTSCOMMANDER_TOKEN from the environment, or the latest \
-             visible credentials fallback block if the env var is unavailable."
+             In agent sessions, use AGENTSCOMMANDER_TOKEN from the environment. If validation \
+             keeps failing, restart or respawn the session."
                 .to_string(),
         );
     }
@@ -186,5 +185,21 @@ mod tests {
         assert!(err.contains("invalid token supplied"));
         assert!(!err.contains(supplied));
         assert!(!err.contains(&supplied[..8]));
+        let legacy_phrase = ["Session", "Credentials"].join(" ");
+        assert!(!err.contains(&legacy_phrase));
+        assert!(!err.to_ascii_lowercase().contains("fallback"));
+        assert!(!err.to_ascii_lowercase().contains("visible"));
+    }
+
+    #[test]
+    fn validate_cli_token_missing_token_documents_env_only() {
+        let err = validate_cli_token(&None).unwrap_err();
+
+        assert!(err.contains("AGENTSCOMMANDER_TOKEN"));
+        assert!(err.contains("restart or respawn"));
+        let legacy_phrase = ["Session", "Credentials"].join(" ");
+        assert!(!err.contains(&legacy_phrase));
+        assert!(!err.to_ascii_lowercase().contains("fallback"));
+        assert!(!err.to_ascii_lowercase().contains("visible"));
     }
 }

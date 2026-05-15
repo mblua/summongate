@@ -10,9 +10,7 @@
 //!
 //! No I/O. Pure string format. The agent substitutes
 //! `<AGENTSCOMMANDER_TOKEN>`, `<AGENTSCOMMANDER_ROOT>`, and
-//! `<AGENTSCOMMANDER_BINARY_PATH>` from environment variables first, falling
-//! back to the visible `# === Session Credentials ===` block only if env vars
-//! are unavailable (Round 4 §R4.2 still provides the compatibility paste).
+//! `<AGENTSCOMMANDER_BINARY_PATH>` from environment variables only.
 
 /// Build the title-generation prompt for an agent whose workgroup's BRIEF.md
 /// lives at `brief_absolute_path`.
@@ -29,8 +27,8 @@ pub fn build_title_prompt(brief_absolute_path: &str) -> String {
             "  \"<AGENTSCOMMANDER_BINARY_PATH>\" brief-set-title --token <AGENTSCOMMANDER_TOKEN> --root \"<AGENTSCOMMANDER_ROOT>\" --title \"<your title>\"\n\n",
             "`<AGENTSCOMMANDER_BINARY_PATH>`, `<AGENTSCOMMANDER_TOKEN>`, and ",
             "`<AGENTSCOMMANDER_ROOT>` mean the environment variables of the same names. ",
-            "If env vars are unavailable, use `BinaryPath`, `Token`, and `Root` from ",
-            "the latest visible `# === Session Credentials ===` fallback block. ",
+            "If any of these env vars are unavailable, run nothing; the session was not ",
+            "started with valid AgentsCommander credential env. ",
             "The CLI writes BRIEF.md atomically and ",
             "creates a timestamped `BRIEF.<UTC-ts>.bak.md` backup — do NOT edit ",
             "BRIEF.md directly.\n\n",
@@ -64,11 +62,14 @@ mod tests {
     }
 
     #[test]
-    fn prompt_documents_env_first_credentials_with_visible_fallback() {
+    fn prompt_documents_env_only_credentials() {
         let p = build_title_prompt("/tmp/BRIEF.md");
+        let legacy_header = ["# === Session", "Credentials ==="].join(" ");
         assert!(p.contains("environment variables"));
-        assert!(p.contains("visible"));
-        assert!(p.contains("`# === Session Credentials ===`"));
+        assert!(p.contains("<AGENTSCOMMANDER_TOKEN>"));
+        assert!(!p.contains(&legacy_header));
+        assert!(!p.to_ascii_lowercase().contains("fallback"));
+        assert!(!p.to_ascii_lowercase().contains("visible"));
     }
 
     #[test]

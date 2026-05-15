@@ -559,17 +559,15 @@ fn should_inject_continue(
     !already_has_continue
 }
 
-/// Issue #107 round 5 — build the title-prompt segment to concat with the
-/// cred-block, OR `Ok(None)` if the auto-title preconditions don't hold.
+/// Issue #107 round 5 — build the optional title prompt, or `Ok(None)` if the
+/// auto-title preconditions do not hold.
 ///
 /// Synchronous: filesystem reads only, no PTY, no await, no snapshot.
 /// (#137 introduced `brief-set-title` which creates its own atomic backup;
 /// the backend no longer snapshots before injection.)
 ///
-/// The caller is the post-spawn task in `create_session_inner`; it
-/// concatenates the returned `Some(prompt)` with the cred-block and issues a
-/// single `inject_text_into_session` call (Round 4 §R4.2.3 — preserved in
-/// Round 5).
+/// The caller is the post-spawn task in `create_session_inner`; it injects this
+/// prompt by itself. Credentials are not part of this payload.
 ///
 /// Gates layered (in order):
 ///   1. workgroup BRIEF.md path resolvable from `cwd` → else `Err`
@@ -839,115 +837,104 @@ pub async fn create_session_inner(
         )
         .map_err(|e| e.to_string())?;
 
-    // Auto-inject bootstrap text for agent sessions after PTY spawn.
-    // Credentials are already present in child environment variables; the
-    // visible credential block remains as a compatibility fallback and the
-    // same injection still carries the optional auto-title prompt.
-    // Wait for Claude to become idle (ready for input) instead of fixed delay.
-    // Mirrors the pattern in mailbox.rs inject_followup_after_idle_static.
-    if agent_id.is_some() {
-        let app_clone = app.clone();
-        let session_id = id;
-        let token = session.token;
-        let cwd_clone = cwd.clone();
-        // Issue #107 (R2 fold F1) — capture Coordinator gate + auto-title
-        // setting snapshot here so the spawned task can chain title-gen after
-        // the credentials inject. The `cfg` opened at lines 322-323 is bound
-        // inside an inner block and dropped at line 331 — there is no live
-        // `cfg` at this point, so we open a fresh read guard for one field.
-        // Concurrent readers don't block; deadlock-free (no other lock held).
-        let is_coordinator_clone = is_coordinator;
+    // Auto-inject optional non-credential bootstrap text for agent sessions
+    // after PTY spawn. Credentials are already present in child environment
+    // variables; no credentials are written through PTY.
+    //
+    // Currently the only bootstrap payload is the Coordinator auto-title prompt.
+    if agent_id.is_some() && !is_coordinator {
+        log::debug!(
+            "[session] No bootstrap injection for non-coordinator agent session {}",
+            id
+        );
+    }
+    if agent_id.is_some() && is_coordinator {
         let auto_title_enabled = {
             let settings_state = app.state::<SettingsState>();
             let cfg = settings_state.read().await;
             cfg.auto_generate_brief_title
         };
-        tokio::spawn(async move {
-            let max_wait = std::time::Duration::from_secs(30);
-            let poll = std::time::Duration::from_millis(500);
-            let start = std::time::Instant::now();
 
-            loop {
-                if start.elapsed() >= max_wait {
-                    log::warn!("[session] Timeout waiting for idle before credential injection for session {}", session_id);
-                    break; // inject anyway as fallback
-                }
-                tokio::time::sleep(poll).await;
+        if auto_title_enabled {
+            let app_clone = app.clone();
+            let session_id = id;
+            let cwd_clone = cwd.clone();
 
-                let session_mgr = app_clone.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
-                let mgr = session_mgr.read().await;
-                let sessions = mgr.list_sessions().await;
-                match sessions.iter().find(|s| s.id == session_id.to_string()) {
-                    Some(s) if s.waiting_for_input => break, // ready
-                    Some(_) => {}                            // still busy, keep polling
-                    None => {
-                        log::warn!(
-                            "[session] Session {} gone before credential injection",
-                            session_id
-                        );
-                        return; // session destroyed, nothing to inject
-                    }
-                }
-            }
-
-            // Issue #107 round 5 — build the optional title-prompt segment
-            // BEFORE the PTY write. Synchronous fs reads only; no async
-            // work, no snapshot, no second idle-wait. See plan §R5.5.
-            let title_appendage = if is_coordinator_clone && auto_title_enabled {
-                match build_title_prompt_appendage(&cwd_clone) {
+            tokio::spawn(async move {
+                let prompt = match build_title_prompt_appendage(&cwd_clone) {
                     Ok(Some(prompt)) => {
                         log::info!(
-                            "[session] Auto-title appendage built for session {}",
+                            "[session] Auto-title prompt built for session {}",
                             session_id
                         );
-                        Some(prompt)
+                        prompt
                     }
                     Ok(None) => {
                         log::info!(
-                            "[session] Auto-title appendage skipped (gate not passed) for session {}",
+                            "[session] Auto-title prompt skipped (gate not passed) for session {}",
                             session_id
                         );
-                        None
+                        return;
                     }
                     Err(e) => {
                         log::warn!(
-                            "[session] Auto-title appendage skipped for session {}: {}",
+                            "[session] Auto-title prompt skipped for session {}: {}",
                             session_id,
                             e
                         );
-                        None
+                        return;
+                    }
+                };
+
+                let max_wait = std::time::Duration::from_secs(30);
+                let poll = std::time::Duration::from_millis(500);
+                let start = std::time::Instant::now();
+
+                loop {
+                    if start.elapsed() >= max_wait {
+                        log::warn!(
+                            "[session] Timeout waiting for idle before auto-title prompt injection for session {}",
+                            session_id
+                        );
+                        break;
+                    }
+                    tokio::time::sleep(poll).await;
+
+                    let session_mgr = app_clone.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
+                    let mgr = session_mgr.read().await;
+                    let sessions = mgr.list_sessions().await;
+                    match sessions.iter().find(|s| s.id == session_id.to_string()) {
+                        Some(s) if s.waiting_for_input => break,
+                        Some(_) => {}
+                        None => {
+                            log::warn!(
+                                "[session] Session {} gone before auto-title prompt injection",
+                                session_id
+                            );
+                            return;
+                        }
                     }
                 }
-            } else {
-                None
-            };
 
-            let auto_title_was_appended = title_appendage.is_some();
-            let cred_block = crate::pty::credentials::build_credentials_block(&token, &cwd_clone);
-            let combined = match title_appendage {
-                Some(prompt) => format!("{}\n{}", cred_block, prompt),
-                None => cred_block,
-            };
-
-            match crate::pty::inject::inject_text_into_session(&app_clone, session_id, &combined)
-                .await
-            {
-                Ok(()) => {
-                    log::info!(
-                        "[session] Bootstrap message injected for session {} (auto-title={})",
-                        session_id,
-                        auto_title_was_appended
-                    );
+                match crate::pty::inject::inject_text_into_session(&app_clone, session_id, &prompt)
+                    .await
+                {
+                    Ok(()) => {
+                        log::info!(
+                            "[session] Auto-title prompt injected for session {}",
+                            session_id
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[session] Failed to inject auto-title prompt for {}: {}",
+                            session_id,
+                            e
+                        );
+                    }
                 }
-                Err(e) => {
-                    log::warn!(
-                        "[session] Failed to inject bootstrap for {}: {}",
-                        session_id,
-                        e
-                    );
-                }
-            }
-        });
+            });
+        }
     }
 
     let info = SessionInfo::from(&session);
@@ -1591,7 +1578,7 @@ pub async fn get_active_session(
 ///   {exe_dir}/.{binary_name}/ac-root-agent
 /// If a session already exists at that path, switches to it instead.
 /// Uses the first configured coding agent from settings.
-/// Injects session credentials immediately after creation.
+/// Starts the root agent with per-child credential env when a configured coding agent is launched.
 #[tauri::command]
 pub async fn create_root_agent_session(
     app: AppHandle,
@@ -2209,6 +2196,11 @@ mod tests {
         let brief_raw = brief.to_string_lossy().to_string();
         let brief_str = brief_raw.strip_prefix(r"\\?\").unwrap_or(&brief_raw);
         assert!(prompt.contains(brief_str));
+        let legacy_header = ["# === Session", "Credentials ==="].join(" ");
+        assert!(prompt.contains("<AGENTSCOMMANDER_TOKEN>"));
+        assert!(!prompt.contains(&legacy_header));
+        assert!(!prompt.to_ascii_lowercase().contains("fallback"));
+        assert!(!prompt.to_ascii_lowercase().contains("visible"));
         let _ = std::fs::remove_file(&brief);
         let _ = std::fs::remove_dir(&dir);
     }

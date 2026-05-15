@@ -585,7 +585,7 @@ Use `AGENTSCOMMANDER_BINARY_PATH` when invoking the CLI. This ensures you use th
 "<AGENTSCOMMANDER_BINARY_PATH>" <subcommand> [args]
 ```
 
-**RULE:** Never hardcode or guess the binary path. Prefer the environment variables above. If they are unavailable, fall back to the latest `# === Session Credentials ===` block in your conversation.
+**RULE:** Never hardcode or guess the binary path. Use the environment variables above. If they are unavailable in an agent session, restart or respawn the session.
 
 ## Self-discovery via --help
 
@@ -603,9 +603,9 @@ The CLI `--help` output documents every subcommand, flag, and accepted value. Us
 
 ## Session credentials
 
-Your session credentials are delivered through the `AGENTSCOMMANDER_*` environment variables listed above. A visible `# === Session Credentials ===` block may also appear in your conversation as a compatibility fallback.
+Your session credentials are delivered only through the `AGENTSCOMMANDER_*` environment variables listed above.
 
-Use environment variables first. If AgentsCommander later injects a token refresh notice, that visible refresh is authoritative until the session respawns, because a live process environment cannot be mutated.
+Live token refresh without respawn is not supported, because a parent process cannot portably mutate an already-running child process environment. If credential validation fails, restart or respawn the session so AgentsCommander can create a new child process with fresh env values.
 
 Your agent root is your current working directory.
 
@@ -768,5 +768,23 @@ mod tests {
             "FORBIDDEN bullet missing 'the entries listed above' prefix, got:\n{}",
             out
         );
+    }
+
+    #[test]
+    fn default_context_documents_env_only_credentials() {
+        let out = default_context("C:/fake/wg-7-dev-team/__agent_architect", None);
+        let legacy_header = ["# === Session", "Credentials ==="].join(" ");
+        let legacy_compat = ["compatibility", "fallback"].join(" ");
+        let legacy_refresh_notice = ["token refresh", "notice"].join(" ");
+        let legacy_visible_refresh = ["visible", "refresh"].join(" ");
+
+        assert!(out.contains("AGENTSCOMMANDER_TOKEN"));
+        assert!(out.contains("delivered only through"));
+        assert!(out.contains("restart or respawn"));
+        assert!(!out.contains(&legacy_header));
+        let lower = out.to_ascii_lowercase();
+        assert!(!lower.contains(&legacy_compat));
+        assert!(!lower.contains(&legacy_refresh_notice));
+        assert!(!lower.contains(&legacy_visible_refresh));
     }
 }

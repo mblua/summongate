@@ -412,34 +412,24 @@ impl MailboxPoller {
                 if let Ok(token_uuid) = Uuid::parse_str(token_str) {
                     match mgr.find_by_token(token_uuid).await {
                         None => {
-                            // Token is stale/invalid. Try to find the sender's active session
-                            // by CWD match — if found, the sender is legit (verified by outbox
-                            // anti-spoofing above), so refresh their token and continue.
+                            // Token is stale/invalid. Env-only credentials cannot be refreshed into
+                            // an already-running child process, so reject instead of injecting a new token.
                             drop(mgr);
                             if let Some(session_id) = self.find_active_session(app, &msg.from).await
                             {
-                                log::info!(
-                                    "[mailbox] Stale token from '{}' — found active session {}, refreshing token",
-                                    msg.from, session_id
+                                log::warn!(
+                                    "[mailbox] Stale token from '{}' matches active session {}, but env-only credentials cannot be refreshed in-place",
+                                    msg.from,
+                                    session_id
                                 );
-                                // Detach: inject_fresh_token_static blocks ~2s on the
-                                // staggered Enter writes; running it inline would stall
-                                // the poll loop. Mirrors reinject_credentials_after_clear_static
-                                // spawn pattern above (mailbox.rs:813-829).
-                                let app_clone = app.clone();
-                                tauri::async_runtime::spawn(async move {
-                                    Self::inject_fresh_token_static(&app_clone, session_id).await;
-                                });
-                                // Continue processing — sender verified by CWD match
-                            } else {
-                                return self
-                                    .reject_message(
-                                        path,
-                                        &msg,
-                                        "Invalid session token and no active session to refresh",
-                                    )
-                                    .await;
                             }
+                            return self
+                                .reject_message(
+                                    path,
+                                    &msg,
+                                    "Invalid session token. Env-only credentials cannot be refreshed into a live process; restart or respawn the sender session.",
+                                )
+                                .await;
                         }
                         Some(session) => {
                             // Anti-spoofing: verify msg.from matches the token's session CWD.
@@ -467,28 +457,23 @@ impl MailboxPoller {
                         }
                     }
                 } else {
-                    // Token is not a valid UUID (e.g. "none"). Treat like a stale token:
-                    // try to find the sender's active session by CWD and refresh.
+                    // Token is not a valid UUID. Env-only credentials cannot be refreshed
+                    // into an already-running child process, so reject instead of injecting.
                     drop(mgr);
                     if let Some(session_id) = self.find_active_session(app, &msg.from).await {
-                        log::info!(
-                            "[mailbox] Malformed token from '{}' — found active session {}, refreshing token",
-                            msg.from, session_id
+                        log::warn!(
+                            "[mailbox] Malformed token from '{}' matches active session {}, but env-only credentials cannot be refreshed in-place",
+                            msg.from,
+                            session_id
                         );
-                        // Detach: see comment on the stale-token branch above.
-                        let app_clone = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            Self::inject_fresh_token_static(&app_clone, session_id).await;
-                        });
-                    } else {
-                        return self
-                            .reject_message(
-                                path,
-                                &msg,
-                                "Malformed token and no active session to refresh",
-                            )
-                            .await;
                     }
+                    return self
+                        .reject_message(
+                            path,
+                            &msg,
+                            "Malformed session token. Env-only credentials cannot be refreshed into a live process; restart or respawn the sender session.",
+                        )
+                        .await;
                 }
             }
 
@@ -818,37 +803,21 @@ impl MailboxPoller {
             );
 
             // Post-command background work:
-            //  - For `/clear` on an agent session: best-effort visible credential
-            //    re-inject for compatibility. Env credentials remain available
-            //    to the still-live child process, so fallback failure must not
-            //    block the body follow-up.
-            //  - For `/compact` (or `/clear` on a plain shell): body follow-up only.
+            //  - `/clear` and `/compact` both keep the still-live child process environment.
+            //  - Credentials are env-only; nothing is re-sent through the PTY here.
+            //  - If the message has a follow-up body, inject it after the agent becomes idle.
             // Never block the delivery pipeline — spawn as a detached task.
-            let is_clear = command == "clear";
             let app_clone = app.clone();
             let msg_clone = msg.clone();
             let command_owned = command.clone();
             tauri::async_runtime::spawn(async move {
-                if is_clear {
-                    if let Err(e) =
-                        Self::reinject_credentials_after_clear_static(&app_clone, session_id).await
-                    {
-                        log::warn!(
-                            "[mailbox] Compatibility credential re-inject after /clear failed \
-                             (session={}): {}. Continuing because env credentials remain set \
-                             for the live process.",
-                            session_id,
-                            e
-                        );
-                    }
-                }
                 if !msg_clone.body.is_empty() {
                     if let Err(e) =
                         Self::inject_followup_after_idle_static(&app_clone, session_id, &msg_clone)
                             .await
                     {
                         log::warn!(
-                            "[mailbox] Follow-up body injection after /{} failed (session={}): {}",
+                            "[mailbox] Failed to inject follow-up after /{} for session {}: {}",
                             command_owned,
                             session_id,
                             e
@@ -893,10 +862,9 @@ impl MailboxPoller {
             }
         }
 
-        // SECURITY: this `first_100` log MUST NOT see credential blocks.
-        // Cred re-inject (reinject_credentials_after_clear_static) and spawn-path
-        // cred inject call inject_text_into_session directly, bypassing this
-        // branch. Do not refactor without re-verifying.
+        // SECURITY: this `first_100` log MUST NOT see credential values.
+        // Credentials are env-only and must never be routed through PTY payloads.
+        // Keep this log limited to standard message payloads.
         log::debug!(
             "[mailbox] Injecting into PTY session={} msg={} payload_len={} first_100={:?}",
             session_id,
@@ -976,76 +944,6 @@ impl MailboxPoller {
         // between the idle check above and this write. Acceptable for this use case.
         let payload = crate::phone::messaging::format_pty_wrap(&msg.from, &msg.body);
         crate::pty::inject::inject_text_into_session(app, session_id, &payload).await
-    }
-
-    /// Wait for agent to become idle after `/clear`, then best-effort re-inject
-    /// the visible credentials block for compatibility with agents that still
-    /// rely on conversation text. Env-first credentials remain available in the
-    /// still-live child process and are not affected by `/clear`.
-    async fn reinject_credentials_after_clear_static(
-        app: &tauri::AppHandle,
-        session_id: Uuid,
-    ) -> Result<(), String> {
-        // Resolve the session once up front. We need `agent_id`, `token`,
-        // and `working_directory`. Fields are immutable for the lifetime
-        // of the session; the idle-poll loop below uses `list_sessions`
-        // to detect destruction tick-by-tick.
-        let (token, cwd) = {
-            let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
-            let mgr = session_mgr.read().await;
-            match mgr.get_session(session_id).await {
-                Some(s) if s.agent_id.is_some() => (s.token, s.working_directory.clone()),
-                Some(_) => {
-                    // Not an agent session — nothing to re-inject.
-                    return Ok(());
-                }
-                None => {
-                    return Err(format!(
-                        "Session {} gone before credential re-inject",
-                        session_id
-                    ));
-                }
-            }
-        };
-
-        let max_wait = std::time::Duration::from_secs(30);
-        let poll = std::time::Duration::from_millis(500);
-        let start = std::time::Instant::now();
-
-        // Wait for idle (waiting_for_input = true)
-        loop {
-            if start.elapsed() >= max_wait {
-                return Err(format!(
-                    "Timeout waiting for idle before credential re-inject ({}s)",
-                    max_wait.as_secs()
-                ));
-            }
-            tokio::time::sleep(poll).await;
-
-            let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
-            let mgr = session_mgr.read().await;
-            let sessions = mgr.list_sessions().await;
-            match sessions.iter().find(|s| s.id == session_id.to_string()) {
-                Some(s) if s.waiting_for_input => break,
-                Some(_) => {} // busy — keep polling
-                None => {
-                    return Err(format!(
-                        "Session {} destroyed during credential re-inject poll",
-                        session_id
-                    ));
-                }
-            }
-        }
-
-        // Build + inject. Same call shape as spawn path.
-        let cred_block = crate::pty::credentials::build_credentials_block(&token, &cwd);
-        crate::pty::inject::inject_text_into_session(app, session_id, &cred_block).await?;
-
-        log::info!(
-            "[mailbox] Credentials re-injected after /clear (session={})",
-            session_id
-        );
-        Ok(())
     }
 
     /// Find the best session for a given agent name (matches by working directory).
@@ -1858,90 +1756,6 @@ impl MailboxPoller {
 
             // Delete processed request file regardless of success/failure
             let _ = std::fs::remove_file(&path);
-        }
-    }
-
-    /// Inject the current valid token into a session's PTY so the agent can update its credentials.
-    /// Called when we detect the agent is using a stale token.
-    ///
-    /// Static — designed to run inside a detached `tauri::async_runtime::spawn`
-    /// at the call site so the ~2s staggered-Enter inject does not stall the
-    /// mailbox poll loop. Idle-gates on `waiting_for_input` before injecting so
-    /// the trailing \r writes don't submit unrelated input that landed in the
-    /// PTY between the original write and the staggered Enters.
-    async fn inject_fresh_token_static(app: &tauri::AppHandle, session_id: Uuid) {
-        // Extract session data under the read-lock, then drop before the idle-poll
-        // loop and the PTY inject. Same lock ordering as deliver_wake / inject_into_pty.
-        let notice = {
-            let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
-            let mgr = session_mgr.read().await;
-            let sessions = mgr.list_sessions().await;
-
-            match sessions.iter().find(|s| s.id == session_id.to_string()) {
-                Some(session) => format!(
-                    "\n\
-                    # === TOKEN REFRESHED ===\n\
-                    # Your previous token was invalid. Here is your updated token:\n\
-                    # New session token: {token}\n\
-                    #\n\
-                    # Updated send command:\n\
-                    #   \"{exe}\" send --token {token} --root \"{root}\" --to \"<agent_name>\" --send <filename> --mode wake\n\
-                    # === End Token Refresh ===\n\
-                    ",
-                    exe = crate::config::profile::exe_name(),
-                    token = session.token,
-                    root = session.working_directory,
-                ),
-                None => {
-                    log::warn!("[mailbox] inject_fresh_token: session {} not found", session_id);
-                    return;
-                }
-            }
-            // SessionManager read-lock dropped here
-        };
-
-        // Wait for the agent to be at-prompt before injecting. Same poll/timeout
-        // values used by the other Enter-sending paths
-        // (commands/session.rs:520-541, mailbox.rs:1006-1028). On timeout, fall
-        // through and inject anyway — matches commands/session.rs:520-541 fallback.
-        let max_wait = std::time::Duration::from_secs(30);
-        let poll = std::time::Duration::from_millis(500);
-        let start = std::time::Instant::now();
-
-        loop {
-            if start.elapsed() >= max_wait {
-                log::warn!(
-                    "[mailbox] Timeout waiting for idle before fresh token inject (session={}, {}s) — injecting anyway",
-                    session_id,
-                    max_wait.as_secs()
-                );
-                break;
-            }
-            tokio::time::sleep(poll).await;
-
-            let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
-            let mgr = session_mgr.read().await;
-            let sessions = mgr.list_sessions().await;
-            match sessions.iter().find(|s| s.id == session_id.to_string()) {
-                Some(s) if s.waiting_for_input => break,
-                Some(_) => {} // busy — keep polling
-                None => {
-                    log::warn!(
-                        "[mailbox] Session {} gone before fresh token inject",
-                        session_id
-                    );
-                    return;
-                }
-            }
-        }
-
-        match crate::pty::inject::inject_text_into_session(app, session_id, &notice).await {
-            Ok(()) => log::info!("[mailbox] Fresh token injected into session {}", session_id),
-            Err(e) => log::warn!(
-                "[mailbox] Failed to inject fresh token into session {}: {}",
-                session_id,
-                e
-            ),
         }
     }
 }

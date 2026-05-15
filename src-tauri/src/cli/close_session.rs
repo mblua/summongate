@@ -17,7 +17,7 @@ If the agent doesn't exit within --timeout seconds, it falls back to force-kill.
 Use --force to skip graceful shutdown and kill immediately.\n\n\
 DISCOVERY: Use `list-peers` to get valid agent names for --target.")]
 pub struct CloseSessionArgs {
-    /// Session token for authentication (from AGENTSCOMMANDER_TOKEN or visible credentials fallback)
+    /// Session token for authentication (from AGENTSCOMMANDER_TOKEN)
     #[arg(long)]
     pub token: Option<String>,
 
