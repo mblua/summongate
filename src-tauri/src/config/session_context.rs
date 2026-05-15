@@ -115,7 +115,7 @@ fn resolve_skill_owner_root(agent_root: &str, replica_matrix_root: Option<&str>)
         return Some(matrix_root.to_string());
     }
 
-    if is_agent_matrix_dir(agent_root) {
+    if is_canonical_agent_matrix_dir(agent_root) {
         let agent_path = Path::new(agent_root);
         return std::fs::canonicalize(agent_path)
             .map(|p| display_path(&p))
@@ -778,16 +778,43 @@ fn find_ac_new_root(path: &std::path::Path) -> Option<std::path::PathBuf> {
         .map(canonical_or_original)
 }
 
-fn is_agent_matrix_dir(cwd: &str) -> bool {
-    std::path::Path::new(cwd)
-        .file_name()
+fn has_agent_matrix_dir_name(path: &Path) -> bool {
+    path.file_name()
         .and_then(|name| name.to_str())
         .map(|name| name.starts_with("_agent_"))
         .unwrap_or(false)
 }
 
+fn path_parent_is_ac_new(path: &Path) -> bool {
+    path.parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        .map(|name| name.eq_ignore_ascii_case(".ac-new"))
+        .unwrap_or(false)
+}
+
+fn is_canonical_agent_matrix_dir(cwd: &str) -> bool {
+    let path = Path::new(cwd);
+    if !has_agent_matrix_dir_name(path) {
+        return false;
+    }
+
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    let file_type = metadata.file_type();
+    if !metadata.is_dir() || file_type.is_symlink() {
+        return false;
+    }
+
+    let Ok(canonical_path) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    has_agent_matrix_dir_name(&canonical_path) && path_parent_is_ac_new(&canonical_path)
+}
+
 fn is_agent_dir(cwd: &str) -> bool {
-    is_replica_agent_dir(cwd) || is_agent_matrix_dir(cwd)
+    is_replica_agent_dir(cwd) || is_canonical_agent_matrix_dir(cwd)
 }
 
 /// Build the GIT_CEILING_DIRECTORIES value for agent sessions rooted in `.ac-new`.
@@ -1085,7 +1112,7 @@ fn resolve_session_context_content(cwd: &str) -> Result<Option<String>, String> 
             Ok(None) => ensure_session_context(cwd)?,
             Err(e) => return Err(e),
         }
-    } else if is_agent_matrix_dir(cwd) {
+    } else if is_canonical_agent_matrix_dir(cwd) {
         ensure_session_context(cwd)?
     } else {
         return Ok(None);
@@ -1948,5 +1975,31 @@ mod tests {
             &matrix_root.join("skills").join("runtime").join("SKILL.md")
         )));
         assert!(!content.contains("DIRECT_BODY_SHOULD_NOT_RENDER"));
+    }
+
+    #[test]
+    fn materialize_agent_context_file_ignores_standalone_agent_named_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let standalone_root = temp.path().join("_agent_notes");
+        std::fs::create_dir_all(&standalone_root).expect("create standalone root");
+        let existing_context = "user-authored prompt content\n";
+        std::fs::write(standalone_root.join("AGENTS.md"), existing_context)
+            .expect("write existing prompt");
+
+        let materialized = materialize_agent_context_file(
+            &path_string(&standalone_root),
+            ManagedContextTarget::Codex,
+        )
+        .expect("materialize context should not error");
+
+        assert!(
+            materialized.is_none(),
+            "standalone _agent_* directories are not canonical Agent Matrix roots"
+        );
+        assert_eq!(
+            std::fs::read_to_string(standalone_root.join("AGENTS.md"))
+                .expect("read existing prompt"),
+            existing_context
+        );
     }
 }
