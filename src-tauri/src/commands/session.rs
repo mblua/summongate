@@ -1712,7 +1712,7 @@ pub async fn create_root_agent_session(
         }
     }
 
-    // Credentials are auto-injected by create_session_inner for all Claude sessions.
+    // Credentials for resolved agent sessions are provided through the child process environment in PtyManager::spawn; no visible credential write occurs here.
 
     Ok(info)
 }
