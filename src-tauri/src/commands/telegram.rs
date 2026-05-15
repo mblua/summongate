@@ -20,16 +20,55 @@ pub async fn telegram_attach(
 ) -> Result<BridgeInfo, String> {
     let uuid = Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
 
-    // Look up session to check is_claude flag for JSONL watcher mode
-    let jsonl_cwd = {
+    // For Claude sessions we pre-resolve the JSONL `projects/<mangled-cwd>` directory
+    // so wrapper-driven `CLAUDE_CONFIG_DIR` overrides (e.g. `claude-mb`) are honored.
+    // If is_claude is true but the resolver returns None, fail loud: emit
+    // telegram_bridge_error and abort — silent fallback to PTY for Claude is exactly
+    // the noisy mode we are trying to retire.
+    //
+    // Extract the fields the resolver needs and drop the SessionManager read guard
+    // BEFORE invoking the resolver — the resolver does blocking filesystem I/O
+    // (`which::which` walks `%PATH%`, opens wrapper scripts) that can take hundreds
+    // of milliseconds. Holding a `tokio::sync::RwLock` read guard across that would
+    // starve concurrent writers (create_session, restart_session, switch_session).
+    let (is_claude, shell, shell_args, working_directory) = {
         let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
         let mgr = session_mgr.read().await;
         let session = mgr.get_session(uuid).await.ok_or("Session not found")?;
-        if session.is_claude {
-            Some(session.working_directory.clone())
-        } else {
-            None
+        (
+            session.is_claude,
+            session.shell.clone(),
+            session.shell_args.clone(),
+            session.working_directory.clone(),
+        )
+        // Guard dropped at end of this block, before the resolver call below.
+    };
+
+    let jsonl_project_dir = if is_claude {
+        match crate::commands::session::resolve_claude_projects_dir(
+            &shell,
+            &shell_args,
+            &working_directory,
+        ) {
+            Some(p) => Some(p),
+            None => {
+                let err_msg = format!(
+                    "Telegram bridge: cannot resolve Claude projects dir for session {} (shell={:?}). Bridge inactive.",
+                    uuid, shell
+                );
+                log::error!("{}", err_msg);
+                let _ = app.emit(
+                    "telegram_bridge_error",
+                    serde_json::json!({
+                        "sessionId": session_id,
+                        "error": err_msg,
+                    }),
+                );
+                return Err(err_msg);
+            }
         }
+    } else {
+        None
     };
 
     let cfg = settings.read().await;
@@ -44,7 +83,7 @@ pub async fn telegram_attach(
     let pty_arc = pty_mgr.inner().clone();
     let mut tg = tg_mgr.lock().await;
     let info = tg
-        .attach(uuid, &bot, pty_arc, app.clone(), jsonl_cwd)
+        .attach(uuid, &bot, pty_arc, app.clone(), jsonl_project_dir)
         .map_err(|e| e.to_string())?;
 
     let _ = app.emit("telegram_bridge_attached", info.clone());

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use uuid::Uuid;
@@ -36,7 +37,7 @@ impl TelegramBridgeManager {
         bot: &TelegramBotConfig,
         pty_mgr: Arc<Mutex<PtyManager>>,
         app_handle: tauri::AppHandle,
-        jsonl_cwd: Option<String>,
+        jsonl_project_dir: Option<PathBuf>,
     ) -> Result<BridgeInfo, AppError> {
         // Exclusivity: one bot can only be attached to one session
         if let Some(existing) = self.bot_assignments.get(&bot.id) {
@@ -62,6 +63,8 @@ impl TelegramBridgeManager {
             color: bot.color.clone(),
         };
 
+        let is_jsonl_mode = jsonl_project_dir.is_some();
+
         let handle = bridge::spawn_bridge(
             bot.token.clone(),
             bot.chat_id,
@@ -69,12 +72,12 @@ impl TelegramBridgeManager {
             info.clone(),
             pty_mgr,
             app_handle,
-            jsonl_cwd.clone(),
+            jsonl_project_dir,
         );
 
         // Only register output sender for PTY mode.
         // In JSONL mode, the watcher reads directly from file — no PTY byte feed needed.
-        if jsonl_cwd.is_none() {
+        if !is_jsonl_mode {
             if let Ok(mut senders) = self.output_senders.lock() {
                 senders.insert(session_id, handle.output_sender.clone());
             }

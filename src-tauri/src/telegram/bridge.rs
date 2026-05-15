@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::io::Write as IoWrite;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager};
@@ -423,18 +424,18 @@ pub fn spawn_bridge(
     info: BridgeInfo,
     pty_mgr: Arc<Mutex<PtyManager>>,
     app_handle: tauri::AppHandle,
-    jsonl_cwd: Option<String>,
+    jsonl_project_dir: Option<PathBuf>,
 ) -> BridgeHandle {
     let cancel = CancellationToken::new();
     let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
 
     let session_id_str = session_id.to_string();
 
-    if let Some(cwd) = jsonl_cwd {
+    if let Some(project_dir) = jsonl_project_dir {
         // JSONL mode: watch Claude Code session log instead of PTY pipeline
         drop(rx); // not needed — no PTY bytes feed
         super::jsonl_watcher::spawn_watch_task(
-            cwd,
+            project_dir,
             bot_token.clone(),
             chat_id,
             session_id_str.clone(),

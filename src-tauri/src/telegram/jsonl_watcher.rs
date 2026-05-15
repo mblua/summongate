@@ -10,7 +10,6 @@ use tauri::Emitter;
 use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
-use crate::session::session::mangle_cwd_for_claude;
 use crate::telegram::bridge::{flush_buffer, BridgeLogger, DiagLogger};
 
 const POLL_INTERVAL_MS: u64 = 500;
@@ -20,8 +19,12 @@ const ROTATION_STALE_SECS: u64 = 3;
 
 /// Spawn a JSONL file watcher task that polls for new assistant messages
 /// and sends them to Telegram via the shared buffer/send pipeline.
+///
+/// `project_dir` must be the already-resolved Claude `projects/<mangled-cwd>`
+/// directory (callers resolve via `commands::session::resolve_claude_projects_dir`
+/// so wrapper-driven `CLAUDE_CONFIG_DIR` overrides like `claude-mb` are honored).
 pub fn spawn_watch_task(
-    cwd: String,
+    project_dir: PathBuf,
     bot_token: String,
     chat_id: i64,
     session_id: String,
@@ -30,7 +33,7 @@ pub fn spawn_watch_task(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         watch_loop(
-            cwd,
+            project_dir,
             bot_token,
             chat_id,
             session_id.clone(),
@@ -181,26 +184,13 @@ fn read_new_lines(
 }
 
 async fn watch_loop(
-    cwd: String,
+    project_dir: PathBuf,
     token: String,
     chat_id: i64,
     session_id: String,
     cancel: CancellationToken,
     app: tauri::AppHandle,
 ) {
-    let project_dir = match dirs::home_dir() {
-        Some(home) => home
-            .join(".claude")
-            .join("projects")
-            .join(mangle_cwd_for_claude(&cwd)),
-        None => {
-            log::error!("[JSONL_ERR] Cannot resolve home directory — JSONL watcher dormant");
-            // Stay alive but dormant until cancelled
-            cancel.cancelled().await;
-            return;
-        }
-    };
-
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
