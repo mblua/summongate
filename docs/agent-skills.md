@@ -5,12 +5,11 @@ Agent skills are reusable instructions stored in an agent's canonical
 role prompt but useful enough to keep around, such as release checklists,
 framework conventions, debugging recipes, or tool-specific operating notes.
 
-In Agents Commander, the `skills/` folder is filesystem support. Agent Matrix
-creation creates the folder, and workgroup replica context grants the replica
-write access to the origin Agent Matrix `skills/` directory. Agents Commander
-does not currently scan skills, list them in the prompt, or inject `SKILL.md`
-bodies automatically. A coding agent must be asked or instructed to read the
-relevant skill file during the task.
+AgentsCommander scans the canonical Agent Matrix `skills/` directory at
+session/context creation time when a canonical Matrix root is available. It
+reads only the first YAML frontmatter segment from each `SKILL.md`, injects a
+deterministic metadata index into the generated context, and does not inject
+all full `SKILL.md` bodies at startup.
 
 ## Where Skills Live
 
@@ -35,15 +34,20 @@ AgentsCommander context allows writes to the origin Agent Matrix `skills/`
 folder. That keeps skills canonical across replicas instead of copying them
 into one temporary workgroup session.
 
-Standalone agent folders can also contain a local `skills/` folder, but today
-Agents Commander does not create or manage that folder for plain
-`create-agent` agents.
+Standalone agent folders can also contain a local `skills/` folder, but
+AgentsCommander runtime discovery does not scan standalone local skills unless
+canonical Agent Matrix state is resolved.
 
 ## Minimal Skill Layout
 
-Use one directory per skill. By convention, `SKILL.md` is the entry point that
-agents are instructed to read. Agents Commander does not enforce this layout or
-validate that a skill directory contains `SKILL.md`.
+Use one directory per skill. `SKILL.md` with YAML frontmatter is the validated
+entrypoint. `name` is optional and defaults to the skill directory name.
+`description` is recommended; when absent, AgentsCommander keeps the skill
+visible with a warning that the agent should inspect `SKILL.md` before use.
+
+Directories without `SKILL.md`, parseable frontmatter, a valid skill name, or a
+non-duplicate skill name are reported in generated context warnings and skipped
+from the valid skill index.
 
 ```text
 skills/
@@ -56,10 +60,13 @@ skills/
 Minimal `SKILL.md`:
 
 ```markdown
-# rust-test-triage
+---
+name: rust-test-triage
+description: Triage Rust test, cargo check, or cargo clippy failures.
+when_to_use: Use when a Rust build, test, or lint command fails and needs focused diagnosis.
+---
 
-Use this skill when a Rust test, `cargo check`, or `cargo clippy` failure needs
-triage.
+# rust-test-triage
 
 ## Workflow
 
@@ -75,44 +82,35 @@ triage.
 ```
 
 A skill can contain extra files such as `references/`, `templates/`, or
-`scripts/`. Keep `SKILL.md` small enough to read at task start, and let it point
-to larger supporting files only when they are needed.
+`scripts/`. Keep `SKILL.md` focused, and let it point to larger supporting
+files only when they are needed.
 
 ## Creating a Skill
 
 1. Open the canonical Agent Matrix directory for the agent, for example
    `.ac-new/_agent_dev-rust/`.
 2. Create `skills/<skill-name>/`.
-3. Add `skills/<skill-name>/SKILL.md`.
+3. Add `skills/<skill-name>/SKILL.md` with YAML frontmatter.
 4. Describe when to use the skill and the exact workflow to follow.
 5. Add small reference files only when they reduce repeated instructions.
 
-Skill names should be short, lowercase, and filesystem-friendly:
+Skill names must be short, lowercase, and filesystem-friendly:
 `rust-test-triage`, `release-notes`, `ui-accessibility-check`.
 
 ## Using a Skill
 
-Because Agents Commander does not inject skills automatically, reference them
-explicitly in normal workflow prompts or role instructions:
-
-```text
-Use the rust-test-triage skill for this cargo clippy failure.
-```
-
-or:
-
-```text
-Before publishing release notes, read skills/release-notes/SKILL.md and follow
-that workflow.
-```
+The agent no longer needs the user to name every skill. The generated context
+includes a metadata index, and the agent should inspect `SKILL.md` when the
+task matches `description` / `when_to_use`, or when the user names a skill.
 
 When the agent is running from a workgroup replica, resolve `skills/...`
 against the origin Agent Matrix directory named in the session context, not
 against the replica's current working directory.
 
-An agent should then:
+Full bodies and supporting files remain progressive-disclosure content. An
+agent should:
 
-1. Locate the relevant `skills/<skill-name>/SKILL.md`.
+1. Locate the relevant canonical `skills/<skill-name>/SKILL.md`.
 2. Read `SKILL.md` before making changes.
 3. Open only the referenced supporting files that matter for the current task.
 4. Apply the workflow while still obeying the session's write restrictions.
@@ -121,23 +119,24 @@ An agent should then:
 If the user names a skill that does not exist, the agent should say so and
 continue with the best available fallback instead of inventing hidden behavior.
 
-## Current Runtime Behavior
+## Runtime Behavior
 
-Agents Commander currently supports skills as files:
+AgentsCommander supports:
 
-- Agent Matrix creation creates a `skills/` folder.
-- Workgroup replica context permits writes to the origin Agent Matrix
-  `skills/` folder.
-- The generated session context names `skills/` as an allowed canonical state
-  directory when an origin Agent Matrix is available.
+- Discovery at session/context creation time.
+- Deterministic skill ordering.
+- Metadata extraction from Claude Code-compatible frontmatter.
+- Missing-name fallback to the directory name.
+- Missing-description warnings without body fallback.
+- Duplicate same-scope name rejection.
+- Generated context listing for discovered skills.
+- Warnings for invalid, missing, oversized, or unreadable skill entrypoints.
 
-Agents Commander currently does not:
+AgentsCommander does not:
 
-- Discover available skills at session start.
-- Add skill names to `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md` automatically.
-- Inject `SKILL.md` contents into the model prompt.
-- Decide when a skill applies to a task.
-- Validate skill directory structure.
-
-That means a skill is inert until the user, role prompt, or agent workflow
-explicitly tells the coding agent to read it.
+- Automatically execute `!` shell injections.
+- Enforce `allowed-tools`, model, effort, hooks, or forked subagent semantics.
+- Inject full skill bodies until an agent chooses to read/use a skill.
+- Recursively discover nested skills.
+- Discover standalone local `skills/` folders without canonical Agent Matrix
+  state.
