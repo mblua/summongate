@@ -1069,13 +1069,33 @@ pub async fn create_session(
 
                 if let Some(bot) = bot {
                     let pty_arc = pty_mgr.inner().clone();
-                    let jsonl_cwd = if info.is_claude {
-                        Some(cwd.clone())
+                    let jsonl_project_dir = if info.is_claude {
+                        match resolve_claude_projects_dir(&info.shell, &info.shell_args, &cwd) {
+                            Some(p) => Some(p),
+                            None => {
+                                let err_msg = format!(
+                                    "Telegram bridge: cannot resolve Claude projects dir for session {} (shell={:?}). Bridge inactive.",
+                                    id, info.shell
+                                );
+                                log::error!("{}", err_msg);
+                                let _ = app.emit(
+                                    "telegram_bridge_error",
+                                    serde_json::json!({
+                                        "sessionId": info.id,
+                                        "error": err_msg,
+                                    }),
+                                );
+                                // Skip attach — do not silently fall back to PTY for Claude.
+                                return Ok(info);
+                            }
+                        }
                     } else {
                         None
                     };
                     let mut tg = tg_mgr.lock().await;
-                    if let Ok(bridge_info) = tg.attach(id, &bot, pty_arc, app.clone(), jsonl_cwd) {
+                    if let Ok(bridge_info) =
+                        tg.attach(id, &bot, pty_arc, app.clone(), jsonl_project_dir)
+                    {
                         let _ = app.emit("telegram_bridge_attached", bridge_info);
                     }
                 }
@@ -1315,14 +1335,42 @@ pub async fn restart_session(
 
                 if let Some(bot) = bot {
                     let pty_arc = pty_mgr.inner().clone();
-                    let jsonl_cwd = if session_info.is_claude {
-                        Some(cwd.clone())
+                    let jsonl_project_dir = if session_info.is_claude {
+                        match resolve_claude_projects_dir(
+                            &session_info.shell,
+                            &session_info.shell_args,
+                            &cwd,
+                        ) {
+                            Some(p) => Some(p),
+                            None => {
+                                let err_msg = format!(
+                                    "Telegram bridge: cannot resolve Claude projects dir for session {} (shell={:?}). Bridge inactive.",
+                                    new_uuid, session_info.shell
+                                );
+                                log::error!("{}", err_msg);
+                                let _ = app.emit(
+                                    "telegram_bridge_error",
+                                    serde_json::json!({
+                                        "sessionId": session_info.id,
+                                        "error": err_msg,
+                                    }),
+                                );
+                                // Skip attach — do not silently fall back to PTY for Claude.
+                                // Persist + return the new session info so restart still succeeds
+                                // semantically (the user explicitly restarted; only the bridge fails).
+                                {
+                                    let mgr = session_mgr.read().await;
+                                    persist_current_state(&mgr).await;
+                                }
+                                return Ok(session_info);
+                            }
+                        }
                     } else {
                         None
                     };
                     let mut tg = tg_mgr.lock().await;
                     if let Ok(bridge_info) =
-                        tg.attach(new_uuid, &bot, pty_arc, app.clone(), jsonl_cwd)
+                        tg.attach(new_uuid, &bot, pty_arc, app.clone(), jsonl_project_dir)
                     {
                         let _ = app.emit("telegram_bridge_attached", bridge_info);
                     }
@@ -1697,13 +1745,37 @@ pub async fn create_root_agent_session(
                 drop(cfg);
                 if let Some(bot) = bot {
                     let pty_arc = pty_mgr.inner().clone();
-                    let jsonl_cwd = if info.is_claude {
-                        Some(root_agent_path.clone())
+                    let jsonl_project_dir = if info.is_claude {
+                        match resolve_claude_projects_dir(
+                            &info.shell,
+                            &info.shell_args,
+                            &root_agent_path,
+                        ) {
+                            Some(p) => Some(p),
+                            None => {
+                                let err_msg = format!(
+                                    "Telegram bridge: cannot resolve Claude projects dir for session {} (shell={:?}). Bridge inactive.",
+                                    id, info.shell
+                                );
+                                log::error!("{}", err_msg);
+                                let _ = app.emit(
+                                    "telegram_bridge_error",
+                                    serde_json::json!({
+                                        "sessionId": info.id,
+                                        "error": err_msg,
+                                    }),
+                                );
+                                // Skip attach — do not silently fall back to PTY for Claude.
+                                return Ok(info);
+                            }
+                        }
                     } else {
                         None
                     };
                     let mut tg = tg_mgr.lock().await;
-                    if let Ok(bridge_info) = tg.attach(id, &bot, pty_arc, app.clone(), jsonl_cwd) {
+                    if let Ok(bridge_info) =
+                        tg.attach(id, &bot, pty_arc, app.clone(), jsonl_project_dir)
+                    {
                         let _ = app.emit("telegram_bridge_attached", bridge_info);
                     }
                 }
