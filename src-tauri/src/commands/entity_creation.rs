@@ -329,10 +329,9 @@ pub async fn create_agent_matrix(
                 );
             }
         }
-        if let Err(e) = crate::config::claude_settings::ensure_rtk_pretool_hook(
-            &agent_dir,
-            inject_rtk_hook,
-        ) {
+        if let Err(e) =
+            crate::config::claude_settings::ensure_rtk_pretool_hook(&agent_dir, inject_rtk_hook)
+        {
             log::warn!(
                 "[entity_creation] Failed to apply rtk hook for matrix {}: {}",
                 agent_dir.display(),
@@ -1433,6 +1432,7 @@ fn check_workgroup_repos_dirty(wg_dirs: &[PathBuf]) -> Vec<(String, String)> {
 
             // Check for uncommitted changes (staged + unstaged + untracked)
             let mut cmd = std::process::Command::new("git");
+            crate::pty::credentials::scrub_credentials_from_std_command(&mut cmd);
             cmd.args(["status", "--porcelain"])
                 .current_dir(&path)
                 .stdout(std::process::Stdio::piped())
@@ -1452,6 +1452,7 @@ fn check_workgroup_repos_dirty(wg_dirs: &[PathBuf]) -> Vec<(String, String)> {
 
             // Check for unpushed commits
             let mut cmd2 = std::process::Command::new("git");
+            crate::pty::credentials::scrub_credentials_from_std_command(&mut cmd2);
             cmd2.args(["log", "@{upstream}..HEAD", "--oneline"])
                 .current_dir(&path)
                 .stdout(std::process::Stdio::piped())
@@ -1670,9 +1671,7 @@ fn determine_next_wg_number(ac_new_dir: &Path, team_name: &str) -> u32 {
                 // suffix checks but produces a slice with start > end,
                 // which would panic with `&str[..]`. `.get(..)` returns
                 // `None` instead, so such entries are silently ignored.
-                if let Some(middle) =
-                    name_str.get(3..name_str.len() - suffix.len())
-                {
+                if let Some(middle) = name_str.get(3..name_str.len() - suffix.len()) {
                     if let Ok(n) = middle.parse::<u32>() {
                         taken.insert(n);
                     }
@@ -1686,9 +1685,7 @@ fn determine_next_wg_number(ac_new_dir: &Path, team_name: &str) -> u32 {
     // the first miss so the actual cost is O(taken.len() + 1) in practice.
     // A `0` may end up in `taken` (from a stray `wg-0-{team}`) but is never
     // tested here — the search starts at 1, so slot 1 is always reachable.
-    (1u32..=u32::MAX)
-        .find(|n| !taken.contains(n))
-        .unwrap_or(1)
+    (1u32..=u32::MAX).find(|n| !taken.contains(n)).unwrap_or(1)
 }
 
 /// Compute a relative path from the replica dir to the agent matrix.
@@ -1777,6 +1774,7 @@ async fn git_clone_async(url: &str, target: &Path) -> Result<(), String> {
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let mut cmd = tokio::process::Command::new("git");
+    crate::pty::credentials::scrub_credentials_from_tokio_command(&mut cmd);
     cmd.args(["-c", "core.longpaths=true", "clone", "--depth", "1", url])
         .arg(target.as_os_str());
 
@@ -1810,6 +1808,7 @@ async fn git_clone_async(url: &str, target: &Path) -> Result<(), String> {
             url
         );
         let mut reset_cmd = tokio::process::Command::new("git");
+        crate::pty::credentials::scrub_credentials_from_tokio_command(&mut reset_cmd);
         reset_cmd.args(["reset"]).current_dir(target);
         #[cfg(windows)]
         {
@@ -1855,11 +1854,7 @@ mod tests {
         let orphans: Vec<_> = std::fs::read_dir(parent)
             .expect("read tempdir")
             .flatten()
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with(".deleting-")
-            })
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".deleting-"))
             .collect();
         assert!(
             orphans.is_empty(),
@@ -1918,7 +1913,10 @@ mod tests {
         match &outcome {
             WgDeleteOutcome::Blocked(_) => {
                 assert!(wg_dir.is_dir(), "wg_dir must remain after blocked rename");
-                assert!(inside.is_file(), "inner file must remain after blocked rename");
+                assert!(
+                    inside.is_file(),
+                    "inner file must remain after blocked rename"
+                );
             }
             WgDeleteOutcome::Deleted => {
                 panic!(
@@ -2217,8 +2215,7 @@ mod tests {
     #[test]
     fn determine_next_wg_number_ignores_files_named_like_workgroups() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        std::fs::write(tmp.path().join("wg-1-dev-team"), b"not a dir")
-            .expect("write file");
+        std::fs::write(tmp.path().join("wg-1-dev-team"), b"not a dir").expect("write file");
         assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 1);
     }
 
@@ -2276,5 +2273,4 @@ mod tests {
         // For team `dev-team`: only `wg-1-dev-team` counts. Next free is 2.
         assert_eq!(determine_next_wg_number(tmp.path(), "dev-team"), 2);
     }
-
 }

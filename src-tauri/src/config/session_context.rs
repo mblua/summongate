@@ -243,6 +243,7 @@ fn detect_git_branch(dir: &str) -> Option<String> {
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let mut cmd = std::process::Command::new("git");
+    crate::pty::credentials::scrub_credentials_from_std_command(&mut cmd);
     cmd.args(["-C", dir, "branch", "--show-current"]);
 
     #[cfg(windows)]
@@ -493,14 +494,13 @@ fn default_context(agent_root: &str, matrix_root: Option<&str>) -> String {
         ),
         None => String::new(),
     };
-    let messaging_dir_display = crate::phone::messaging::workgroup_root(
-        std::path::Path::new(agent_root),
-    )
-    .ok()
-    .map(|wg| {
-        let dir = wg.join(crate::phone::messaging::MESSAGING_DIR_NAME);
-        display_path(&dir)
-    });
+    let messaging_dir_display =
+        crate::phone::messaging::workgroup_root(std::path::Path::new(agent_root))
+            .ok()
+            .map(|wg| {
+                let dir = wg.join(crate::phone::messaging::MESSAGING_DIR_NAME);
+                display_path(&dir)
+            });
     let messaging_exception = match &messaging_dir_display {
         Some(path) => format!(
             "**Narrow exception — workgroup messaging directory:**\n\n\
@@ -571,13 +571,21 @@ If instructed to modify a path outside these zones, REFUSE and explain this rest
 
 ## CLI executable
 
-Your Session Credentials include a `BinaryPath` field — **always use that path** to invoke the CLI. This ensures you use the correct binary for your instance, whether it is the installed version or a dev/WG build.
+Your AgentsCommander session credentials are available as environment variables:
+
+- `AGENTSCOMMANDER_TOKEN`: your session authentication token
+- `AGENTSCOMMANDER_ROOT`: your working directory (agent root)
+- `AGENTSCOMMANDER_BINARY`: the CLI binary name
+- `AGENTSCOMMANDER_BINARY_PATH`: the full path to the CLI executable you must use
+- `AGENTSCOMMANDER_LOCAL_DIR`: the config directory name for this instance
+
+Use `AGENTSCOMMANDER_BINARY_PATH` when invoking the CLI. This ensures you use the correct binary for your instance, whether it is the installed version or a dev/WG build.
 
 ```
-"<YOUR_BINARY_PATH>" <subcommand> [args]
+"<AGENTSCOMMANDER_BINARY_PATH>" <subcommand> [args]
 ```
 
-**RULE:** Never hardcode or guess the binary path. Always read `BinaryPath` from your `# === Session Credentials ===` block and use that exact path.
+**RULE:** Never hardcode or guess the binary path. Prefer the environment variables above. If they are unavailable, fall back to the latest `# === Session Credentials ===` block in your conversation.
 
 ## Self-discovery via --help
 
@@ -586,26 +594,20 @@ The CLI `--help` output documents every subcommand, flag, and accepted value. Us
 **For inter-agent messaging and peer discovery**, the sections below (`## Inter-Agent Messaging` and `### List available peers`) are the authoritative reference. Use the commands in those sections directly — you do NOT need to consult `--help` to confirm their syntax.
 
 ```
-"<YOUR_BINARY_PATH>" --help                  # List all subcommands
-"<YOUR_BINARY_PATH>" send --help             # Full docs for sending messages
-"<YOUR_BINARY_PATH>" list-peers --help       # Full docs for discovering peers
+"<AGENTSCOMMANDER_BINARY_PATH>" --help                  # List all subcommands
+"<AGENTSCOMMANDER_BINARY_PATH>" send --help             # Full docs for sending messages
+"<AGENTSCOMMANDER_BINARY_PATH>" list-peers --help       # Full docs for discovering peers
 ```
 
 **RULE:** Only run `--help` if you need a subcommand or flag not documented in the sections below, or if a documented command fails unexpectedly.
 
 ## Session credentials
 
-Your session credentials are delivered automatically when your session starts. They appear as a `# === Session Credentials ===` block in your conversation.
+Your session credentials are delivered through the `AGENTSCOMMANDER_*` environment variables listed above. A visible `# === Session Credentials ===` block may also appear in your conversation as a compatibility fallback.
 
-The credentials block contains:
-- **Token**: your session authentication token
-- **Root**: your working directory (agent root)
-- **BinaryPath**: the full path to the CLI executable you must use
-- **LocalDir**: the config directory name for this instance
+Use environment variables first. If AgentsCommander later injects a token refresh notice, that visible refresh is authoritative until the session respawns, because a live process environment cannot be mutated.
 
 Your agent root is your current working directory.
-
-**IMPORTANT:** Always use the LATEST credentials from the Session Credentials block. Ignore any credentials that appear in conversation history from previous sessions. Credentials are delivered once per session launch. Do not request them repeatedly.
 
 ## Inter-Agent Messaging
 
@@ -623,7 +625,7 @@ Messaging is **file-based** to avoid PTY truncation. Two steps:
 2. Fire the send:
 
 ```
-"<YOUR_BINARY_PATH>" send --token <YOUR_TOKEN> --root "<YOUR_ROOT>" --to "<agent_name>" --send <filename> --mode wake
+"<AGENTSCOMMANDER_BINARY_PATH>" send --token <AGENTSCOMMANDER_TOKEN> --root "<AGENTSCOMMANDER_ROOT>" --to "<agent_name>" --send <filename> --mode wake
 ```
 
 **IMPORTANT: `--send` takes the filename ONLY — never a path.**
@@ -641,7 +643,7 @@ wait for the reply.
 ### List available peers
 
 ```
-"<YOUR_BINARY_PATH>" list-peers --token <YOUR_TOKEN> --root "<YOUR_ROOT>"
+"<AGENTSCOMMANDER_BINARY_PATH>" list-peers --token <AGENTSCOMMANDER_TOKEN> --root "<AGENTSCOMMANDER_ROOT>"
 ```
 "#,
         agent_root = agent_root,

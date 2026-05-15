@@ -44,6 +44,7 @@ fn resolve_real_git_path() -> Option<String> {
 
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     let mut cmd = std::process::Command::new("where.exe");
+    crate::pty::credentials::scrub_credentials_from_std_command(&mut cmd);
     cmd.arg("git.exe").creation_flags(CREATE_NO_WINDOW);
     let output = cmd.output().ok()?;
     if !output.status.success() {
@@ -285,6 +286,7 @@ impl PtyManager {
         cwd: &str,
         cols: u16,
         rows: u16,
+        extra_env: &[(String, String)],
         app_handle: AppHandle,
     ) -> Result<(), AppError> {
         let pty_system = native_pty_system();
@@ -325,6 +327,16 @@ impl PtyManager {
         };
         command.cwd(cwd);
         command.env("TERM", "xterm-256color");
+        crate::pty::credentials::apply_credential_env_to_pty_command(&mut command, extra_env);
+
+        if !extra_env.is_empty() {
+            log::info!(
+                "[pty] Applied {} per-process credential environment variables for session {}",
+                extra_env.len(),
+                id
+            );
+        }
+
         if let Some(git_ceiling_dirs) =
             crate::config::session_context::git_ceiling_directories_for_session_root(cwd)
         {

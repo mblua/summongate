@@ -249,8 +249,7 @@ impl MailboxPoller {
                             // instead of looping forever with `attempt_count >= MAX`.
                             let rejected = match read_text_bom_tolerant(&path) {
                                 Ok(content) => {
-                                    if let Ok(msg) =
-                                        serde_json::from_str::<OutboxMessage>(&content)
+                                    if let Ok(msg) = serde_json::from_str::<OutboxMessage>(&content)
                                     {
                                         self.reject_message(&path, &msg, &reason).await.is_ok()
                                     } else {
@@ -819,8 +818,10 @@ impl MailboxPoller {
             );
 
             // Post-command background work:
-            //  - For `/clear` on an agent session: re-inject credentials (Claude wipes
-            //    them with the context), then the body follow-up if present.
+            //  - For `/clear` on an agent session: best-effort visible credential
+            //    re-inject for compatibility. Env credentials remain available
+            //    to the still-live child process, so fallback failure must not
+            //    block the body follow-up.
             //  - For `/compact` (or `/clear` on a plain shell): body follow-up only.
             // Never block the delivery pipeline — spawn as a detached task.
             let is_clear = command == "clear";
@@ -829,20 +830,16 @@ impl MailboxPoller {
             let command_owned = command.clone();
             tauri::async_runtime::spawn(async move {
                 if is_clear {
-                    match Self::reinject_credentials_after_clear_static(&app_clone, session_id)
-                        .await
+                    if let Err(e) =
+                        Self::reinject_credentials_after_clear_static(&app_clone, session_id).await
                     {
-                        Ok(()) => { /* creds in — fall through to body */ }
-                        Err(e) => {
-                            log::warn!(
-                                "[mailbox] Cred re-inject after /clear failed (session={}): {} \
-                                 — skipping body follow-up to avoid delivering a message the \
-                                 agent cannot reply to",
-                                session_id,
-                                e
-                            );
-                            return;
-                        }
+                        log::warn!(
+                            "[mailbox] Compatibility credential re-inject after /clear failed \
+                             (session={}): {}. Continuing because env credentials remain set \
+                             for the live process.",
+                            session_id,
+                            e
+                        );
                     }
                 }
                 if !msg_clone.body.is_empty() {
@@ -981,14 +978,10 @@ impl MailboxPoller {
         crate::pty::inject::inject_text_into_session(app, session_id, &payload).await
     }
 
-    /// Wait for agent to become idle after `/clear`, then re-inject the
-    /// credentials block so the agent keeps its Token/Root/BinaryPath/
-    /// LocalDir after its context window was wiped. Best-effort only.
-    ///
-    /// Gated to agent sessions (`session.agent_id.is_some()`). Plain shell
-    /// sessions skip silently with `Ok(())`.
-    ///
-    /// Static — safe to spawn as a detached task without borrowing self.
+    /// Wait for agent to become idle after `/clear`, then best-effort re-inject
+    /// the visible credentials block for compatibility with agents that still
+    /// rely on conversation text. Env-first credentials remain available in the
+    /// still-live child process and are not affected by `/clear`.
     async fn reinject_credentials_after_clear_static(
         app: &tauri::AppHandle,
         session_id: Uuid,
@@ -1984,7 +1977,8 @@ fn read_text_bom_tolerant(path: &Path) -> Result<String, String> {
             "[bom] UTF-8 BOM detected in {:?} — stripping (writer should use UTF-8 without BOM)",
             path
         );
-        String::from_utf8(bytes[3..].to_vec()).map_err(|e| format!("Invalid UTF-8 after BOM: {}", e))
+        String::from_utf8(bytes[3..].to_vec())
+            .map_err(|e| format!("Invalid UTF-8 after BOM: {}", e))
     } else {
         String::from_utf8(bytes).map_err(|e| format!("Invalid UTF-8: {}", e))
     }
@@ -2253,7 +2247,11 @@ mod tests {
         // surfaces at the parser, which is what the callsites wrap with their own
         // context strings.
         let parse_err = serde_json::from_str::<serde_json::Value>(&got).expect_err("must err");
-        assert!(parse_err.is_eof(), "expected EOF parse error, got: {}", parse_err);
+        assert!(
+            parse_err.is_eof(),
+            "expected EOF parse error, got: {}",
+            parse_err
+        );
     }
 
     /// §130-stuck-file regression: when the reject path receives a file whose
@@ -2288,7 +2286,10 @@ mod tests {
         )
         .expect("reject_raw_file ok");
 
-        assert!(!stuck.exists(), "original file should be moved out of source dir");
+        assert!(
+            !stuck.exists(),
+            "original file should be moved out of source dir"
+        );
         let rejected_dir = outbox.join("rejected");
         assert!(rejected_dir.is_dir(), "rejected/ should be created");
         assert!(
@@ -2298,6 +2299,10 @@ mod tests {
         let reason_file = rejected_dir.join("stuck.reason.txt");
         assert!(reason_file.is_file(), "reason file should be in rejected/");
         let reason = std::fs::read_to_string(&reason_file).expect("read reason");
-        assert!(reason.contains("Undeliverable"), "reason content: {}", reason);
+        assert!(
+            reason.contains("Undeliverable"),
+            "reason content: {}",
+            reason
+        );
     }
 }

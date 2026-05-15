@@ -288,9 +288,7 @@ mod tests {
 
     #[test]
     fn find_workgroup_brief_path_walks_up_from_replica_dir() {
-        let p = find_workgroup_brief_path_for_cwd(
-            r"C:\proj\.ac-new\wg-3-team\__agent_dev-rust",
-        );
+        let p = find_workgroup_brief_path_for_cwd(r"C:\proj\.ac-new\wg-3-team\__agent_dev-rust");
         assert_eq!(
             p,
             Some(std::path::PathBuf::from(

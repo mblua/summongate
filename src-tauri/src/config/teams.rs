@@ -405,7 +405,10 @@ fn is_coordinator(agent_name: &str, team: &DiscoveredTeam) -> bool {
         if agent_matches_member(agent_name, coord_name, team.coordinator_path.as_ref()) {
             log::trace!(
                 "[teams] is_coordinator: direct-match → true — agent='{}' team='{}/{}' coord='{}'",
-                agent_name, team.project, team.name, coord_name
+                agent_name,
+                team.project,
+                team.name,
+                coord_name
             );
             return true;
         }
@@ -542,7 +545,10 @@ pub fn discover_teams() -> Vec<DiscoveredTeam> {
     let mut teams = Vec::new();
 
     for repo_path in &settings.project_paths {
-        log::trace!("[teams] discover_teams: scanning project_path='{}'", repo_path);
+        log::trace!(
+            "[teams] discover_teams: scanning project_path='{}'",
+            repo_path
+        );
         let base = Path::new(repo_path);
         if !base.is_dir() {
             log::trace!(

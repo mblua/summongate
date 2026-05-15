@@ -870,10 +870,7 @@ mod tests {
         );
         assert_eq!(
             stripped,
-            vec![
-                "/K".to_string(),
-                "claude-mb --effort max".to_string(),
-            ]
+            vec!["/K".to_string(), "claude-mb --effort max".to_string(),]
         );
     }
 

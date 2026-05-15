@@ -350,9 +350,7 @@ pub(crate) fn resolve_claude_projects_dir(
         let mut i = 0;
         while i < bytes.len() {
             let remaining = &buf[i..];
-            if remaining.len() >= 5
-                && remaining.as_bytes()[..5].eq_ignore_ascii_case(b"$env:")
-            {
+            if remaining.len() >= 5 && remaining.as_bytes()[..5].eq_ignore_ascii_case(b"$env:") {
                 let name_start = i + 5;
                 let mut name_end = name_start;
                 while name_end < bytes.len() {
@@ -423,9 +421,7 @@ pub(crate) fn resolve_claude_projects_dir(
                 None => (after_prefix, false),
             };
 
-            let Some(rest) =
-                strip_ascii_prefix_ci(after_open_quote, "CLAUDE_CONFIG_DIR")
-            else {
+            let Some(rest) = strip_ascii_prefix_ci(after_open_quote, "CLAUDE_CONFIG_DIR") else {
                 continue;
             };
             let rest = rest.trim_start();
@@ -474,7 +470,11 @@ pub(crate) fn resolve_claude_projects_dir(
         // a full location.
         let has_separator = token.contains('/') || token.contains('\\');
         if has_separator || p.is_absolute() {
-            return if p.is_file() { Some(p.to_path_buf()) } else { None };
+            return if p.is_file() {
+                Some(p.to_path_buf())
+            } else {
+                None
+            };
         }
         // Bare basename — defer to %PATH% + PATHEXT (Windows) via `which`.
         which::which(token).ok()
@@ -818,13 +818,31 @@ pub async fn create_session_inner(
     mgr.set_effective_shell_args(id, effective.clone()).await;
     session.effective_shell_args = Some(effective);
 
+    let extra_env = if agent_id.is_some() {
+        crate::pty::credentials::build_credentials_env(&session.token, &cwd)
+    } else {
+        Vec::new()
+    };
+
     pty_mgr
         .lock()
         .unwrap()
-        .spawn(id, &shell, &shell_args, &cwd, 120, 30, app.clone())
+        .spawn(
+            id,
+            &shell,
+            &shell_args,
+            &cwd,
+            120,
+            30,
+            &extra_env,
+            app.clone(),
+        )
         .map_err(|e| e.to_string())?;
 
-    // Auto-inject credentials for agent sessions after PTY spawn.
+    // Auto-inject bootstrap text for agent sessions after PTY spawn.
+    // Credentials are already present in child environment variables; the
+    // visible credential block remains as a compatibility fallback and the
+    // same injection still carries the optional auto-title prompt.
     // Wait for Claude to become idle (ready for input) instead of fixed delay.
     // Mirrors the pattern in mailbox.rs inject_followup_after_idle_static.
     if agent_id.is_some() {
@@ -911,12 +929,8 @@ pub async fn create_session_inner(
                 None => cred_block,
             };
 
-            match crate::pty::inject::inject_text_into_session(
-                &app_clone,
-                session_id,
-                &combined,
-            )
-            .await
+            match crate::pty::inject::inject_text_into_session(&app_clone, session_id, &combined)
+                .await
             {
                 Ok(()) => {
                     log::info!(
@@ -2141,15 +2155,17 @@ mod tests {
     #[test]
     fn build_title_prompt_appendage_returns_none_when_title_already_present() {
         use std::env;
-        let dir = env::temp_dir().join(format!(
-            "wg-r5-idempotent-{}", std::process::id()
-        ));
+        let dir = env::temp_dir().join(format!("wg-r5-idempotent-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let brief = dir.join("BRIEF.md");
         std::fs::write(&brief, b"---\ntitle: 'Pre-existing'\n---\nBody.\n").unwrap();
         let cwd = dir.to_string_lossy().to_string();
         let result = super::build_title_prompt_appendage(&cwd);
-        assert!(matches!(result, Ok(None)), "expected Ok(None), got {:?}", result);
+        assert!(
+            matches!(result, Ok(None)),
+            "expected Ok(None), got {:?}",
+            result
+        );
         let _ = std::fs::remove_file(&brief);
         let _ = std::fs::remove_dir(&dir);
     }
@@ -2157,15 +2173,17 @@ mod tests {
     #[test]
     fn build_title_prompt_appendage_returns_none_when_brief_empty() {
         use std::env;
-        let dir = env::temp_dir().join(format!(
-            "wg-r5-empty-{}", std::process::id()
-        ));
+        let dir = env::temp_dir().join(format!("wg-r5-empty-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let brief = dir.join("BRIEF.md");
         std::fs::write(&brief, b"   \n\n\t\n").unwrap();
         let cwd = dir.to_string_lossy().to_string();
         let result = super::build_title_prompt_appendage(&cwd);
-        assert!(matches!(result, Ok(None)), "expected Ok(None), got {:?}", result);
+        assert!(
+            matches!(result, Ok(None)),
+            "expected Ok(None), got {:?}",
+            result
+        );
         let _ = std::fs::remove_file(&brief);
         let _ = std::fs::remove_dir(&dir);
     }
@@ -2173,9 +2191,7 @@ mod tests {
     #[test]
     fn build_title_prompt_appendage_returns_some_when_brief_has_no_title() {
         use std::env;
-        let dir = env::temp_dir().join(format!(
-            "wg-r5-some-{}", std::process::id()
-        ));
+        let dir = env::temp_dir().join(format!("wg-r5-some-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let brief = dir.join("BRIEF.md");
         std::fs::write(&brief, b"# A real brief with body content.\n").unwrap();
@@ -2186,7 +2202,7 @@ mod tests {
             other => panic!("expected Ok(Some(_)), got {:?}", other),
         };
         assert!(prompt.contains("brief-set-title"));
-        assert!(prompt.contains("<YOUR_BINARY_PATH>"));
+        assert!(prompt.contains("<AGENTSCOMMANDER_BINARY_PATH>"));
         // Production code strips `\\?\` UNC prefix before embedding the path
         // (F4 fold). Mirror the strip here so the assertion holds on Windows
         // setups where `temp_dir()` returns an extended-length path.
@@ -2211,7 +2227,9 @@ mod tests {
         let cwd = "C:\\Users\\Test\\repo";
         let resolved = super::resolve_claude_projects_dir("claude", &[], cwd);
         // Skip if the test host has no home dir (CI sandboxes sometimes don't).
-        let Some(home) = dirs::home_dir() else { return; };
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
         let expected = home
             .join(".claude")
             .join("projects")
@@ -2223,9 +2241,10 @@ mod tests {
     fn resolve_claude_projects_dir_uses_home_for_direct_claude_exe_path() {
         // Direct executable path with file_stem == "claude" → still default base.
         let cwd = "C:\\Users\\Test\\repo";
-        let resolved =
-            super::resolve_claude_projects_dir("C:\\Tools\\claude.exe", &[], cwd);
-        let Some(home) = dirs::home_dir() else { return; };
+        let resolved = super::resolve_claude_projects_dir("C:\\Tools\\claude.exe", &[], cwd);
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
         let expected = home
             .join(".claude")
             .join("projects")
@@ -2235,11 +2254,8 @@ mod tests {
 
     #[test]
     fn resolve_claude_projects_dir_returns_none_when_no_claude_token() {
-        let resolved = super::resolve_claude_projects_dir(
-            "powershell.exe",
-            &["-NoLogo".to_string()],
-            "C:\\x",
-        );
+        let resolved =
+            super::resolve_claude_projects_dir("powershell.exe", &["-NoLogo".to_string()], "C:\\x");
         assert!(resolved.is_none());
     }
 
@@ -2256,8 +2272,7 @@ mod tests {
             ),
         );
         let cwd = "C:\\Users\\Test\\repo";
-        let resolved =
-            super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], cwd);
+        let resolved = super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], cwd);
         let expected = custom_base
             .join("projects")
             .join(crate::session::session::mangle_cwd_for_claude(cwd));
@@ -2276,11 +2291,7 @@ mod tests {
                 custom_base.display()
             ),
         );
-        let resolved = super::resolve_claude_projects_dir(
-            wrapper.to_str().unwrap(),
-            &[],
-            "C:\\x",
-        );
+        let resolved = super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], "C:\\x");
         let expected = custom_base
             .join("projects")
             .join(crate::session::session::mangle_cwd_for_claude("C:\\x"));
@@ -2290,17 +2301,11 @@ mod tests {
     #[test]
     fn resolve_claude_projects_dir_falls_back_when_wrapper_lacks_directive() {
         let tmp = tempfile::tempdir().unwrap();
-        let wrapper = write_wrapper(
-            tmp.path(),
-            "claude-mb.cmd",
-            "@echo off\r\nclaude %*\r\n",
-        );
-        let resolved = super::resolve_claude_projects_dir(
-            wrapper.to_str().unwrap(),
-            &[],
-            "C:\\x",
-        );
-        let Some(home) = dirs::home_dir() else { return; };
+        let wrapper = write_wrapper(tmp.path(), "claude-mb.cmd", "@echo off\r\nclaude %*\r\n");
+        let resolved = super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], "C:\\x");
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
         let expected = home
             .join(".claude")
             .join("projects")
@@ -2315,7 +2320,9 @@ mod tests {
             &[],
             "C:\\x",
         );
-        let Some(home) = dirs::home_dir() else { return; };
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
         let expected = home
             .join(".claude")
             .join("projects")
@@ -2372,11 +2379,8 @@ mod tests {
             ),
         );
         let combined = format!("git pull && {} --effort max", wrapper.display());
-        let resolved = super::resolve_claude_projects_dir(
-            "cmd.exe",
-            &["/K".to_string(), combined],
-            "C:\\x",
-        );
+        let resolved =
+            super::resolve_claude_projects_dir("cmd.exe", &["/K".to_string(), combined], "C:\\x");
         let expected = custom_base
             .join("projects")
             .join(crate::session::session::mangle_cwd_for_claude("C:\\x"));
@@ -2392,9 +2396,10 @@ mod tests {
         body.push_str("set CLAUDE_CONFIG_DIR=C:\\should-not-be-read\r\n");
         body.push_str(&"x".repeat(80 * 1024));
         std::fs::write(&path, body).unwrap();
-        let resolved =
-            super::resolve_claude_projects_dir(path.to_str().unwrap(), &[], "C:\\x");
-        let Some(home) = dirs::home_dir() else { return; };
+        let resolved = super::resolve_claude_projects_dir(path.to_str().unwrap(), &[], "C:\\x");
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
         let expected = home
             .join(".claude")
             .join("projects")
@@ -2416,11 +2421,7 @@ mod tests {
                 custom_base.display()
             ),
         );
-        let resolved = super::resolve_claude_projects_dir(
-            wrapper.to_str().unwrap(),
-            &[],
-            "C:\\x",
-        );
+        let resolved = super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], "C:\\x");
         let expected = custom_base
             .join("projects")
             .join(crate::session::session::mangle_cwd_for_claude("C:\\x"));
@@ -2442,11 +2443,7 @@ mod tests {
                 var
             ),
         );
-        let resolved = super::resolve_claude_projects_dir(
-            wrapper.to_str().unwrap(),
-            &[],
-            "C:\\x",
-        );
+        let resolved = super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], "C:\\x");
         std::env::remove_var(var);
         let expected = custom_base
             .join("projects")
@@ -2468,11 +2465,7 @@ mod tests {
                 var
             ),
         );
-        let resolved = super::resolve_claude_projects_dir(
-            wrapper.to_str().unwrap(),
-            &[],
-            "C:\\x",
-        );
+        let resolved = super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], "C:\\x");
         std::env::remove_var(var);
         let expected = custom_base
             .join("projects")
@@ -2490,11 +2483,7 @@ mod tests {
             "claude-mb.cmd",
             "@echo off\r\nset CLAUDE_CONFIG_DIR=%AC_TEST_186_DEFINITELY_UNSET%\\\\.claude-mb\r\nclaude %*\r\n",
         );
-        let resolved = super::resolve_claude_projects_dir(
-            wrapper.to_str().unwrap(),
-            &[],
-            "C:\\x",
-        );
+        let resolved = super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], "C:\\x");
         let resolved = resolved.expect("parser must return Some even when var is unset");
         let s = resolved.to_string_lossy();
         assert!(
@@ -2515,14 +2504,14 @@ mod tests {
                 custom_base.display()
             ),
         );
-        let resolved = super::resolve_claude_projects_dir(
-            wrapper.to_str().unwrap(),
-            &[],
-            "/home/test/repo",
-        );
-        let expected = custom_base
-            .join("projects")
-            .join(crate::session::session::mangle_cwd_for_claude("/home/test/repo"));
+        let resolved =
+            super::resolve_claude_projects_dir(wrapper.to_str().unwrap(), &[], "/home/test/repo");
+        let expected =
+            custom_base
+                .join("projects")
+                .join(crate::session::session::mangle_cwd_for_claude(
+                    "/home/test/repo",
+                ));
         assert_eq!(resolved, Some(expected));
     }
 }

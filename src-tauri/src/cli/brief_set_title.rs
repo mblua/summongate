@@ -25,7 +25,7 @@ External edits between our read and our write are detected and the verb aborts.\
 TITLE INPUT: --title is a single-line string. Embedded \\n / \\r / NUL / other \
 control characters (except tab) are rejected.")]
 pub struct BriefSetTitleArgs {
-    /// Session token for authentication (from '# === Session Credentials ===' block)
+    /// Session token for authentication (from AGENTSCOMMANDER_TOKEN or visible credentials fallback)
     #[arg(long)]
     pub token: Option<String>,
 
@@ -63,11 +63,7 @@ pub fn execute(args: BriefSetTitleArgs) -> i32 {
         eprintln!("Error: --title cannot be empty.");
         return 1;
     }
-    if args
-        .title
-        .chars()
-        .any(|c| c.is_control() && c != '\t')
-    {
+    if args.title.chars().any(|c| c.is_control() && c != '\t') {
         eprintln!(
             "Error: --title must be a single line of printable characters \
              (control characters other than tab are not allowed)."
@@ -327,6 +323,10 @@ mod tests {
     fn help_text_documents_set_title() {
         use clap::CommandFactory;
         let help = crate::cli::Cli::command().render_help().to_string();
-        assert!(help.contains("brief-set-title"), "help missing verb name: {}", help);
+        assert!(
+            help.contains("brief-set-title"),
+            "help missing verb name: {}",
+            help
+        );
     }
 }

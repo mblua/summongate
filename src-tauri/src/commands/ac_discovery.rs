@@ -251,6 +251,7 @@ fn detect_git_branch_sync(dir: &str) -> Option<String> {
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let mut cmd = std::process::Command::new("git");
+    crate::pty::credentials::scrub_credentials_from_std_command(&mut cmd);
     cmd.args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(dir);
 
@@ -802,6 +803,7 @@ impl DiscoveryBranchWatcher {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         let mut cmd = tokio::process::Command::new("git");
+        crate::pty::credentials::scrub_credentials_from_tokio_command(&mut cmd);
         cmd.args(["rev-parse", "--abbrev-ref", "HEAD"])
             .current_dir(dir)
             .kill_on_drop(true);
@@ -1060,8 +1062,8 @@ pub async fn discover_ac_agents(
                         name: dir_name.clone(),
                         path: path.to_string_lossy().to_string(),
                         brief,
-brief_title,
-agents: wg_agents,
+                        brief_title,
+                        agents: wg_agents,
                         repo_path,
                         team_name: None,
                     });
@@ -1484,8 +1486,8 @@ pub async fn discover_project(
                 name: dir_name.clone(),
                 path: entry_path.to_string_lossy().to_string(),
                 brief,
-brief_title,
-agents: wg_agents,
+                brief_title,
+                agents: wg_agents,
                 repo_path,
                 team_name: None,
             });
@@ -1706,8 +1708,8 @@ pub async fn new_project(
     path: String,
 ) -> Result<crate::config::projects::ProjectRegistration, String> {
     let mut s = settings.write().await;
-    let result = crate::config::projects::register_new_project(&mut s, &path)
-        .map_err(|e| e.to_string())?;
+    let result =
+        crate::config::projects::register_new_project(&mut s, &path).map_err(|e| e.to_string())?;
     let snapshot = s.clone();
     crate::config::settings::save_settings(&snapshot)?;
     drop(s); // explicit; lock released AFTER the disk write completes

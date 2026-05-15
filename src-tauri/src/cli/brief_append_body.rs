@@ -26,7 +26,7 @@ Frontmatter is never modified by this verb.\n\n\
 TEXT INPUT: --text accepts multi-line content. Newline (\\n), carriage return (\\r), \
 and tab (\\t) are permitted. NUL and other control characters are rejected.")]
 pub struct BriefAppendBodyArgs {
-    /// Session token for authentication (from '# === Session Credentials ===' block)
+    /// Session token for authentication (from AGENTSCOMMANDER_TOKEN or visible credentials fallback)
     #[arg(long)]
     pub token: Option<String>,
 
@@ -194,11 +194,7 @@ mod tests {
         agent_root
     }
 
-    fn args_for(
-        token: Option<String>,
-        root: Option<String>,
-        text: &str,
-    ) -> BriefAppendBodyArgs {
+    fn args_for(token: Option<String>, root: Option<String>, text: &str) -> BriefAppendBodyArgs {
         BriefAppendBodyArgs {
             token,
             root,

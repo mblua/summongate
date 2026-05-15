@@ -103,8 +103,7 @@ pub fn register_new_project(
     // `create_dir` below can race-detect properly. `create_dir_all` is
     // idempotent on an already-existing dir, so this costs nothing extra
     // when PATH is already there.
-    std::fs::create_dir_all(&abs)
-        .map_err(|e| ProjectError::AcNewCreateFailed(abs.clone(), e))?;
+    std::fs::create_dir_all(&abs).map_err(|e| ProjectError::AcNewCreateFailed(abs.clone(), e))?;
     // Authoritative `created` flag (Round-1 G9): use non-recursive
     // `create_dir` so we can distinguish "we made the dir" from "another
     // process beat us to it" via `ErrorKind::AlreadyExists`. The previous
@@ -151,8 +150,7 @@ fn absolutise(raw: &str) -> Result<PathBuf, ProjectError> {
     // different CWDs). On POSIX the std API preserves `..` for
     // symlink-safety reasons; documented as §6.10. No filesystem IO,
     // no symlink resolution.
-    std::path::absolute(raw)
-        .map_err(|e| ProjectError::CwdFailure(raw.to_string(), e))
+    std::path::absolute(raw).map_err(|e| ProjectError::CwdFailure(raw.to_string(), e))
 }
 
 /// Mirrors the frontend `normalizePath` at
@@ -403,8 +401,11 @@ mod tests {
         // (after `std::path::absolute(".")` collapses the trailing `.`).
         assert!(Path::new(&r.path).is_absolute(), "not absolute: {}", r.path);
         let normalized_persisted = r.path.replace('\\', "/").to_lowercase();
-        let normalized_fixture =
-            fix.path().to_string_lossy().replace('\\', "/").to_lowercase();
+        let normalized_fixture = fix
+            .path()
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_lowercase();
         assert_eq!(normalized_persisted, normalized_fixture);
     }
 
@@ -471,9 +472,21 @@ mod tests {
         };
         let json = serde_json::to_string(&r).unwrap();
         assert!(json.contains("\"path\""), "missing path field: {}", json);
-        assert!(json.contains("\"registered\""), "missing registered field: {}", json);
-        assert!(json.contains("\"created\""), "missing created field: {}", json);
+        assert!(
+            json.contains("\"registered\""),
+            "missing registered field: {}",
+            json
+        );
+        assert!(
+            json.contains("\"created\""),
+            "missing created field: {}",
+            json
+        );
         // No snake_case relics from any current field name.
-        assert!(!json.contains("ac_new"), "snake_case field name leaked: {}", json);
+        assert!(
+            !json.contains("ac_new"),
+            "snake_case field name leaked: {}",
+            json
+        );
     }
 }

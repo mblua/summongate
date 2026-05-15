@@ -14,8 +14,9 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(about = "Agent terminal session manager with inter-agent messaging")]
 #[command(after_help = "\
-TOKEN: Your session token is injected into your console as a '# === Session Credentials ===' block \
-when your session starts. If it expires, any failed `send` triggers an automatic token refresh.\n\n\
+TOKEN: In agent sessions, pass AGENTSCOMMANDER_TOKEN from the environment. \
+If the env var is unavailable, use the latest visible '# === Session Credentials ===' fallback block. \
+If a token expires, any failed `send` triggers an automatic token refresh.\n\n\
 EXIT CODES: All subcommands return 0 on success, 1 on error.\n\n\
 AGENT NAMES: Agents are identified by their path-based name (e.g., \"repos/my-project\"). \
 Use `list-peers` to discover valid agent names before sending messages.")]
@@ -68,8 +69,8 @@ pub enum Commands {
 pub fn attach_parent_console() {
     use windows_sys::Win32::Storage::FileSystem::{GetFileType, FILE_TYPE_UNKNOWN};
     use windows_sys::Win32::System::Console::{
-        AllocConsole, AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS,
-        STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
+        AllocConsole, AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_ERROR_HANDLE,
+        STD_OUTPUT_HANDLE,
     };
 
     unsafe {
@@ -102,9 +103,9 @@ pub fn validate_cli_token(token: &Option<String>) -> Result<(String, bool), Stri
         Some(t) if !t.is_empty() => t.clone(),
         _ => {
             return Err(
-                "Error: --token is required. Your session token is in the \
-                 '# === Session Credentials ===' block.\n\
-                 Session credentials are delivered automatically at startup. If you don't have them, restart your session."
+                "Error: --token is required. In agent sessions, pass AGENTSCOMMANDER_TOKEN \
+                 from the environment, or use the latest '# === Session Credentials ===' \
+                 fallback block if the env var is unavailable."
                     .to_string(),
             );
         }
@@ -127,12 +128,12 @@ pub fn validate_cli_token(token: &Option<String>) -> Result<(String, bool), Stri
 
     // Otherwise must be a valid UUID (all session tokens are UUIDs)
     if uuid::Uuid::parse_str(&token).is_err() {
-        let display = if token.len() > 8 { &token[..8] } else { &token };
-        return Err(format!(
-            "Error: invalid token '{}...'. Expected a valid session token (UUID) or root token.\n\
-             Session credentials are delivered automatically at startup. If you don't have them, restart your session.",
-            display
-        ));
+        return Err(
+            "Error: invalid token supplied. Expected a valid session token (UUID) or root token. \
+             In agent sessions, use AGENTSCOMMANDER_TOKEN from the environment, or the latest \
+             visible credentials fallback block if the env var is unavailable."
+                .to_string(),
+        );
     }
 
     Ok((token, false))
@@ -171,4 +172,19 @@ pub fn flush_outputs() {
     use std::io::Write;
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_cli_token_does_not_echo_invalid_input() {
+        let supplied = "super-secret-token-with-hidden-garbage";
+        let err = validate_cli_token(&Some(supplied.to_string())).unwrap_err();
+
+        assert!(err.contains("invalid token supplied"));
+        assert!(!err.contains(supplied));
+        assert!(!err.contains(&supplied[..8]));
+    }
 }

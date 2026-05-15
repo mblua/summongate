@@ -111,11 +111,9 @@ pub async fn brief_set_title(
         return Err("title cannot be empty".to_string());
     }
     if title.chars().any(|c| c.is_control() && c != '\t') {
-        return Err(
-            "title must be a single line of printable characters \
+        return Err("title must be a single line of printable characters \
              (control characters other than tab are not allowed)"
-                .to_string(),
-        );
+            .to_string());
     }
     // Round 2 (Grinch LOW-1): cap at 256 chars (typical YAML scalar
     // convention). Prevents a 1 MB pasted blob from becoming the title
@@ -126,7 +124,8 @@ pub async fn brief_set_title(
         return Err("title is too long (max 256 characters)".to_string());
     }
     let wg_root = resolve_wg_root(&session_mgr, &session_id).await?;
-    let outcome = brief_ops::perform(&wg_root, BriefOp::SetTitle(title)).map_err(|e| e.to_string())?;
+    let outcome =
+        brief_ops::perform(&wg_root, BriefOp::SetTitle(title)).map_err(|e| e.to_string())?;
     log::info!(
         "[brief] set_title for session {} -> {:?}",
         session_id,
