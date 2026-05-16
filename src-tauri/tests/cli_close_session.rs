@@ -32,6 +32,31 @@
 //! the same logic at unit granularity and DO pass. Run with
 //! `cargo test --test cli_close_session -- --ignored` to attempt these
 //! anyway (they may pass on non-Windows hosts or with AV disabled).
+//!
+//! ### §224 G-IMPL retest (2026-05-16)
+//!
+//! Re-ran `cargo test --test cli_close_session -- --ignored` after the
+//! G-IMPL-1/2/3 fixes. Result: **all 5 tests still fail with the same
+//! symptom** — simulator's `read_dir` panics with "timeout waiting for CLI
+//! outbox write" while the CLI subprocess's own stderr shows it reached
+//! the delivery-poll loop (i.e. it had already written to the outbox).
+//!
+//! AV-exclusion attempt skipped: `Add-MpPreference -ExclusionPath` returned
+//! "not enough permissions" (no admin in agent session) and
+//! `Get-MpPreference` returned 0x800106ba (Defender service unavailable),
+//! suggesting Defender is already in a constrained state on this host.
+//!
+//! What the retest **does** rule out:
+//! - CLI early-exit before the write (CLI stderr confirms it reaches the
+//!   delivery-poll loop with a fresh request_id, which only happens after
+//!   the outbox write succeeds).
+//! - Path-normalization mismatch (CLI's stderr-logged outbox path matches
+//!   the simulator's polled path byte-for-byte).
+//!
+//! What it does **not** independently confirm:
+//! - Whether an admin-elevated `Add-MpPreference` on `%TEMP%\ac-*` would
+//!   unblock the tests. Retest under an elevated context recommended for
+//!   any future CI run.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
