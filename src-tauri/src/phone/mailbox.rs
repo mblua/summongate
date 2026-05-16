@@ -91,6 +91,44 @@ pub(crate) fn wake_spawn_skip_auto_resume(spawn_with_resume: bool) -> bool {
     !spawn_with_resume
 }
 
+/// Decide whether a session is a viable candidate for the mailbox to attempt
+/// delivery to. Pure function — unit-testable without a tauri runtime.
+///
+/// Rules:
+/// - `Exited(_)` records are KEPT even with `has_pty == false` — the wake
+///   contract documents the respawn path: "if Exited, respawn". The respawn
+///   path does NOT need a live PTY (it calls `destroy_session_inner` then
+///   `create_session_inner`).
+/// - All other statuses (`Active`/`Running`/`Idle`) require `has_pty == true`.
+///   A SessionManager record with one of these statuses but no PtyManager
+///   entry is a desync phantom — the inject path is guaranteed to fail with
+///   `AppError::SessionNotFound`, so the router must skip it (issue #223).
+///
+/// Exhaustive `match` (not `matches!`) — a future `SessionStatus` variant
+/// forces a deliberate compile-error decision rather than silently routing
+/// to the `has_pty` branch. (dev-rust R1.B7 / grinch G.M6.)
+pub(crate) fn is_viable_wake_candidate(status: &SessionStatus, has_pty: bool) -> bool {
+    match status {
+        SessionStatus::Exited(_) => true,
+        SessionStatus::Active | SessionStatus::Running | SessionStatus::Idle => has_pty,
+    }
+}
+
+/// Substring sniff for the `AppError::SessionNotFound` formatted message that
+/// bubbles up through `pty::inject::inject_text_into_session` as a `String`.
+///
+/// Tight coupling: the error string format is `"Session not found: {uuid}"`
+/// (see `errors.rs:5`). `inject_text_into_session` wraps it as `"PTY write
+/// failed: Session not found: {uuid}"`. The substring `"Session not found:"`
+/// covers both wrappings. Pinned by the
+/// `err_is_pty_session_missing_matches_actual_apperror_format` test below.
+///
+/// If a future PR introduces typed-error plumbing through `inject_into_pty`,
+/// replace this sniff with a typed match.
+pub(crate) fn err_is_pty_session_missing(e: &str) -> bool {
+    e.contains("Session not found:")
+}
+
 /// §224 D.3 — pure filter: session infos by exact-FQN match on
 /// `working_directory`. Extracted from `find_all_sessions` so the predicate
 /// can be unit-tested without a live `SessionManager` / `AppHandle`.
@@ -640,84 +678,126 @@ impl MailboxPoller {
         msg: &OutboxMessage,
     ) -> Result<(), String> {
         // Whether the spawn-fallback should allow provider auto-resume.
-        // Default false: cold wake — either no SessionManager record at this
-        // CWD, or the matched record vanished from list_sessions before we
-        // could read it (concurrent destroy). Promoted to true only inside
-        // the RespawnExited match arm below.
+        // Default false: cold wake — no SessionManager record at this CWD.
+        // Promoted to true in two paths below: (a) RespawnExited deferred-
+        // destroy block, (b) phantoms-only fall-through (every CWD match
+        // was a desync phantom — preserve any on-disk transcript via
+        // auto-resume). See issue #223 round-1 resolution.
         //
         // MUST NOT be re-derived after `destroy_session_inner` runs: post-
-        // destroy, `find_active_session` returns None and the value would
-        // silently flip, regressing the deferred-non-coord wake by losing
-        // `--continue`. Set the flag inside the pre-destroy match arm only.
-        // See plan §4.5.a / round-1 G7 / round-3 R3.2.
+        // destroy, the candidate would vanish from list_sessions and the
+        // value would silently flip, regressing the deferred-non-coord
+        // wake by losing `--continue`. Set the flag inside the candidate
+        // loop only. See plan §4.5.a / round-1 G7 / round-3 R3.2.
         let mut spawn_with_resume = false;
+        let mut pending_exited_destroy: Option<Uuid> = None;
+        // HIGH-1 (Step-7 review): symmetric AC5 protection. Tracks whether
+        // every iter'd Inject candidate hit the `err_is_pty_session_missing`
+        // race arm — if so, the post-loop fall-through must still promote
+        // spawn_with_resume so the on-disk transcript isn't abandoned. Same
+        // outcome as grinch G.H2's phantoms-only path, just a different
+        // upstream cause (race-killed siblings vs. desync phantoms).
+        let mut lost_inject_to_race = false;
 
-        if let Some(session_id) = self.find_active_session(app, &msg.to).await {
-            let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
-            let mgr = session_mgr.read().await;
-            let sessions = mgr.list_sessions().await;
-            let session = sessions.iter().find(|s| s.id == session_id.to_string());
+        // Issue #223: enumerate ALL viable CWD candidates (PTY-liveness filtered)
+        // with their captured status, plus a had_any_match flag for the phantoms-
+        // only AC5-preservation path (grinch G.H2). Iterate so a stale-Running
+        // phantom no longer blocks delivery to the live Idle recipient at the
+        // same CWD; defer Exited destroys until later Inject attempts fail
+        // (grinch G.H1) — preserves AC5's "first Exited wins respawn slot".
+        let (candidates, had_any_match) = self.find_live_candidates(app, &msg.to).await;
 
-            if let Some(s) = session {
-                log::info!(
-                    "[mailbox] wake: session {} status={:?} waiting_for_input={}",
-                    session_id,
-                    s.status,
-                    s.waiting_for_input
-                );
-                match wake_action_for(&s.status) {
-                    WakeAction::Inject => {
-                        // Always inject — PTY stdin buffer holds the input
-                        // until the agent finishes the current turn.
-                        drop(mgr);
-                        return self.inject_into_pty(app, session_id, msg, true).await;
-                    }
-                    WakeAction::RespawnExited => {
-                        // Today the only writer of `Exited(_)` is `mark_exited`,
-                        // and its sole caller (`lib.rs:561`, deferred-non-coord at
-                        // startup) passes literal `0`. Any RespawnExited match is
-                        // therefore a known-state prior session worth resuming.
-                        //
-                        // If a future PR adds PTY exit-code surfacing
-                        // (`portable_pty::Child::wait()` + `mark_exited(id, real_code)`),
-                        // this is the seam to revisit — non-zero exits should likely
-                        // become cold (cwd-vanished from in-place teardown, agent
-                        // crash, OOM). See plan round-3 R3.1.
-                        spawn_with_resume = true;
-                        log::info!(
-                            "[mailbox] wake: session {} is Exited (status={:?}), destroying before respawn",
-                            session_id,
-                            s.status
-                        );
-                        // Drop read lock before destroy call — release promptly
-                        // (destroy acquires its own read lock).
-                        drop(mgr);
-                        if let Err(e) =
-                            crate::commands::session::destroy_session_inner(app, session_id).await
-                        {
-                            log::error!(
-                                "[mailbox] wake: failed to destroy exited session {}: {}",
+        for &(session_id, ref status) in &candidates {
+            log::info!(
+                "[mailbox] wake: candidate {} captured-status={:?}",
+                session_id,
+                status
+            );
+
+            match wake_action_for(status) {
+                WakeAction::Inject => {
+                    match self.inject_into_pty(app, session_id, msg, true).await {
+                        Ok(()) => return Ok(()),
+                        Err(e) if err_is_pty_session_missing(&e) => {
+                            // Race: PTY died between `find_live_candidates`
+                            // probe and `PtyManager::write`. Load-bearing
+                            // safety net for the dropped per-iteration
+                            // re-read (grinch G.M2). Try the next candidate.
+                            // Flag the race for the post-loop AC5 promotion
+                            // (grinch HIGH-1) — if every Inject candidate
+                            // races to dead, the spawn-persistent fall-through
+                            // must still set spawn_with_resume.
+                            lost_inject_to_race = true;
+                            log::warn!(
+                                "[mailbox] wake: candidate {} died after liveness probe ({}), trying next",
                                 session_id,
                                 e
                             );
+                            continue;
                         }
-                        // Fall through to spawn-persistent.
+                        Err(e) => return Err(e),
                     }
                 }
-            } else {
-                // session_id was returned by find_active_session but vanished
-                // from list_sessions before we read it — only possible if a
-                // concurrent destroy ran between the two awaits. Bias: treat
-                // as cold (spawn_with_resume stays false). See plan #82 G2.6.
-                log::warn!(
-                    "[mailbox] wake: session {} not in list_sessions",
-                    session_id
-                );
-                drop(mgr);
+                WakeAction::RespawnExited => {
+                    // Defer the destroy: an Inject candidate later in the list
+                    // may succeed and avoid destroy+spawn entirely (grinch
+                    // G.H1). Only the FIRST Exited's id is remembered —
+                    // preserves AC5's "first Exited wins the respawn slot"
+                    // semantic.
+                    if pending_exited_destroy.is_none() {
+                        pending_exited_destroy = Some(session_id);
+                        spawn_with_resume = true;
+                        log::info!(
+                            "[mailbox] wake: deferring Exited destroy for {} (status={:?}) pending later Inject success",
+                            session_id,
+                            status
+                        );
+                    }
+                    continue;
+                }
             }
         }
 
-        // ── No active session (or only Exited) — spawn a persistent one ──
+        // No Inject returned Ok. Three cases enable auto-resume on the spawn-
+        // persistent fall-through:
+        //   1. A deferred Exited destroy is pending (spawn_with_resume true).
+        //   2. Candidate list empty BUT records existed in the manager — i.e.,
+        //      every CWD-match was a non-Exited phantom. Spawning cold would
+        //      abandon any on-disk transcript at the matched CWD (grinch G.H2
+        //      AC5 micro-regression).
+        //   3. Every viable Inject candidate died mid-flight (all hit the
+        //      `err_is_pty_session_missing` race arm). Symmetric to case 2 —
+        //      same AC5 outcome since cold spawn would abandon the transcript
+        //      (grinch HIGH-1, Step-7 review).
+        if pending_exited_destroy.is_none()
+            && (candidates.is_empty() && had_any_match || lost_inject_to_race)
+        {
+            spawn_with_resume = true;
+            log::info!(
+                "[mailbox] wake: all CWD candidates for '{}' are phantoms or lost to race; enabling auto-resume on spawn-persistent",
+                msg.to
+            );
+        }
+
+        if let Some(exited_id) = pending_exited_destroy {
+            log::info!(
+                "[mailbox] wake: executing deferred destroy for Exited candidate {}",
+                exited_id
+            );
+            if let Err(e) = crate::commands::session::destroy_session_inner(app, exited_id).await {
+                // Best-effort. Orphan SessionManager record lingers until AC3's
+                // runtime-dedup path (`#223-fu1`) drains it. spawn-persistent
+                // below still fires with the correct spawn_with_resume flag.
+                // (grinch G.M5 option (c).)
+                log::error!(
+                    "[mailbox] wake: failed to destroy exited session {} (orphan will linger until AC3): {}",
+                    exited_id,
+                    e
+                );
+            }
+        }
+
+        // ── No viable Inject candidate succeeded — spawn a persistent one ──
         log::info!(
             "[mailbox] wake: no active session for '{}', spawning persistent session",
             msg.to
@@ -1045,6 +1125,9 @@ impl MailboxPoller {
 
     /// Find the best session for a given agent name (matches by working directory).
     /// Prefers active/running non-temp sessions over idle/exited ones.
+    ///
+    /// Used ONLY by stale-token logging (mailbox.rs:456, 501). Routing now uses
+    /// `find_live_candidates` — do not add new callers. (grinch G.L5.)
     async fn find_active_session(&self, app: &tauri::AppHandle, agent_name: &str) -> Option<Uuid> {
         let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
         let mgr = session_mgr.read().await;
@@ -1111,6 +1194,101 @@ impl MailboxPoller {
             best.status
         );
         Uuid::parse_str(&best.id).ok()
+    }
+
+    /// Find ALL viable CWD-matched candidates for wake delivery, sorted by
+    /// preference (Active/Running first, then Idle, then Exited; non-temp before
+    /// temp). Filters out records whose `SessionStatus` is non-`Exited` but
+    /// whose PtyManager entry is missing — those are desync phantoms (issue
+    /// #223). `Exited(_)` candidates are RETAINED for the respawn path.
+    ///
+    /// Returns `(viable, had_any_match)`:
+    /// - `viable`: viable candidates with captured `SessionStatus` so the caller
+    ///   can decide Inject-vs-RespawnExited without a second `list_sessions`
+    ///   scan per candidate (grinch G.M2 / dev-rust R1.B3 alt). The captured
+    ///   status may be stale by the time the caller acts on it; the
+    ///   `err_is_pty_session_missing` continue arm in `deliver_wake` is the
+    ///   load-bearing safety net for that race.
+    /// - `had_any_match`: true if at least one CWD-matched record existed BEFORE
+    ///   the predicate filter — the caller uses this to distinguish "no record
+    ///   at all" (cold spawn) from "phantoms only" (warm spawn with auto-resume,
+    ///   preserves on-disk Claude/Codex/Gemini transcript). (grinch G.H2.)
+    async fn find_live_candidates(
+        &self,
+        app: &tauri::AppHandle,
+        agent_name: &str,
+    ) -> (Vec<(Uuid, SessionStatus)>, bool /* had_any_match */) {
+        let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
+        let pty_mgr = app.state::<Arc<Mutex<PtyManager>>>();
+
+        let mgr = session_mgr.read().await;
+        let sessions = mgr.list_sessions().await;
+
+        let mut matches: Vec<&crate::session::session::SessionInfo> = sessions
+            .iter()
+            .filter(|s| {
+                crate::config::teams::agent_fqn_from_path(&s.working_directory) == agent_name
+            })
+            .collect();
+
+        let had_any_match = !matches.is_empty();
+        if !had_any_match {
+            return (Vec::new(), false);
+        }
+
+        // Same sort key as the legacy `find_active_session`.
+        // TODO(#223-fu1): once AC3's PTY-exit hook lands and starts emitting
+        // non-zero exit codes, add a tertiary tie-break (e.g. created_at) so
+        // Exited-within-bucket ordering is deterministic. (grinch G.L2.)
+        matches.sort_by_key(|s| {
+            let is_temp = s
+                .name
+                .starts_with(crate::session::session::TEMP_SESSION_PREFIX);
+            let status = match s.status {
+                SessionStatus::Active | SessionStatus::Running => 0u8,
+                SessionStatus::Idle => 1,
+                SessionStatus::Exited(_) => 2,
+            };
+            (is_temp, status)
+        });
+
+        // Take the PtyManager lock ONCE and probe each candidate.
+        let pty = pty_mgr.lock().unwrap();
+        let viable: Vec<(Uuid, SessionStatus)> = matches
+            .iter()
+            .filter_map(|s| Uuid::parse_str(&s.id).ok().map(|id| (id, *s)))
+            .filter_map(|(id, s)| {
+                let has_pty = pty.has_session(id);
+                let viable = is_viable_wake_candidate(&s.status, has_pty);
+                if !viable {
+                    // Phantom skip — observable in prod logs to scope the AC3
+                    // follow-up. (dev-rust R1.B4.)
+                    log::warn!(
+                        "[mailbox] skipping desync phantom: id={} status={:?} has_pty={} name='{}'",
+                        id,
+                        s.status,
+                        has_pty,
+                        s.name
+                    );
+                    None
+                } else {
+                    Some((id, s.status.clone()))
+                }
+            })
+            .collect();
+        drop(pty);
+
+        log::info!(
+            "[mailbox] {} viable wake candidate(s) for '{}' (had_any_match={}): {:?}",
+            viable.len(),
+            agent_name,
+            had_any_match,
+            viable
+                .iter()
+                .map(|(id, _)| id.to_string())
+                .collect::<Vec<_>>(),
+        );
+        (viable, had_any_match)
     }
 
     /// Find ALL sessions matching an agent name (by working directory).
@@ -2300,6 +2478,117 @@ mod tests {
         );
     }
 
+    // ── is_viable_wake_candidate tests (issue #223) ──
+
+    #[test]
+    fn is_viable_wake_candidate_keeps_live_running() {
+        assert!(is_viable_wake_candidate(&SessionStatus::Running, true));
+    }
+
+    #[test]
+    fn is_viable_wake_candidate_keeps_live_idle() {
+        assert!(is_viable_wake_candidate(&SessionStatus::Idle, true));
+    }
+
+    #[test]
+    fn is_viable_wake_candidate_keeps_live_active() {
+        assert!(is_viable_wake_candidate(&SessionStatus::Active, true));
+    }
+
+    /// Issue #223 — primary regression guard. A SessionManager record with
+    /// status=Running but no PtyManager entry (the phantom in the log) MUST be
+    /// skipped — otherwise inject_into_pty fails with `Session not found:` and
+    /// the router has no fallback.
+    #[test]
+    fn is_viable_wake_candidate_skips_phantom_running_no_pty() {
+        assert!(!is_viable_wake_candidate(&SessionStatus::Running, false));
+    }
+
+    #[test]
+    fn is_viable_wake_candidate_skips_phantom_idle_no_pty() {
+        assert!(!is_viable_wake_candidate(&SessionStatus::Idle, false));
+    }
+
+    #[test]
+    fn is_viable_wake_candidate_skips_phantom_active_no_pty() {
+        assert!(!is_viable_wake_candidate(&SessionStatus::Active, false));
+    }
+
+    /// AC5 regression guard. Deferred-non-coord sessions have status=Exited(0)
+    /// and NO PTY (see lib.rs:614). They MUST remain candidates so the
+    /// documented respawn path runs and `--continue` is injected on the new
+    /// session.
+    #[test]
+    fn is_viable_wake_candidate_keeps_exited_without_pty_for_respawn() {
+        assert!(is_viable_wake_candidate(&SessionStatus::Exited(0), false));
+        assert!(is_viable_wake_candidate(&SessionStatus::Exited(1), false));
+        assert!(is_viable_wake_candidate(&SessionStatus::Exited(-1), false));
+    }
+
+    /// Stale-PTY-instance edge case: status=Exited with a leftover PtyInstance
+    /// entry. Still a candidate — RespawnExited will destroy the leftover.
+    #[test]
+    fn is_viable_wake_candidate_keeps_exited_with_stale_pty() {
+        assert!(is_viable_wake_candidate(&SessionStatus::Exited(0), true));
+    }
+
+    /// A PtyManager entry that EXISTS but whose underlying child has exited is
+    /// STILL treated as viable by this layer (we cannot detect child liveness
+    /// without surfacing portable_pty::Child::wait()). Documented here so a
+    /// future PR closing the AC3 gap (PTY-exit hook in `#223-fu1`) knows this
+    /// test must be updated to assert the new contract. (dev-rust R1.E3.)
+    #[test]
+    fn is_viable_wake_candidate_accepts_mapped_pty_regardless_of_child_state() {
+        // status=Running + has_pty=true → viable, even if the child is secretly dead.
+        // The router relies on `#223-fu1` to keep status in sync with reality.
+        assert!(is_viable_wake_candidate(&SessionStatus::Running, true));
+    }
+
+    // ── err_is_pty_session_missing tests (issue #223) ──
+
+    #[test]
+    fn err_is_pty_session_missing_matches_inject_wrap() {
+        // Exact shape emitted by pty::inject::inject_text_into_session
+        // (pty/inject.rs:67) when PtyManager::write returns SessionNotFound.
+        let e = "PTY write failed: Session not found: 2ced5ccf-1234-5678-9abc-def012345678";
+        assert!(err_is_pty_session_missing(e));
+    }
+
+    #[test]
+    fn err_is_pty_session_missing_matches_bare_form() {
+        // Matches even without the inject_text_into_session wrapping, in case
+        // a future call site propagates the inner error directly.
+        let e = "Session not found: abcdef";
+        assert!(err_is_pty_session_missing(e));
+    }
+
+    #[test]
+    fn err_is_pty_session_missing_rejects_unrelated_errors() {
+        assert!(!err_is_pty_session_missing("PTY error: broken pipe"));
+        assert!(!err_is_pty_session_missing(
+            "Failed to read outbox file: foo"
+        ));
+        assert!(!err_is_pty_session_missing(""));
+    }
+
+    /// Pins the actual `AppError::SessionNotFound` Display format. If a future
+    /// refactor changes `errors.rs:5` to anything other than `"Session not
+    /// found: {0}"`, this test fails with a clear message — the sniff is the
+    /// load-bearing safety net for the candidate loop. (grinch G.M3.)
+    #[test]
+    fn err_is_pty_session_missing_matches_actual_apperror_format() {
+        use crate::errors::AppError;
+        let id = uuid::Uuid::new_v4();
+        let raw = AppError::SessionNotFound(id.to_string()).to_string();
+        assert!(
+            err_is_pty_session_missing(&raw),
+            "AppError::SessionNotFound display changed to {:?}; \
+             err_is_pty_session_missing substring sniff broken — \
+             update both the sniff and this test",
+            raw
+        );
+    }
+
     // ── Anti-spoof / canonicalization pure-logic tests (AR2-tests 22, 23 + DR2-5) ──
 
     /// §DR7 / AR2-tests #22: legacy-unqualified msg.from is accepted when its
@@ -2435,6 +2724,91 @@ mod tests {
     #[test]
     #[ignore = "integration: full CLI + mailbox + two-project fixture"]
     fn resolve_to_target_round_trip_integration() {}
+
+    // ── Issue #223 deliver_wake integration placeholders ──
+
+    /// Issue #223 — full regression test the user explicitly requested:
+    ///   "two CWD-matching records, one dead PTY, one live — assert delivery
+    ///   reaches live."
+    /// Full-pipeline assertion needs a Tauri AppHandle harness with both
+    /// SessionManager and PtyManager state primed. Logic coverage lives in the
+    /// `is_viable_wake_candidate_*` unit tests above. Once a shared
+    /// AppHandle fixture exists (see existing #[ignore] stubs), un-ignore.
+    #[test]
+    #[ignore = "integration: needs Tauri AppHandle + Session/Pty fixtures"]
+    fn deliver_wake_routes_to_live_when_phantom_present() {
+        // Fixture shape:
+        //   1. SessionManager has two records, same working_directory:
+        //      A: id=A, status=Running, name="phantom"      → NO PtyManager entry
+        //      B: id=B, status=Idle,    name="live"         → has PtyManager entry
+        //   2. Call deliver_wake(msg{to=agent}).
+        //   3. Assert inject_text_into_session was called with B (NOT A).
+        //   4. Assert delivery returned Ok.
+    }
+
+    /// Issue #223 — secondary fallback test:
+    ///   "If first live candidate dies between liveness probe and inject,
+    ///   router must try next candidate within the SAME delivery attempt."
+    #[test]
+    #[ignore = "integration: needs Tauri AppHandle + Session/Pty fixtures"]
+    fn deliver_wake_falls_back_when_first_inject_race_kills_pty() {
+        // Fixture shape:
+        //   1. SessionManager has two records, same working_directory, both
+        //      status=Running, both initially with PtyManager entries.
+        //   2. Patch PtyManager::write so the first call returns SessionNotFound.
+        //   3. Call deliver_wake(msg{to=agent}).
+        //   4. Assert two inject attempts inside one delivery, second succeeds.
+    }
+
+    /// Issue #223 — AC5 regression guard:
+    ///   Wake delivery to a deferred-non-coord session (status=Exited(0), no
+    ///   PTY) MUST still take the RespawnExited path, NOT silently fall through
+    ///   to cold spawn-persistent.
+    #[test]
+    #[ignore = "integration: needs Tauri AppHandle + Session/Pty fixtures"]
+    fn deliver_wake_respawns_exited_deferred_session_with_resume_flag() {
+        // Fixture shape:
+        //   1. SessionManager has one record: status=Exited(0), no PtyManager
+        //      entry (deferred-non-coord shape).
+        //   2. Call deliver_wake(msg{to=agent}).
+        //   3. Assert destroy_session_inner ran for the exited id.
+        //   4. Assert create_session_inner ran with skip_auto_resume=false
+        //      (spawn_with_resume=true → wake_spawn_skip_auto_resume(true)=false).
+    }
+
+    /// Issue #223 — HIGH-1 (Step-7 review): symmetric to the phantoms-only
+    /// AC5 fall-through (grinch G.H2). When every viable Inject candidate
+    /// races to dead between liveness probe and `PtyManager::write`, the
+    /// post-loop branch MUST still promote `spawn_with_resume`. Otherwise
+    /// cold spawn-persistent runs and the on-disk transcript at the matched
+    /// CWD is silently abandoned — same AC5 outcome as the phantoms-only
+    /// case, just with a race-killed-siblings cause instead of desync.
+    /// Plausible triggers: system shutdown mid-wake, OOM kill of sibling
+    /// PTYs, container restart, Windows logoff with sibling sessions.
+    #[test]
+    #[ignore = "integration: needs Tauri AppHandle + Session/Pty fixtures"]
+    fn deliver_wake_promotes_resume_when_all_live_candidates_race_to_dead() {
+        // Fixture shape:
+        //   1. SessionManager has two records, same working_directory, both
+        //      status=Running, both initially with PtyManager entries — so
+        //      `find_live_candidates` returns both as viable with
+        //      had_any_match=true.
+        //   2. Patch PtyManager::write so BOTH attempts return SessionNotFound
+        //      (simulates the race-window: sibling PTYs die between probe
+        //      and write).
+        //   3. Call deliver_wake(msg{to=agent}).
+        //   4. Assert two inject attempts occurred inside one delivery, both
+        //      failing the `err_is_pty_session_missing` substring sniff and
+        //      hitting the `continue` arm.
+        //   5. Assert `pending_exited_destroy` stayed None (neither candidate
+        //      was Exited).
+        //   6. Load-bearing assertion: spawn-persistent ran with
+        //      `wake_spawn_skip_auto_resume(true) == false` (i.e.,
+        //      skip_auto_resume=false → `--continue` / `resume --last` /
+        //      `--resume latest` IS injected). Without the new
+        //      `lost_inject_to_race` flag, this would silently cold-spawn
+        //      (skip_auto_resume=true) and abandon the transcript.
+    }
 
     // ── BOM-tolerant reader tests (issue #130) ──
 
