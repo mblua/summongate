@@ -14,6 +14,12 @@ use super::send::agent_name_from_root;
 ///        unknown status value. Distinct from 1 (used elsewhere for auth/IO
 ///        failures) so scripts can distinguish "daemon spoke incoherently"
 ///        from "daemon refused".
+///
+/// Note: this contract applies only when the daemon successfully wrote a
+/// response file the CLI could read. The orthogonal "delivered but response
+/// timed out" fallback at the end of `execute()` exits 0 with an
+/// informational stdout message and is NOT routed through this helper —
+/// see the response-poll loop for that pre-existing behavior.
 fn interpret_close_response_exit_code(content: &str) -> i32 {
     let resp: serde_json::Value = match serde_json::from_str(content) {
         Ok(v) => v,
@@ -358,6 +364,18 @@ mod tests {
     fn non_string_status_returns_two() {
         let resp = r#"{"status":42,"target":"t","action":"close-session"}"#;
         assert_eq!(interpret_close_response_exit_code(resp), 2);
+    }
+
+    /// §224 review: valid JSON that is not an object (array, scalar, null)
+    /// still fails the `.get("status")` lookup and must return exit 2 to
+    /// preserve the "daemon spoke incoherently" contract.
+    #[test]
+    fn non_object_json_returns_two() {
+        assert_eq!(interpret_close_response_exit_code("null"), 2);
+        assert_eq!(interpret_close_response_exit_code("[1,2,3]"), 2);
+        assert_eq!(interpret_close_response_exit_code("\"closed\""), 2);
+        assert_eq!(interpret_close_response_exit_code("42"), 2);
+        assert_eq!(interpret_close_response_exit_code("true"), 2);
     }
 
     // ── §224 D.1 — print_status_prose panic-resistance smoke tests ──

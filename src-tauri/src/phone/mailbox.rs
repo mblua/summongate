@@ -1291,10 +1291,23 @@ impl MailboxPoller {
         // "already_closed", and the destroy path's downstream events will
         // trigger persist_current_state organically.
         if session_ids.is_empty() && !restore_in_progress_result {
+            // §224 review fix: snapshot under the read guard, drop the guard,
+            // THEN write to disk. Avoids holding the outer SessionManager
+            // RwLock across the blocking `std::fs::rename` inside
+            // `save_sessions`, which would block any writer (destroy_session,
+            // create_session, restore-loop spawn) for the duration of the
+            // disk I/O.
             let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
-            let mgr = session_mgr.read().await;
-            crate::config::sessions_persistence::persist_current_state(&mgr).await;
-            drop(mgr);
+            let snapshot = {
+                let mgr = session_mgr.read().await;
+                crate::config::sessions_persistence::snapshot_sessions(&mgr).await
+            };
+            if let Err(e) = crate::config::sessions_persistence::save_sessions(&snapshot) {
+                log::warn!(
+                    "[mailbox] close-session: failed to persist cleaned sessions.json after no_match: {}",
+                    e
+                );
+            }
         }
 
         // Write response with details.
