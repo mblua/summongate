@@ -129,6 +129,97 @@ pub(crate) fn err_is_pty_session_missing(e: &str) -> bool {
     e.contains("Session not found:")
 }
 
+/// §224 D.3 — pure filter: session infos by exact-FQN match on
+/// `working_directory`. Extracted from `find_all_sessions` so the predicate
+/// can be unit-tested without a live `SessionManager` / `AppHandle`.
+/// Defensive regression guard: no future change can accidentally re-introduce
+/// a `was_active` / `waiting_for_input` / `status` gate without breaking
+/// these tests.
+pub(crate) fn filter_sessions_by_fqn<'a>(
+    sessions: &'a [crate::session::session::SessionInfo],
+    target: &str,
+) -> Vec<&'a crate::session::session::SessionInfo> {
+    sessions
+        .iter()
+        .filter(|s| crate::config::teams::agent_fqn_from_path(&s.working_directory) == target)
+        .collect()
+}
+
+/// §224 A.2.5 — outcome of the daemon-restart race guard wait loop.
+///
+/// The production caller (`handle_close_session`) inlines the wait loop
+/// because the natural probe closure captures `&self`, `app`, and `target`
+/// across an `.await`, which is awkward to pass through this helper's
+/// `FnMut() -> Future` shape without boxing. The helper is retained as the
+/// canonical executable specification of the wait semantics for D.5a unit
+/// tests — any future divergence between the inline loop and this helper is
+/// a regression.
+///
+/// §224 G-IMPL-5 (NIT, accepted) — LOAD-BEARING COMMENT. The inlined wait
+/// loop in `handle_close_session` has no direct unit test on Windows
+/// (D.5b is `#[ignore]`'d pending the cross-process FS enumeration
+/// investigation). Equivalence between the two implementations is
+/// enforced ONLY by this comment + the helper's D.5a unit tests. Do NOT
+/// change the inlined loop's semantics without updating this helper to
+/// match, and vice versa.
+#[allow(dead_code)]
+#[derive(Debug, PartialEq)]
+pub(crate) enum RestoreWaitOutcome {
+    /// Deadline elapsed with the restore flag still set; caller should report
+    /// `status="restore_in_progress"` to the user.
+    StillInProgress,
+    /// Flag cleared with the probe still returning empty — there is no live
+    /// session for this FQN. Caller falls through to the `no_match` path.
+    NoMatch,
+}
+
+/// §224 A.2.5 — poll `probe` for a non-empty result, OR for `flag` to clear,
+/// until `deadline`. Pure async helper extracted so the race-guard logic can
+/// be unit-tested without a live `SessionManager` / `AppHandle`.
+///
+/// Returns:
+///   * `Ok(non_empty_session_ids)` — a session appeared during the wait.
+///   * `Err(StillInProgress)` — deadline elapsed, flag still set.
+///   * `Err(NoMatch)` — flag cleared with empty result throughout (final
+///     probe also empty).
+#[allow(dead_code)]
+pub(crate) async fn wait_for_restore_or_session<F, Fut>(
+    flag: &std::sync::atomic::AtomicBool,
+    mut probe: F,
+    deadline: std::time::Instant,
+    poll: std::time::Duration,
+) -> Result<Vec<Uuid>, RestoreWaitOutcome>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Vec<Uuid>>,
+{
+    use std::sync::atomic::Ordering;
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return if flag.load(Ordering::SeqCst) {
+                Err(RestoreWaitOutcome::StillInProgress)
+            } else {
+                Err(RestoreWaitOutcome::NoMatch)
+            };
+        }
+        tokio::time::sleep(poll).await;
+        let ids = probe().await;
+        if !ids.is_empty() {
+            return Ok(ids);
+        }
+        if !flag.load(Ordering::SeqCst) {
+            // Flag cleared. One final probe to catch a last-tick insertion
+            // by the restore task before its guard dropped.
+            let ids = probe().await;
+            return if ids.is_empty() {
+                Err(RestoreWaitOutcome::NoMatch)
+            } else {
+                Ok(ids)
+            };
+        }
+    }
+}
+
 /// The MailboxPoller runs as a background tokio task. It polls outbox directories
 /// for all known agent repos, validates messages, and delivers them according to mode.
 pub struct MailboxPoller {
@@ -538,7 +629,13 @@ impl MailboxPoller {
         if let Some(ref action) = msg.action {
             match action.as_str() {
                 "close-session" => {
-                    return self.handle_close_session(app, path, &msg).await;
+                    // §224 G-IMPL-2 — thread `is_app_outbox` so the response-
+                    // write path can skip the outbox-relative primary write
+                    // when the message came from the app-outbox (master-token
+                    // path). That derived path lands under
+                    // <config_dir>/instances/<id>/responses/ which the CLI
+                    // never polls, so writing there leaks orphan JSON files.
+                    return self.handle_close_session(app, path, &msg, is_app_outbox).await;
                 }
                 _ => {
                     return self
@@ -1202,12 +1299,8 @@ impl MailboxPoller {
         let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
         let mgr = session_mgr.read().await;
         let sessions = mgr.list_sessions().await;
-
-        sessions
-            .iter()
-            .filter(|s| {
-                crate::config::teams::agent_fqn_from_path(&s.working_directory) == agent_name
-            })
+        filter_sessions_by_fqn(&sessions, agent_name)
+            .into_iter()
             .filter_map(|s| Uuid::parse_str(&s.id).ok())
             .collect()
     }
@@ -1218,11 +1311,19 @@ impl MailboxPoller {
     /// `config::teams::resolve_agent_target` BEFORE privileged operations.
     /// The outbox is a trust boundary — any new destructive action must
     /// canonicalize its target here, not rely on CLI-side resolution.
+    ///
+    /// §224 G-IMPL-2 — `is_app_outbox`: true when the message file lives
+    /// under the instance-private app-outbox (master/root-token path).
+    /// Used by the response-write block (A.6) to skip the outbox-relative
+    /// primary write — for app-outbox messages it would land under
+    /// `<config_dir>/instances/<id>/responses/`, a directory the CLI does
+    /// not poll, leaking orphan JSON files with no GC.
     async fn handle_close_session(
         &self,
         app: &tauri::AppHandle,
         path: &std::path::Path,
         msg: &OutboxMessage,
+        is_app_outbox: bool,
     ) -> Result<(), String> {
         let raw_target = msg
             .target
@@ -1282,33 +1383,84 @@ impl MailboxPoller {
             }
         }
 
-        // Find all sessions for the target agent
-        let session_ids = self.find_all_sessions(app, target).await;
+        // Find all sessions for the target agent.
+        //
+        // §224 A.2 — empty `session_ids` is NOT an error. The pre-fix code
+        // rejected with "No active session found", which conflicted with
+        // `list-sessions` reporting the session as alive (ghost rows from
+        // `persist_merging_failed`; see A.1). Now we fall through to a
+        // successful no-op response with status="no_match".
+        //
+        // §224 A.2.5 — daemon-restart race guard. If the initial probe is
+        // empty AND restore is still in progress, poll up to 5s for either
+        // (a) the flag to clear, or (b) a matching session to appear. Three
+        // outcomes:
+        //   * session appears   → fall through to the kill loop, status="closed".
+        //   * flag clears empty → fall through to no_match path.
+        //   * 5s elapses, flag still set → restore_in_progress_result = true.
+        let mut session_ids = self.find_all_sessions(app, target).await;
+        let mut restore_in_progress_result = false;
         if session_ids.is_empty() {
-            return self
-                .reject_message(
-                    path,
-                    msg,
-                    &format!("No active session found for '{}'", target),
-                )
-                .await;
+            let restore_flag = app.state::<Arc<crate::RestoreInProgress>>();
+            if restore_flag
+                .0
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                let poll = std::time::Duration::from_millis(100);
+                // We can't pass `self.find_all_sessions(...)` as a closure
+                // because of the `&self` capture + `async` future shape, so
+                // inline the wait loop instead of going through the pure helper.
+                // The helper's logic is unit-tested separately (D.5a).
+                loop {
+                    if std::time::Instant::now() >= deadline {
+                        if restore_flag
+                            .0
+                            .load(std::sync::atomic::Ordering::SeqCst)
+                        {
+                            restore_in_progress_result = true;
+                        }
+                        break;
+                    }
+                    tokio::time::sleep(poll).await;
+                    session_ids = self.find_all_sessions(app, target).await;
+                    if !session_ids.is_empty() {
+                        break;
+                    }
+                    if !restore_flag
+                        .0
+                        .load(std::sync::atomic::Ordering::SeqCst)
+                    {
+                        // Flag cleared mid-wait. One final probe (the restore
+                        // task may have just inserted our target as its last
+                        // act before the guard dropped), then fall through.
+                        session_ids = self.find_all_sessions(app, target).await;
+                        break;
+                    }
+                }
+            }
         }
 
         let force = msg.force.unwrap_or(false);
         let timeout_secs = msg.timeout_secs.unwrap_or(30);
 
-        log::info!(
-            "[mailbox] close-session: {} {} session(s) for '{}' (requested by '{}', timeout={}s)",
-            if force {
-                "force-killing"
-            } else {
-                "gracefully closing"
-            },
-            session_ids.len(),
-            target,
-            msg.from,
-            timeout_secs
-        );
+        // §224 A.2 — gate the kill-loop log on non-empty session_ids so we
+        // don't emit a misleading "force-killing 0 session(s)" line on the
+        // no_match / restore_in_progress paths.
+        if !session_ids.is_empty() {
+            log::info!(
+                "[mailbox] close-session: {} {} session(s) for '{}' (requested by '{}', timeout={}s)",
+                if force {
+                    "force-killing"
+                } else {
+                    "gracefully closing"
+                },
+                session_ids.len(),
+                target,
+                msg.from,
+                timeout_secs
+            );
+        }
 
         let mut closed_ids: Vec<String> = Vec::new();
         for sid in &session_ids {
@@ -1322,11 +1474,73 @@ impl MailboxPoller {
             }
         }
 
-        // Write response with details to sender's responses/ dir.
-        // If closed_ids is empty, sessions were found but already exited/destroyed
-        // between find and destroy (race condition) — report as already_closed, not error.
+        // §224 A.7 — active ghost cleanup. After A.2.5 has confirmed (with
+        // wait-and-retry) that no session matches the target, force a
+        // sessions.json rewrite from the live SessionManager to drop any
+        // stale persisted entry. Without this, a user with only the ghost
+        // session sees the contradiction persist across multiple
+        // close-session invocations (zero lifecycle events to trigger
+        // passive cleanup). Cost: one disk write per no-match call.
+        //
+        // Skip when A.2.5 returned restore_in_progress: the restore task
+        // is itself about to write the snapshot when it completes; racing
+        // that write is wasted I/O and would clobber recipes for sessions
+        // whose restore is pending.
+        //
+        // Skip when session_ids is non-empty: that's either "closed" or
+        // "already_closed", and the destroy path's downstream events will
+        // trigger persist_current_state organically.
+        //
+        // §224 G-IMPL-4 (NIT, accepted) — snapshot vs concurrent create_session
+        // is racy in the ~5-50ms window between `snapshot_sessions` and
+        // `save_sessions`. If a `create_session` for any target lands in
+        // that window and runs its own `persist_current_state` BEFORE our
+        // `save_sessions` writes, the new session is dropped from disk
+        // until the next lifecycle event re-persists. Impact: brief disk
+        // inconsistency, recoverable. Accepted.
+        //
+        // §224 G-IMPL-6 (NIT, accepted) — A.7 also drops unrelated failed-
+        // recoverable ghosts. The snapshot includes only live SessionManager
+        // entries; if `sessions.json` has a failed-recoverable ghost for
+        // unrelated agent X, this rewrite drops X's ghost too. This is the
+        // pre-existing behavior of every `persist_current_state` caller
+        // (see `persist_merging_failed` docstring); A.7 just introduces a
+        // new caller outside lifecycle events. Accepted.
+        if session_ids.is_empty() && !restore_in_progress_result {
+            // §224 review fix: snapshot under the read guard, drop the guard,
+            // THEN write to disk. Avoids holding the outer SessionManager
+            // RwLock across the blocking `std::fs::rename` inside
+            // `save_sessions`, which would block any writer (destroy_session,
+            // create_session, restore-loop spawn) for the duration of the
+            // disk I/O.
+            let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
+            let snapshot = {
+                let mgr = session_mgr.read().await;
+                crate::config::sessions_persistence::snapshot_sessions(&mgr).await
+            };
+            if let Err(e) = crate::config::sessions_persistence::save_sessions(&snapshot) {
+                log::warn!(
+                    "[mailbox] close-session: failed to persist cleaned sessions.json after no_match: {}",
+                    e
+                );
+            }
+        }
+
+        // Write response with details.
+        //
+        // §224 A.2 + A.2.5 — four terminal states, all exit-0 from the user's
+        // seat:
+        //   "restore_in_progress" — daemon still in startup; couldn't decide.
+        //   "no_match"            — found zero live sessions matching the FQN.
+        //   "already_closed"      — found some, but every one vanished before
+        //                           destroy (race).
+        //   "closed"              — at least one was actively killed.
         if let Some(ref rid) = msg.request_id {
-            let status = if closed_ids.is_empty() {
+            let status = if restore_in_progress_result {
+                "restore_in_progress"
+            } else if session_ids.is_empty() {
+                "no_match"
+            } else if closed_ids.is_empty() {
                 "already_closed"
             } else {
                 "closed"
@@ -1339,6 +1553,65 @@ impl MailboxPoller {
                 "session_ids": closed_ids,
                 "requested_by": msg.from,
             });
+            let json = match serde_json::to_string_pretty(&response) {
+                Ok(j) => j,
+                Err(e) => {
+                    log::warn!(
+                        "[mailbox] Failed to serialize close-session response: {}",
+                        e
+                    );
+                    return self.move_to_delivered(path, msg).await;
+                }
+            };
+
+            // §224 A.6 — dual-write the response:
+            //
+            // (1) <message_file_dir>/../responses/<rid>.json — always derivable
+            //     from `path` (the queued message's file location). This is
+            //     exactly `<ac_dir>/responses/<rid>.json`, the CLI's polled
+            //     location (close_session.rs:194-195), so no resolve_repo_path
+            //     dependency.
+            //
+            // (2) <resolve_repo_path(msg.from)>/<agent_local_dir>/responses/<rid>.json
+            //     — preserves cross-agent delivery for cases where the sender
+            //     FQN points to a different ac_dir than the outbox file's
+            //     parent. Best-effort; failure does not affect (1).
+            //
+            // Either write succeeding is enough for the CLI to receive the
+            // response.
+            //
+            // §224 G-IMPL-2 — skip the derived primary write (1) when the
+            // message came from the app-outbox (master/root-token path).
+            // For app-outbox messages the parent path is
+            // `<config_dir>/instances/<id>/outbox/`, so the derived responses
+            // dir resolves to `<config_dir>/instances/<id>/responses/` — a
+            // directory the CLI never polls (it always polls
+            // `<--root>/.<bin_stem>/responses/`). Writing there leaks orphan
+            // JSON files with no GC; the resolved-sender path (2) is the only
+            // useful target for the master-token case. If `resolve_repo_path`
+            // also fails (msg.from not enumerable), the CLI hits the response
+            // timeout and exits 2 (G-IMPL-3) — "outcome unknown".
+            if !is_app_outbox {
+                let outbox_relative_responses_dir = path
+                    .parent()
+                    .and_then(|p| p.parent())
+                    .map(|ac_dir| ac_dir.join("responses"));
+                if let Some(responses_dir) = outbox_relative_responses_dir {
+                    let _ = std::fs::create_dir_all(&responses_dir);
+                    let response_path = responses_dir.join(format!("{}.json", rid));
+                    if let Err(e) = std::fs::write(&response_path, &json) {
+                        log::warn!(
+                            "[mailbox] Failed to write close-session response to outbox-relative path {:?}: {}",
+                            response_path, e
+                        );
+                    }
+                } else {
+                    log::warn!(
+                        "[mailbox] close-session: cannot derive outbox-relative responses dir from message path {:?}",
+                        path
+                    );
+                }
+            }
 
             if let Some(sender_path) = self.resolve_repo_path(&msg.from, app).await {
                 let responses_dir = std::path::PathBuf::from(sender_path)
@@ -1346,11 +1619,24 @@ impl MailboxPoller {
                     .join("responses");
                 let _ = std::fs::create_dir_all(&responses_dir);
                 let response_path = responses_dir.join(format!("{}.json", rid));
-                if let Ok(json) = serde_json::to_string_pretty(&response) {
-                    if let Err(e) = std::fs::write(&response_path, json) {
-                        log::warn!("[mailbox] Failed to write close-session response: {}", e);
-                    }
+                if let Err(e) = std::fs::write(&response_path, &json) {
+                    log::warn!(
+                        "[mailbox] Failed to write close-session response to resolved-sender path: {}",
+                        e
+                    );
                 }
+            } else if is_app_outbox {
+                // §224 G-IMPL-2 — app-outbox call AND resolve_repo_path failed
+                // means the CLI's `--root` is not enumerable in project_paths.
+                // Both write paths above are unreachable; the CLI will hit its
+                // response-poll timeout and exit 2 ("outcome unknown",
+                // G-IMPL-3). Log explicitly so operators can debug.
+                log::warn!(
+                    "[mailbox] close-session app-outbox response is undeliverable: \
+                     resolve_repo_path(msg.from='{}') returned None — the sender's --root \
+                     is not enumerable in project_paths. CLI will timeout with exit 2.",
+                    msg.from
+                );
             }
         }
 
@@ -1979,6 +2265,171 @@ fn read_text_bom_tolerant(path: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+    // ── §224 D.5a — wait_for_restore_or_session unit tests ──
+
+    // ── §224 D.3 — filter_sessions_by_fqn pure-predicate tests ──
+
+    fn make_session_info(
+        id: &str,
+        name: &str,
+        cwd: &str,
+        status: crate::session::session::SessionStatus,
+        waiting_for_input: bool,
+    ) -> crate::session::session::SessionInfo {
+        crate::session::session::SessionInfo {
+            id: id.into(),
+            name: name.into(),
+            shell: "claude".into(),
+            shell_args: vec![],
+            effective_shell_args: None,
+            created_at: "2026-05-16T00:00:00Z".into(),
+            working_directory: cwd.into(),
+            status,
+            waiting_for_input,
+            pending_review: false,
+            last_prompt: None,
+            agent_id: None,
+            agent_label: None,
+            git_repos: vec![],
+            workgroup_brief: None,
+            is_coordinator: false,
+            token: "t".into(),
+            is_claude: true,
+            was_detached: false,
+            detached_geometry: None,
+        }
+    }
+
+    /// §224 regression: an idle session with `waiting_for_input=true` (the bug
+    /// user's exact state) must still pass the predicate. The predicate is
+    /// FQN-only by design.
+    #[test]
+    fn filter_sessions_by_fqn_includes_idle_waiting_session() {
+        let target = "proj:wg-1-devs/alice";
+        let s = make_session_info(
+            "uuid-1",
+            "alice",
+            r"C:\proj\.ac-new\wg-1-devs\__agent_alice",
+            crate::session::session::SessionStatus::Idle,
+            true,
+        );
+        let pool = vec![s];
+        let hits = filter_sessions_by_fqn(&pool, target);
+        assert_eq!(
+            hits.len(),
+            1,
+            "idle/waiting session must match FQN-only predicate"
+        );
+    }
+
+    #[test]
+    fn filter_sessions_by_fqn_rejects_non_matching_cwd() {
+        let target = "proj:wg-1-devs/alice";
+        let s = make_session_info(
+            "uuid-1",
+            "bob",
+            r"C:\proj\.ac-new\wg-1-devs\__agent_bob",
+            crate::session::session::SessionStatus::Active,
+            false,
+        );
+        let pool = vec![s];
+        let hits = filter_sessions_by_fqn(&pool, target);
+        assert!(hits.is_empty(), "bob's session must not match alice's FQN");
+    }
+
+    #[test]
+    fn filter_sessions_by_fqn_matches_regardless_of_was_detached_or_status() {
+        // §224 — the active vs detached vs waiting-for-input mix should not
+        // matter; only the FQN of working_directory.
+        let target = "proj:wg-1-devs/alice";
+        let mut active = make_session_info(
+            "uuid-a",
+            "alice-active",
+            r"C:\proj\.ac-new\wg-1-devs\__agent_alice",
+            crate::session::session::SessionStatus::Active,
+            false,
+        );
+        active.was_detached = true;
+        let idle = make_session_info(
+            "uuid-b",
+            "alice-idle",
+            r"C:\proj\.ac-new\wg-1-devs\__agent_alice",
+            crate::session::session::SessionStatus::Idle,
+            true,
+        );
+        let exited = make_session_info(
+            "uuid-c",
+            "alice-exited",
+            r"C:\proj\.ac-new\wg-1-devs\__agent_alice",
+            crate::session::session::SessionStatus::Exited(0),
+            false,
+        );
+        let pool = vec![active, idle, exited];
+        let hits = filter_sessions_by_fqn(&pool, target);
+        assert_eq!(hits.len(), 3, "all three must match the same FQN");
+    }
+
+    #[tokio::test]
+    async fn wait_returns_session_when_probe_succeeds_mid_wait() {
+        let flag = AtomicBool::new(true);
+        let counter = std::sync::Arc::new(AtomicU32::new(0));
+        let counter_clone = counter.clone();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let result = wait_for_restore_or_session(
+            &flag,
+            || {
+                let counter = counter_clone.clone();
+                async move {
+                    let n = counter.fetch_add(1, Ordering::SeqCst);
+                    if n >= 2 {
+                        vec![Uuid::nil()]
+                    } else {
+                        vec![]
+                    }
+                }
+            },
+            deadline,
+            std::time::Duration::from_millis(50),
+        )
+        .await;
+        assert!(result.is_ok(), "probe should have produced a hit");
+        assert_eq!(result.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn wait_returns_still_in_progress_when_flag_never_clears() {
+        let flag = AtomicBool::new(true);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(300);
+        let result = wait_for_restore_or_session(
+            &flag,
+            || async { vec![] },
+            deadline,
+            std::time::Duration::from_millis(50),
+        )
+        .await;
+        assert_eq!(result, Err(RestoreWaitOutcome::StillInProgress));
+    }
+
+    #[tokio::test]
+    async fn wait_returns_no_match_when_flag_clears_with_empty_result() {
+        let flag = std::sync::Arc::new(AtomicBool::new(true));
+        let flag_clone = flag.clone();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            flag_clone.store(false, Ordering::SeqCst);
+        });
+        let result = wait_for_restore_or_session(
+            &flag,
+            || async { vec![] },
+            deadline,
+            std::time::Duration::from_millis(50),
+        )
+        .await;
+        assert_eq!(result, Err(RestoreWaitOutcome::NoMatch));
+    }
 
     #[test]
     fn wake_action_running_injects() {
