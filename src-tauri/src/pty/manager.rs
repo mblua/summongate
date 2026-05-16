@@ -490,6 +490,19 @@ impl PtyManager {
         Ok(())
     }
 
+    /// Returns true if this PtyManager holds a live PtyInstance for `id`.
+    ///
+    /// Used by the mailbox router to filter out SessionManager records whose
+    /// PTY entry has gone missing (a desync that produces phantom Best-match
+    /// candidates — see issue #223). A live PtyInstance does NOT guarantee the
+    /// underlying child process is alive; it only guarantees that a subsequent
+    /// `write` will NOT fail with `AppError::SessionNotFound`. Detecting a dead
+    /// child of a live PtyInstance is out of scope for this accessor (issue #223
+    /// follow-up: state-machine PTY-exit hook).
+    pub fn has_session(&self, id: Uuid) -> bool {
+        self.ptys.lock().unwrap().contains_key(&id)
+    }
+
     pub fn resize(&self, id: Uuid, cols: u16, rows: u16) -> Result<(), AppError> {
         // Tell idle detector to ignore PTY output caused by this resize
         self.idle_detector.record_resize(id);
