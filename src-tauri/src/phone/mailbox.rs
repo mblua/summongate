@@ -116,6 +116,14 @@ pub(crate) fn filter_sessions_by_fqn<'a>(
 /// canonical executable specification of the wait semantics for D.5a unit
 /// tests — any future divergence between the inline loop and this helper is
 /// a regression.
+///
+/// §224 G-IMPL-5 (NIT, accepted) — LOAD-BEARING COMMENT. The inlined wait
+/// loop in `handle_close_session` has no direct unit test on Windows
+/// (D.5b is `#[ignore]`'d pending the cross-process FS enumeration
+/// investigation). Equivalence between the two implementations is
+/// enforced ONLY by this comment + the helper's D.5a unit tests. Do NOT
+/// change the inlined loop's semantics without updating this helper to
+/// match, and vice versa.
 #[allow(dead_code)]
 #[derive(Debug, PartialEq)]
 pub(crate) enum RestoreWaitOutcome {
@@ -583,7 +591,13 @@ impl MailboxPoller {
         if let Some(ref action) = msg.action {
             match action.as_str() {
                 "close-session" => {
-                    return self.handle_close_session(app, path, &msg).await;
+                    // §224 G-IMPL-2 — thread `is_app_outbox` so the response-
+                    // write path can skip the outbox-relative primary write
+                    // when the message came from the app-outbox (master-token
+                    // path). That derived path lands under
+                    // <config_dir>/instances/<id>/responses/ which the CLI
+                    // never polls, so writing there leaks orphan JSON files.
+                    return self.handle_close_session(app, path, &msg, is_app_outbox).await;
                 }
                 _ => {
                     return self
@@ -1119,11 +1133,19 @@ impl MailboxPoller {
     /// `config::teams::resolve_agent_target` BEFORE privileged operations.
     /// The outbox is a trust boundary — any new destructive action must
     /// canonicalize its target here, not rely on CLI-side resolution.
+    ///
+    /// §224 G-IMPL-2 — `is_app_outbox`: true when the message file lives
+    /// under the instance-private app-outbox (master/root-token path).
+    /// Used by the response-write block (A.6) to skip the outbox-relative
+    /// primary write — for app-outbox messages it would land under
+    /// `<config_dir>/instances/<id>/responses/`, a directory the CLI does
+    /// not poll, leaking orphan JSON files with no GC.
     async fn handle_close_session(
         &self,
         app: &tauri::AppHandle,
         path: &std::path::Path,
         msg: &OutboxMessage,
+        is_app_outbox: bool,
     ) -> Result<(), String> {
         let raw_target = msg
             .target
@@ -1290,6 +1312,22 @@ impl MailboxPoller {
         // Skip when session_ids is non-empty: that's either "closed" or
         // "already_closed", and the destroy path's downstream events will
         // trigger persist_current_state organically.
+        //
+        // §224 G-IMPL-4 (NIT, accepted) — snapshot vs concurrent create_session
+        // is racy in the ~5-50ms window between `snapshot_sessions` and
+        // `save_sessions`. If a `create_session` for any target lands in
+        // that window and runs its own `persist_current_state` BEFORE our
+        // `save_sessions` writes, the new session is dropped from disk
+        // until the next lifecycle event re-persists. Impact: brief disk
+        // inconsistency, recoverable. Accepted.
+        //
+        // §224 G-IMPL-6 (NIT, accepted) — A.7 also drops unrelated failed-
+        // recoverable ghosts. The snapshot includes only live SessionManager
+        // entries; if `sessions.json` has a failed-recoverable ghost for
+        // unrelated agent X, this rewrite drops X's ghost too. This is the
+        // pre-existing behavior of every `persist_current_state` caller
+        // (see `persist_merging_failed` docstring); A.7 just introduces a
+        // new caller outside lifecycle events. Accepted.
         if session_ids.is_empty() && !restore_in_progress_result {
             // §224 review fix: snapshot under the read guard, drop the guard,
             // THEN write to disk. Avoids holding the outer SessionManager
@@ -1363,24 +1401,38 @@ impl MailboxPoller {
             //
             // Either write succeeding is enough for the CLI to receive the
             // response.
-            let outbox_relative_responses_dir = path
-                .parent()
-                .and_then(|p| p.parent())
-                .map(|ac_dir| ac_dir.join("responses"));
-            if let Some(responses_dir) = outbox_relative_responses_dir {
-                let _ = std::fs::create_dir_all(&responses_dir);
-                let response_path = responses_dir.join(format!("{}.json", rid));
-                if let Err(e) = std::fs::write(&response_path, &json) {
+            //
+            // §224 G-IMPL-2 — skip the derived primary write (1) when the
+            // message came from the app-outbox (master/root-token path).
+            // For app-outbox messages the parent path is
+            // `<config_dir>/instances/<id>/outbox/`, so the derived responses
+            // dir resolves to `<config_dir>/instances/<id>/responses/` — a
+            // directory the CLI never polls (it always polls
+            // `<--root>/.<bin_stem>/responses/`). Writing there leaks orphan
+            // JSON files with no GC; the resolved-sender path (2) is the only
+            // useful target for the master-token case. If `resolve_repo_path`
+            // also fails (msg.from not enumerable), the CLI hits the response
+            // timeout and exits 2 (G-IMPL-3) — "outcome unknown".
+            if !is_app_outbox {
+                let outbox_relative_responses_dir = path
+                    .parent()
+                    .and_then(|p| p.parent())
+                    .map(|ac_dir| ac_dir.join("responses"));
+                if let Some(responses_dir) = outbox_relative_responses_dir {
+                    let _ = std::fs::create_dir_all(&responses_dir);
+                    let response_path = responses_dir.join(format!("{}.json", rid));
+                    if let Err(e) = std::fs::write(&response_path, &json) {
+                        log::warn!(
+                            "[mailbox] Failed to write close-session response to outbox-relative path {:?}: {}",
+                            response_path, e
+                        );
+                    }
+                } else {
                     log::warn!(
-                        "[mailbox] Failed to write close-session response to outbox-relative path {:?}: {}",
-                        response_path, e
+                        "[mailbox] close-session: cannot derive outbox-relative responses dir from message path {:?}",
+                        path
                     );
                 }
-            } else {
-                log::warn!(
-                    "[mailbox] close-session: cannot derive outbox-relative responses dir from message path {:?}",
-                    path
-                );
             }
 
             if let Some(sender_path) = self.resolve_repo_path(&msg.from, app).await {
@@ -1395,6 +1447,18 @@ impl MailboxPoller {
                         e
                     );
                 }
+            } else if is_app_outbox {
+                // §224 G-IMPL-2 — app-outbox call AND resolve_repo_path failed
+                // means the CLI's `--root` is not enumerable in project_paths.
+                // Both write paths above are unreachable; the CLI will hit its
+                // response-poll timeout and exit 2 ("outcome unknown",
+                // G-IMPL-3). Log explicitly so operators can debug.
+                log::warn!(
+                    "[mailbox] close-session app-outbox response is undeliverable: \
+                     resolve_repo_path(msg.from='{}') returned None — the sender's --root \
+                     is not enumerable in project_paths. CLI will timeout with exit 2.",
+                    msg.from
+                );
             }
         }
 
