@@ -594,6 +594,13 @@ impl MailboxPoller {
         // loop only. See plan §4.5.a / round-1 G7 / round-3 R3.2.
         let mut spawn_with_resume = false;
         let mut pending_exited_destroy: Option<Uuid> = None;
+        // HIGH-1 (Step-7 review): symmetric AC5 protection. Tracks whether
+        // every iter'd Inject candidate hit the `err_is_pty_session_missing`
+        // race arm — if so, the post-loop fall-through must still promote
+        // spawn_with_resume so the on-disk transcript isn't abandoned. Same
+        // outcome as grinch G.H2's phantoms-only path, just a different
+        // upstream cause (race-killed siblings vs. desync phantoms).
+        let mut lost_inject_to_race = false;
 
         // Issue #223: enumerate ALL viable CWD candidates (PTY-liveness filtered)
         // with their captured status, plus a had_any_match flag for the phantoms-
@@ -619,6 +626,11 @@ impl MailboxPoller {
                             // probe and `PtyManager::write`. Load-bearing
                             // safety net for the dropped per-iteration
                             // re-read (grinch G.M2). Try the next candidate.
+                            // Flag the race for the post-loop AC5 promotion
+                            // (grinch HIGH-1) — if every Inject candidate
+                            // races to dead, the spawn-persistent fall-through
+                            // must still set spawn_with_resume.
+                            lost_inject_to_race = true;
                             log::warn!(
                                 "[mailbox] wake: candidate {} died after liveness probe ({}), trying next",
                                 session_id,
@@ -649,17 +661,23 @@ impl MailboxPoller {
             }
         }
 
-        // No Inject returned Ok. Two cases enable auto-resume on the spawn-
+        // No Inject returned Ok. Three cases enable auto-resume on the spawn-
         // persistent fall-through:
         //   1. A deferred Exited destroy is pending (spawn_with_resume true).
         //   2. Candidate list empty BUT records existed in the manager — i.e.,
         //      every CWD-match was a non-Exited phantom. Spawning cold would
         //      abandon any on-disk transcript at the matched CWD (grinch G.H2
         //      AC5 micro-regression).
-        if pending_exited_destroy.is_none() && candidates.is_empty() && had_any_match {
+        //   3. Every viable Inject candidate died mid-flight (all hit the
+        //      `err_is_pty_session_missing` race arm). Symmetric to case 2 —
+        //      same AC5 outcome since cold spawn would abandon the transcript
+        //      (grinch HIGH-1, Step-7 review).
+        if pending_exited_destroy.is_none()
+            && (candidates.is_empty() && had_any_match || lost_inject_to_race)
+        {
             spawn_with_resume = true;
             log::info!(
-                "[mailbox] wake: all CWD candidates for '{}' are phantoms; enabling auto-resume on spawn-persistent",
+                "[mailbox] wake: all CWD candidates for '{}' are phantoms or lost to race; enabling auto-resume on spawn-persistent",
                 msg.to
             );
         }
@@ -1011,7 +1029,7 @@ impl MailboxPoller {
     /// Find the best session for a given agent name (matches by working directory).
     /// Prefers active/running non-temp sessions over idle/exited ones.
     ///
-    /// Used ONLY by stale-token logging (mailbox.rs:418, 463). Routing now uses
+    /// Used ONLY by stale-token logging (mailbox.rs:456, 501). Routing now uses
     /// `find_live_candidates` — do not add new callers. (grinch G.L5.)
     async fn find_active_session(&self, app: &tauri::AppHandle, agent_name: &str) -> Option<Uuid> {
         let session_mgr = app.state::<Arc<tokio::sync::RwLock<SessionManager>>>();
@@ -2305,6 +2323,40 @@ mod tests {
         //   3. Assert destroy_session_inner ran for the exited id.
         //   4. Assert create_session_inner ran with skip_auto_resume=false
         //      (spawn_with_resume=true → wake_spawn_skip_auto_resume(true)=false).
+    }
+
+    /// Issue #223 — HIGH-1 (Step-7 review): symmetric to the phantoms-only
+    /// AC5 fall-through (grinch G.H2). When every viable Inject candidate
+    /// races to dead between liveness probe and `PtyManager::write`, the
+    /// post-loop branch MUST still promote `spawn_with_resume`. Otherwise
+    /// cold spawn-persistent runs and the on-disk transcript at the matched
+    /// CWD is silently abandoned — same AC5 outcome as the phantoms-only
+    /// case, just with a race-killed-siblings cause instead of desync.
+    /// Plausible triggers: system shutdown mid-wake, OOM kill of sibling
+    /// PTYs, container restart, Windows logoff with sibling sessions.
+    #[test]
+    #[ignore = "integration: needs Tauri AppHandle + Session/Pty fixtures"]
+    fn deliver_wake_promotes_resume_when_all_live_candidates_race_to_dead() {
+        // Fixture shape:
+        //   1. SessionManager has two records, same working_directory, both
+        //      status=Running, both initially with PtyManager entries — so
+        //      `find_live_candidates` returns both as viable with
+        //      had_any_match=true.
+        //   2. Patch PtyManager::write so BOTH attempts return SessionNotFound
+        //      (simulates the race-window: sibling PTYs die between probe
+        //      and write).
+        //   3. Call deliver_wake(msg{to=agent}).
+        //   4. Assert two inject attempts occurred inside one delivery, both
+        //      failing the `err_is_pty_session_missing` substring sniff and
+        //      hitting the `continue` arm.
+        //   5. Assert `pending_exited_destroy` stayed None (neither candidate
+        //      was Exited).
+        //   6. Load-bearing assertion: spawn-persistent ran with
+        //      `wake_spawn_skip_auto_resume(true) == false` (i.e.,
+        //      skip_auto_resume=false → `--continue` / `resume --last` /
+        //      `--resume latest` IS injected). Without the new
+        //      `lost_inject_to_race` flag, this would silently cold-spawn
+        //      (skip_auto_resume=true) and abandon the transcript.
     }
 
     // ── BOM-tolerant reader tests (issue #130) ──
