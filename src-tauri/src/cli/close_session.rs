@@ -17,9 +17,13 @@ use super::send::agent_name_from_root;
 ///
 /// Note: this contract applies only when the daemon successfully wrote a
 /// response file the CLI could read. The orthogonal "delivered but response
-/// timed out" fallback at the end of `execute()` exits 0 with an
-/// informational stdout message and is NOT routed through this helper —
-/// see the response-poll loop for that pre-existing behavior.
+/// timed out" path at the end of `execute()` is NOT routed through this
+/// helper — see the response-poll loop. That fallback ALSO returns exit 2
+/// (§224 G-IMPL-3): if delivery succeeded but no response appeared in the
+/// poll window, the session's state is unknown (daemon crashed mid-handle,
+/// response landed at an undeliverable path, or in-flight). "Outcome
+/// unknown" belongs in the exit-2 class — exit 0 here would re-create the
+/// silent-success surface #224 was filed to eliminate.
 fn interpret_close_response_exit_code(content: &str) -> i32 {
     let resp: serde_json::Value = match serde_json::from_str(content) {
         Ok(v) => v,
@@ -301,11 +305,23 @@ pub fn execute(args: CloseSessionArgs) -> i32 {
             }
         }
         if resp_start.elapsed() >= resp_timeout {
-            // Delivery succeeded but response timed out — sessions were likely closed
-            println!(
-                "close-session delivered but response timed out (sessions may have been closed)"
+            // §224 G-IMPL-3 — Delivery confirmed but no response in
+            // `resp_timeout`. The session's terminal state is UNKNOWN:
+            // the daemon may have crashed mid-handle, the response may
+            // have landed at an undeliverable path (G-IMPL-2 + a non-
+            // enumerable --root), or it may simply be in flight.
+            //
+            // Exit 2 ("outcome unknown") per the truth table in
+            // `interpret_close_response_exit_code` — exit 0 here would
+            // be a silent-success regression of #224. Prose to stderr,
+            // not stdout, so script consumers don't mistake it for the
+            // happy-path JSON.
+            eprintln!(
+                "Error: close-session delivered but daemon did not write a response within {}s — outcome unknown (request {})",
+                resp_timeout.as_secs(),
+                request_id
             );
-            return 0;
+            return 2;
         }
         std::thread::sleep(resp_poll);
     }
