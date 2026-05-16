@@ -624,11 +624,45 @@ pub(crate) fn strip_auto_injected_args(shell: &str, args: &[String]) -> Vec<Stri
     }
 }
 
-/// Persist live sessions merged with entries that failed to restore.
-/// Failed entries are appended so they survive for the next startup attempt.
+/// Pure: produce a sanitized copy of a failed-recoverable PersistedSession
+/// suitable for merging into a fresh snapshot. Drops runtime fields (`id`,
+/// `status`, `waiting_for_input`, `created_at`) since those describe the
+/// PRIOR run's state; the session is no longer live, and persisting them
+/// would make `list-sessions` (which filters on `id.is_some()`) report the
+/// session as alive when it is not. See §224.
+pub(crate) fn sanitize_failed_recoverable(ps: &PersistedSession) -> PersistedSession {
+    let mut clean = ps.clone();
+    clean.id = None;
+    clean.status = None;
+    clean.waiting_for_input = None;
+    clean.created_at = None;
+    clean
+}
+
+/// Persist live sessions plus stripped recipes for entries that failed to
+/// restore. Stripped recipes survive on disk only until the next
+/// `persist_current_state` call (any session-lifecycle event) overwrites the
+/// snapshot — so retry-on-next-startup is best-effort. §224 G5/G8.
 pub async fn persist_merging_failed(mgr: &SessionManager, failed: &[PersistedSession]) {
     let mut snapshot = snapshot_sessions(mgr).await;
-    snapshot.extend(failed.iter().cloned());
+    // §224 — strip stale runtime fields (`id`, `status`, `waiting_for_input`,
+    // `created_at`) from failed-recoverable entries. Without this, the prior
+    // run's runtime fields travel into the new snapshot, and `list-sessions`
+    // reports a session as alive (its `s.id.is_some()` filter passes) while
+    // the in-memory `SessionManager` does not contain it. `close-session`
+    // then can't find the session and rejects with "No active session found".
+    // Stripping enforces the invariant: any persisted row with `id.is_some()`
+    // is guaranteed to be live in SessionManager.
+    //
+    // NOTE: this strip preserves the recipe (working_directory, shell,
+    // agent_id, was_active, was_detached, etc.) so the next-startup restore
+    // can retry. However, "retry-on-next-startup" persistence is best-effort:
+    // any subsequent idle/busy event after this call invokes
+    // `persist_current_state`, which rebuilds the snapshot from the live
+    // SessionManager ONLY and silently drops failed-recoverable entries (§224
+    // G5). Proper plumb of `failed_recoverable` into SessionManager is filed
+    // as a follow-up.
+    snapshot.extend(failed.iter().map(sanitize_failed_recoverable));
     let snapshot = deduplicate(snapshot);
     if let Err(e) = save_sessions(&snapshot) {
         log::error!("Failed to persist sessions (with merge): {}", e);
@@ -645,7 +679,88 @@ pub async fn persist_current_state(mgr: &SessionManager) {
 
 #[cfg(test)]
 mod tests {
-    use super::{strip_auto_injected_args, PersistedSession};
+    use super::{sanitize_failed_recoverable, strip_auto_injected_args, PersistedSession};
+
+    /// §224 D.2 — the strip drops every runtime field but preserves the recipe
+    /// fields needed for the next-startup restore attempt.
+    #[test]
+    fn sanitize_failed_recoverable_drops_runtime_fields() {
+        use crate::session::session::SessionStatus;
+        let ps = PersistedSession {
+            name: "alice".into(),
+            shell: "claude".into(),
+            shell_args: vec!["--continue".into()],
+            working_directory: r"C:\proj\.ac-new\wg-1-devs\__agent_alice".into(),
+            was_active: false,
+            git_repos: vec![],
+            is_coordinator: false,
+            agent_id: Some("aid-1".into()),
+            agent_label: Some("Claude Code".into()),
+            was_detached: false,
+            detached_geometry: None,
+            git_branch_source: None,
+            git_branch_prefix: None,
+            // Stale runtime fields from a prior run:
+            id: Some("uuid-prior-run".into()),
+            status: Some(SessionStatus::Idle),
+            waiting_for_input: Some(true),
+            created_at: Some("2026-05-15T00:00:00Z".into()),
+        };
+
+        let clean = sanitize_failed_recoverable(&ps);
+
+        // Runtime fields cleared:
+        assert!(clean.id.is_none(), "id must be cleared");
+        assert!(clean.status.is_none(), "status must be cleared");
+        assert!(
+            clean.waiting_for_input.is_none(),
+            "waiting_for_input must be cleared"
+        );
+        assert!(clean.created_at.is_none(), "created_at must be cleared");
+
+        // Recipe fields preserved (so next-run restore can retry):
+        assert_eq!(clean.name, "alice");
+        assert_eq!(clean.shell, "claude");
+        assert_eq!(clean.shell_args, vec!["--continue".to_string()]);
+        assert_eq!(clean.working_directory, ps.working_directory);
+        assert_eq!(clean.agent_id.as_deref(), Some("aid-1"));
+        assert_eq!(clean.agent_label.as_deref(), Some("Claude Code"));
+        assert!(!clean.was_active);
+        assert!(!clean.was_detached);
+    }
+
+    /// §224 D.2 — idempotence: stripping an entry that already has None
+    /// runtime fields is a no-op (does not flip recipe fields).
+    #[test]
+    fn sanitize_failed_recoverable_is_idempotent() {
+        let ps = PersistedSession {
+            name: "bob".into(),
+            shell: "cmd".into(),
+            shell_args: vec![],
+            working_directory: "C:/x".into(),
+            was_active: false,
+            git_repos: vec![],
+            is_coordinator: false,
+            agent_id: None,
+            agent_label: None,
+            was_detached: false,
+            detached_geometry: None,
+            git_branch_source: None,
+            git_branch_prefix: None,
+            id: None,
+            status: None,
+            waiting_for_input: None,
+            created_at: None,
+        };
+        let once = sanitize_failed_recoverable(&ps);
+        let twice = sanitize_failed_recoverable(&once);
+        assert!(twice.id.is_none());
+        assert!(twice.status.is_none());
+        assert!(twice.waiting_for_input.is_none());
+        assert!(twice.created_at.is_none());
+        assert_eq!(twice.name, "bob");
+    }
+
 
     #[test]
     fn strip_auto_injected_args_removes_direct_gemini_resume_latest() {

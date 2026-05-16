@@ -12,6 +12,7 @@ pub mod voice;
 pub mod web;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use commands::ac_discovery::DiscoveryBranchWatcher;
@@ -80,6 +81,13 @@ impl MasterToken {
         &self.0
     }
 }
+
+/// §224 A.2.5 / G1 — set true while the post-startup session-restore loop is
+/// running (`lib.rs` setup task that calls `create_session_inner` for every
+/// persisted session). Read by `mailbox::handle_close_session` to decide
+/// whether `session_ids.is_empty()` means "no live session for this FQN" or
+/// "restore loop hasn't reached this session yet — retry briefly."
+pub struct RestoreInProgress(pub AtomicBool);
 
 /// Instance-private outbox directory. Only this app instance polls it.
 /// Created at startup, path printed to stdout alongside master token.
@@ -247,6 +255,7 @@ pub fn run() {
         .manage(rtk_sweep_lock)
         .manage(rtk_startup_mode)
         .manage(shutdown_signal)
+        .manage(Arc::new(RestoreInProgress(AtomicBool::new(false))))
         .setup(move |app| {
             use tauri::WebviewWindowBuilder;
             use tauri::WebviewUrl;
@@ -577,7 +586,30 @@ pub fn run() {
                     vec![]
                 };
 
+                // §224 A.2.5 — flip restore_in_progress around the spawned
+                // restore task. RAII guard inside the closure clears the flag
+                // on normal exit AND on panic unwind so the daemon can't get
+                // stuck advertising "still restoring" forever.
+                let restore_flag = app
+                    .state::<Arc<RestoreInProgress>>()
+                    .inner()
+                    .clone();
+                restore_flag
+                    .0
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                let restore_flag_for_task = restore_flag.clone();
+
                 tauri::async_runtime::spawn(async move {
+                    struct RestoreGuard(Arc<RestoreInProgress>);
+                    impl Drop for RestoreGuard {
+                        fn drop(&mut self) {
+                            self.0
+                                 .0
+                                .store(false, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }
+                    let _restore_guard = RestoreGuard(restore_flag_for_task);
+
                     let mut active_id = None;
                     let mut failed_recoverable: Vec<sessions_persistence::PersistedSession> = Vec::new();
 
